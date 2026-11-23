@@ -327,7 +327,11 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VER_NO_V="${TAG#v}"
           MINOR_VER="${VER_NO_V%.*}"
-          NOTES_FILE="RELEASE_NOTES_v${MINOR_VER}.md"
+          if [ -f "RELEASE_NOTES_v${VER_NO_V}.md" ]; then
+            NOTES_FILE="RELEASE_NOTES_v${VER_NO_V}.md"
+          else
+            NOTES_FILE="RELEASE_NOTES_v${MINOR_VER}.md"
+          fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists, uploading/replacing assets..."
