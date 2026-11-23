@@ -1,27 +1,15 @@
 import os
 import sys
-import json
 import time
 import struct
-import getpass
-import threading
-import subprocess
 import webbrowser
 import shutil
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
-from PyQt6.QtCore import Qt, QUrl, QEvent, QObject, QTimer, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QUrl, QEvent, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QPixmap, QDesktopServices, QDragEnterEvent, QDropEvent,
     QFontDatabase, QKeySequence, QShortcut, QUndoStack
 )
-try:
-    from PyQt6.QtNetwork import QLocalServer, QLocalSocket
-    HAS_QT_NETWORK = True
-except ImportError:
-    QLocalServer = None
-    QLocalSocket = None
-    HAS_QT_NETWORK = False
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFileDialog, QTableWidgetItem, QFrame,
@@ -31,8 +19,8 @@ from PyQt6.QtWidgets import (
 
 # --- Метаинформация и версия программы ---
 __app_name__ = "FBC GUI"
-__version__ = "2.8.2"
-__build__ = 59
+__version__ = "2.8.3"
+__build__ = 67
 __author__ = "Paul Dykoun"
 __email__ = "me@pashka.eu"
 __url__ = "www.pashka.eu/fbc_gui"
@@ -50,6 +38,7 @@ THIRD_PARTY_URL = "https://github.com/rupor-github/fb2cng"
 
 from core.config import (
     DEFAULT_OUTPUT_FORMAT, DEVICE_PROFILES, get_default_app_settings,
+    atomic_write_text,
     migrate_fbc_config_211, load_app_settings as load_settings_file,
     save_app_settings as save_settings_file,
     sync_settings_from_fbc_config as sync_fbc_config,
@@ -183,7 +172,13 @@ from core.i18n import (
     LEGACY_ALIGN_MAP, LEGACY_STYLE_MAP, LEGACY_NOTE_BG_MAP, LEGACY_NOTE_BORDER_MAP,
     get_theme_choices
 )
-from core.updater import UpdateCheckWorker, UPDATE_CHECK_INTERVAL_SEC
+from core.updater import UpdateCheckWorker, UPDATE_CHECK_INTERVAL_SEC, is_safe_http_url
+from core.workers import (
+    FileImportWorker,
+    ConversionWorker,
+    TestEmailWorker,
+    SingleInstanceManager,
+)
 from ui.theme import (
     LEGACY_THEME_MAP, init_themes,
     resolve_theme_family_and_mode,
@@ -236,8 +231,8 @@ def parse_ttf_names(font_path):
                     decoded = decoded.strip('\x00').strip()
                     if decoded and (name_id not in names or plat_id == 3):
                         names[name_id] = decoded
-                except Exception:
-                    pass
+                except Exception as dec_err:
+                    logger.debug("Ошибка декодирования имени TTF %s: %s", font_path, dec_err)
     except Exception as e:
         logger.warning("Ошибка парсинга TTF %s: %s", font_path, e)
     return names
@@ -256,6 +251,10 @@ class MainWindow(QMainWindow):
         self._applying_theme = False
         self._update_worker = None
         self._fbc_worker = None
+        self._import_worker = None
+        self._test_email_worker = None
+        self._convert_worker = None
+        self._closing = False
         self._fbc_setup_dlg = None
         self._fbc_ready_callback = None
         self._fbc_setup_interactive = False
@@ -309,7 +308,81 @@ class MainWindow(QMainWindow):
         self._sc_convert_sel = QShortcut(QKeySequence("Ctrl+Shift+Return"), self)
         self._sc_convert_sel.activated.connect(self.convert_selected)
 
+    def _get_active_workers(self, names=None):
+        worker_names = names or (
+            "_convert_worker",
+            "_import_worker",
+            "_fbc_worker",
+            "_update_worker",
+            "_test_email_worker",
+        )
+        active = []
+        for attr in worker_names:
+            worker = getattr(self, attr, None)
+            if worker is not None:
+                try:
+                    if worker.isRunning():
+                        active.append((attr, worker))
+                except RuntimeError:
+                    pass
+        return active
+
+    def _has_blocking_workers(self):
+        return bool(self._get_active_workers((
+            "_convert_worker",
+            "_import_worker",
+            "_test_email_worker",
+        )))
+
+    def _detach_preview_native_view(self):
+        browser = getattr(self, "preview_browser", None)
+        if browser is not None and hasattr(browser, "_detach_native_view"):
+            try:
+                browser._detach_native_view()
+            except Exception as e:
+                logger.debug("Ошибка отключения нативного предпросмотра: %s", e)
+
+    def _stop_background_workers(self, timeout_ms=3000):
+        timer = getattr(self, "_import_dlg_timer", None)
+        if timer is not None:
+            try:
+                if timer.isActive():
+                    timer.stop()
+            except RuntimeError:
+                pass
+
+        for dlg_attr in ("_import_progress_dlg", "_fbc_setup_dlg"):
+            dlg = getattr(self, dlg_attr, None)
+            if dlg is not None:
+                try:
+                    if hasattr(dlg, "finish_and_close"):
+                        dlg.finish_and_close()
+                    else:
+                        dlg.close()
+                except RuntimeError:
+                    pass
+                setattr(self, dlg_attr, None)
+
+        active = self._get_active_workers()
+        for _, worker in active:
+            try:
+                if hasattr(worker, "cancel"):
+                    worker.cancel()
+                worker.requestInterruption()
+            except RuntimeError:
+                pass
+
+        for name, worker in active:
+            try:
+                if worker.isRunning() and not worker.wait(timeout_ms):
+                    logger.warning("Фоновый поток %s не завершился за %d мс при закрытии окна", name, timeout_ms)
+            except RuntimeError:
+                pass
+
     def closeEvent(self, event):
+        self._closing = True
+        self._stop_background_workers()
+        self._detach_preview_native_view()
         self.save_app_settings()
         super().closeEvent(event)
 
@@ -432,6 +505,15 @@ class MainWindow(QMainWindow):
     def apply_language(self, lang_code, save=True):
         if getattr(self, "_applying_language", False):
             return
+        if self._has_blocking_workers():
+            logger.warning("Смена языка отклонена: активны фоновые задачи")
+            if hasattr(self, "lang_selector"):
+                try:
+                    self.lang_selector.set(LOCALE.lang_code)
+                except RuntimeError:
+                    pass
+            show_themed_message(self, tr("common.warning"), tr("common.busy_workers_warning"), "warning")
+            return
         self._applying_language = True
         try:
             LOCALE.set_language(lang_code)
@@ -549,6 +631,7 @@ class MainWindow(QMainWindow):
         return fonts or ["PT-Astra-Serif_Regular.ttf", "PomorskyUnicode.otf"]
 
     def create_widgets(self):
+        self._detach_preview_native_view()
         central = QWidget()
         central.setObjectName("MainContainer")
         central.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -754,6 +837,10 @@ class MainWindow(QMainWindow):
         return self.app_settings, css_content
 
     def _apply_preset_payload(self, payload, selected_name=None):
+        if self._has_blocking_workers():
+            logger.warning("Применение пресета отклонено: активны фоновые задачи")
+            show_themed_message(self, tr("common.warning"), tr("common.busy_workers_warning"), "warning")
+            return False
         preset_settings = payload.get("settings") or {}
         has_css_ui_state = isinstance(preset_settings.get("css_ui_state"), dict) and bool(preset_settings.get("css_ui_state"))
         apply_preset_to_settings(self.app_settings, payload)
@@ -762,14 +849,12 @@ class MainWindow(QMainWindow):
 
         css_content = payload.get("css_content") or ""
         if css_content:
-            with open(CSS_PATH, "w", encoding="utf-8") as f:
-                f.write(css_content)
+            atomic_write_text(CSS_PATH, css_content)
             if not has_css_ui_state:
                 self.app_settings.pop("css_ui_state", None)
         elif has_css_ui_state:
             merged_css_state = {**get_default_css_ui_state(), **preset_settings["css_ui_state"]}
-            with open(CSS_PATH, "w", encoding="utf-8") as f:
-                f.write(build_css_content(merged_css_state, FONTS_DIR))
+            atomic_write_text(CSS_PATH, build_css_content(merged_css_state, FONTS_DIR))
 
         self.save_app_settings()
         self.update_fbc_config_file()
@@ -797,6 +882,7 @@ class MainWindow(QMainWindow):
         self.refresh_user_presets_combo(selected_name=active_name)
         self.switch_page(cur_page)
         self.refresh_preview()
+        return True
 
     def save_user_preset_clicked(self):
         default_name = ""
@@ -836,9 +922,9 @@ class MainWindow(QMainWindow):
             return
         try:
             payload = load_preset_file(item["path"])
-            self._apply_preset_payload(payload, selected_name=payload["name"])
-            logger.info("Применён пользовательский пресет: %s", payload["name"])
-            show_themed_message(self, tr("common.success"), tr("settings.msg_preset_applied", name=payload["name"]), "info")
+            if self._apply_preset_payload(payload, selected_name=payload["name"]):
+                logger.info("Применён пользовательский пресет: %s", payload["name"])
+                show_themed_message(self, tr("common.success"), tr("settings.msg_preset_applied", name=payload["name"]), "info")
         except Exception as e:
             logger.error("Ошибка применения пресета %s: %s", item.get("path"), e)
             show_themed_message(self, tr("common.error"), tr("settings.err_preset_io", e=e), "error")
@@ -875,9 +961,9 @@ class MainWindow(QMainWindow):
                 name=item.get("name"),
                 filename=item.get("filename"),
             )
-            self._apply_preset_payload(payload, selected_name=name)
-            logger.info("Восстановлен встроенный пресет по умолчанию: %s", name)
-            show_themed_message(self, tr("common.success"), tr("settings.msg_preset_restored", name=name), "info")
+            if self._apply_preset_payload(payload, selected_name=name):
+                logger.info("Восстановлен встроенный пресет по умолчанию: %s", name)
+                show_themed_message(self, tr("common.success"), tr("settings.msg_preset_restored", name=name), "info")
         except Exception as e:
             logger.error("Ошибка восстановления пресета: %s", e)
             show_themed_message(self, tr("common.error"), tr("settings.err_preset_io", e=e), "error")
@@ -921,9 +1007,9 @@ class MainWindow(QMainWindow):
             return
         try:
             name, _, payload = import_preset_from_file(in_path, PRESETS_DIR)
-            self._apply_preset_payload(payload, selected_name=name)
-            logger.info("Импортирован и применён пресет: %s", name)
-            show_themed_message(self, tr("common.success"), tr("settings.msg_preset_imported", name=name), "info")
+            if self._apply_preset_payload(payload, selected_name=name):
+                logger.info("Импортирован и применён пресет: %s", name)
+                show_themed_message(self, tr("common.success"), tr("settings.msg_preset_imported", name=name), "info")
         except Exception as e:
             logger.error("Ошибка импорта пресета %s: %s", in_path, e)
             show_themed_message(self, tr("common.error"), tr("settings.err_preset_io", e=e), "error")
@@ -1264,14 +1350,24 @@ class MainWindow(QMainWindow):
         if hasattr(self, "btn_test_email"):
             self.btn_test_email.setEnabled(False)
             self.btn_test_email.setText(tr("settings.btn_test_email_sending"))
-        self._test_email_worker = TestEmailWorker(dict(self.app_settings), parent=self)
+        self._test_email_worker = TestEmailWorker(
+            dict(self.app_settings),
+            app_name=APP_NAME,
+            app_version=APP_VERSION,
+            parent=self,
+        )
         self._test_email_worker.finished_test.connect(self._on_test_email_finished)
         self._test_email_worker.start()
 
     def _on_test_email_finished(self, ok, err_msg):
+        if getattr(self, "_closing", False):
+            return
         if hasattr(self, "btn_test_email"):
-            self.btn_test_email.setEnabled(True)
-            self.btn_test_email.setText(tr("settings.btn_test_email"))
+            try:
+                self.btn_test_email.setEnabled(True)
+                self.btn_test_email.setText(tr("settings.btn_test_email"))
+            except RuntimeError:
+                pass
         if ok:
             recipient = self.app_settings.get("email_to", "").strip()
             logger.info("Тестовое письмо SMTP успешно отправлено на %s", recipient)
@@ -1346,10 +1442,15 @@ class MainWindow(QMainWindow):
 
     def _on_fbc_check_finished(self, result):
         global FBC_CMD
+        if getattr(self, "_closing", False):
+            return
         dlg = self._fbc_setup_dlg
         self._fbc_setup_dlg = None
         if dlg is not None:
-            dlg.finish_and_close()
+            try:
+                dlg.finish_and_close()
+            except RuntimeError:
+                pass
 
         cb = self._fbc_ready_callback
         self._fbc_ready_callback = None
@@ -1360,8 +1461,14 @@ class MainWindow(QMainWindow):
             if result.get("version"):
                 self.fbc_version = result["version"]
                 if hasattr(self, "lbl_third_party_ver"):
-                    self.lbl_third_party_ver.setText(f"<b>{tr('about.third_party_ver', ver=self.fbc_version)}</b>")
-            self.update_header_status()
+                    try:
+                        self.lbl_third_party_ver.setText(f"<b>{tr('about.third_party_ver', ver=self.fbc_version)}</b>")
+                    except RuntimeError:
+                        pass
+            try:
+                self.update_header_status()
+            except RuntimeError:
+                pass
             if result.get("downloaded") and not cb:
                 logger.info("fb2cng v%s успешно установлен в %s", self.fbc_version, self.fbc_cmd)
             if cb is not None:
@@ -1411,9 +1518,14 @@ class MainWindow(QMainWindow):
         self._update_worker.start()
 
     def _on_update_check_finished(self, result, manual):
+        if getattr(self, "_closing", False):
+            return
         if hasattr(self, "btn_check_updates"):
-            self.btn_check_updates.setEnabled(True)
-            self.btn_check_updates.setText(tr("about.btn_check_updates"))
+            try:
+                self.btn_check_updates.setEnabled(True)
+                self.btn_check_updates.setText(tr("about.btn_check_updates"))
+            except RuntimeError:
+                pass
 
         if not result.get("error"):
             self.app_settings["last_update_check"] = int(time.time())
@@ -1444,6 +1556,9 @@ class MainWindow(QMainWindow):
                 tr("about.btn_later"),
             ):
                 dl_url = result.get("download_url") or f"https://{APP_URL}"
+                if not is_safe_http_url(dl_url, allow_relative=False):
+                    logger.warning("Отклонён небезопасный URL обновления: %s", dl_url)
+                    dl_url = f"https://{APP_URL}"
                 webbrowser.open(dl_url)
         elif manual:
             show_themed_message(
@@ -1532,8 +1647,7 @@ class MainWindow(QMainWindow):
         preview_html_path = os.path.join(os.path.dirname(CSS_PATH), "preview.html")
         try:
             html = self._build_full_preview_html(for_browser=True)
-            with open(preview_html_path, 'w', encoding='utf-8') as f:
-                f.write(html)
+            atomic_write_text(preview_html_path, html)
             QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(preview_html_path)))
         except Exception as e:
             show_themed_message(self, tr("common.error"), tr("preview.err_browser", e=e), "error")
@@ -1666,8 +1780,7 @@ class MainWindow(QMainWindow):
             else:
                 default_css = build_css_content(get_default_css_ui_state(), FONTS_DIR)
 
-            with open(CSS_PATH, 'w', encoding='utf-8') as f:
-                f.write(default_css)
+            atomic_write_text(CSS_PATH, default_css)
 
             self.app_settings["css_ui_state"] = get_default_css_ui_state()
             self.load_and_parse_css_to_gui()
@@ -1686,8 +1799,7 @@ class MainWindow(QMainWindow):
     def save_visual_css(self, show_alert=False):
         try:
             css_content = self.generate_css_content()
-            with open(CSS_PATH, 'w', encoding='utf-8') as f:
-                f.write(css_content)
+            atomic_write_text(CSS_PATH, css_content)
             if hasattr(self, '_get_css_ui_state'):
                 self.app_settings["css_ui_state"] = self._get_css_ui_state()
                 self.save_app_settings()
@@ -2447,6 +2559,8 @@ class MainWindow(QMainWindow):
             dlg.open()
 
     def _on_import_finished(self, imported_items, cancelled):
+        if getattr(self, "_closing", False):
+            return
         timer = getattr(self, "_import_dlg_timer", None)
         if timer is not None and timer.isActive():
             timer.stop()
@@ -2583,6 +2697,9 @@ class MainWindow(QMainWindow):
         self._run_conversion(items, debug=debug)
 
     def _run_conversion(self, items, debug=False):
+        if getattr(self, "_convert_worker", None) is not None and self._convert_worker.isRunning():
+            logger.warning("Повторный запуск конвертации отклонён: конвертация уже выполняется")
+            return
         if not items:
             show_themed_message(self, tr("common.warning"), tr("converter.warn_empty_list"), "warning")
             return
@@ -2627,6 +2744,10 @@ class MainWindow(QMainWindow):
             debug=debug,
             no_cover=no_cover,
             fbc_cmd=fbc_bin,
+            fbc_config=FBC_CONFIG,
+            base_dir=BASE_DIR,
+            app_name=APP_NAME,
+            app_version=APP_VERSION,
             parent=self,
         )
         self._convert_worker.convert_progress.connect(progress_dlg.update_conversion)
@@ -2743,336 +2864,6 @@ class MainWindow(QMainWindow):
 
         if want_retry and failed_items:
             QTimer.singleShot(0, lambda fi=failed_items, d=debug: self._run_conversion(fi, debug=d))
-
-
-class FileImportWorker(QThread):
-    """Фоновый поток сканирования папок/архивов и разбора метаданных FB2 без хранения сырого XML в памяти."""
-
-    progress = pyqtSignal(int, int, str)
-    finished_import = pyqtSignal(list, bool)
-
-    def __init__(self, filepaths, existing_keys=None, parent=None):
-        super().__init__(parent)
-        self.filepaths = list(filepaths or [])
-        self.existing_keys = set(existing_keys or ())
-
-    def run(self):
-        resolved_paths = collect_book_paths(self.filepaths)
-        total = len(resolved_paths)
-        imported = []
-        cancelled = False
-        seen_keys = set(self.existing_keys)
-
-        for idx, path in enumerate(resolved_paths, start=1):
-            if self.isInterruptionRequested():
-                cancelled = True
-                break
-            self.progress.emit(idx, total, os.path.basename(path))
-            for source_key, archive_entry, display_name, xml_bytes in iter_fb2_from_file(path):
-                if self.isInterruptionRequested():
-                    cancelled = True
-                    break
-                if source_key in seen_keys or not xml_bytes:
-                    continue
-                seen_keys.add(source_key)
-
-                meta = parse_metadata(xml_bytes)
-                cover_bytes, cover_mime = extract_cover_from_fb2(xml_bytes)
-                imported.append({
-                    'path': path,
-                    'archive_entry': archive_entry,
-                    'source_key': source_key,
-                    'display_name': display_name,
-                    'meta': meta,
-                    'orig_cover_bytes': cover_bytes,
-                    'orig_cover_mime': cover_mime,
-                    'cover_bytes': cover_bytes,
-                    'cover_mime': cover_mime,
-                    'cover_modified': False,
-                })
-            if cancelled:
-                break
-
-        self.finished_import.emit(imported, cancelled)
-
-
-class ConversionWorker(QThread):
-    convert_progress = pyqtSignal(int, str)
-    email_progress = pyqtSignal(int, str)
-    item_status = pyqtSignal(str, str, str)
-    finished_all = pyqtSignal(int, list, list, str, bool, list)
-
-    def __init__(
-        self, items, selected_format, save_mode, custom_dir,
-        title_style_params, compression, email_enabled, app_settings,
-        debug=False, no_cover=False, fbc_cmd=None, parent=None
-    ):
-        super().__init__(parent)
-        self.items = items
-        self.selected_format = selected_format
-        self.save_mode = save_mode
-        self.custom_dir = custom_dir
-        self.title_style_params = title_style_params
-        self.compression = compression
-        self.email_enabled = email_enabled
-        self.app_settings = app_settings
-        self.debug = bool(debug)
-        self.no_cover = bool(no_cover)
-        self.fbc_cmd = fbc_cmd or FBC_CMD
-        self._cancel_event = threading.Event()
-
-    def cancel(self):
-        """Немедленно сигнализирует отмену всем активным процессам fbc и очереди задач."""
-        self._cancel_event.set()
-        self.requestInterruption()
-
-    def _resolve_worker_count(self, total):
-        raw = str(self.app_settings.get("convert_workers", "auto")).strip().lower()
-        if raw.isdigit():
-            workers = max(1, min(8, int(raw)))
-        else:
-            workers = min(4, max(1, os.cpu_count() or 2))
-        return max(1, min(workers, total))
-
-    def _convert_single_item(self, idx, data):
-        item_id = data.get("item_id", "")
-        original_path = data["path"]
-        source_label = data.get("display_name") or os.path.basename(original_path)
-        display_name = simulate_fbc_target(
-            data["meta"],
-            self.selected_format,
-            self.app_settings.get("filename_mode", "default"),
-            self.app_settings.get("filename_tokens"),
-        )
-        if self.save_mode == "custom" and self.custom_dir and os.path.isdir(self.custom_dir):
-            dest_dir = self.custom_dir
-        else:
-            dest_dir = os.path.dirname(original_path)
-
-        if item_id:
-            self.item_status.emit(item_id, "running", "")
-
-        t0 = time.monotonic()
-        try:
-            created = convert_book_file(
-                self.fbc_cmd, FBC_CONFIG, BASE_DIR,
-                data, dest_dir, self.selected_format, self.title_style_params,
-                compression=self.compression,
-                cancel_event=self._cancel_event,
-                debug=self.debug,
-                no_cover=self.no_cover,
-            )
-            elapsed = time.monotonic() - t0
-            logger.info("Конвертация ОК [%.2fs]: %s -> %s", elapsed, source_label, ", ".join(os.path.basename(p) for p in created))
-            if item_id:
-                self.item_status.emit(item_id, "ok", "")
-            return idx, display_name, source_label, created, None, False
-        except ConversionCancelledError:
-            elapsed = time.monotonic() - t0
-            logger.info("Конвертация ОТМЕНЕНА [%.2fs]: %s", elapsed, source_label)
-            if item_id:
-                self.item_status.emit(item_id, "cancelled", "")
-            return idx, display_name, source_label, [], None, True
-        except Exception as e:
-            elapsed = time.monotonic() - t0
-            logger.error("Конвертация ОШИБКА [%.2fs]: %s: %s", elapsed, source_label, e)
-            if item_id:
-                self.item_status.emit(item_id, "error", str(e))
-            return idx, display_name, source_label, [], str(e), False
-
-    def run(self):
-        total = len(self.items)
-        if total == 0:
-            self.finished_all.emit(0, [], [], "", False, [])
-            return
-
-        workers = self._resolve_worker_count(total)
-        batch_t0 = time.monotonic()
-        logger.info(
-            "Старт пакетной конвертации: книг=%d, формат=%s, потоков=%d, email=%s, debug=%s",
-            total, self.selected_format, workers, self.email_enabled, self.debug
-        )
-
-        results_by_idx = {}
-        errors_by_idx = {}
-        completed = 0
-        cancelled = False
-        email_error = ""
-
-        first_display = simulate_fbc_target(
-            self.items[0]["meta"],
-            self.selected_format,
-            self.app_settings.get("filename_mode", "default"),
-            self.app_settings.get("filename_tokens"),
-        )
-        self.convert_progress.emit(
-            0,
-            tr("converter.progress_convert_file", cur=1, total=total, name=first_display)
-        )
-
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            pending = set()
-            next_idx = 0
-
-            while next_idx < total and len(pending) < workers:
-                if self.isInterruptionRequested() or self._cancel_event.is_set():
-                    cancelled = True
-                    break
-                pending.add(executor.submit(self._convert_single_item, next_idx, self.items[next_idx]))
-                next_idx += 1
-
-            while pending:
-                done, pending = wait(pending, timeout=0.15, return_when=FIRST_COMPLETED)
-                for fut in done:
-                    idx, display_name, source_label, created, err_msg, was_cancelled = fut.result()
-                    if was_cancelled:
-                        cancelled = True
-                        continue
-                    completed += 1
-                    if err_msg:
-                        errors_by_idx[idx] = (source_label, err_msg)
-                    else:
-                        results_by_idx[idx] = created
-                    self.convert_progress.emit(
-                        completed,
-                        tr("converter.progress_convert_file", cur=completed, total=total, name=display_name)
-                    )
-
-                if self.isInterruptionRequested() or self._cancel_event.is_set():
-                    cancelled = True
-                    for fut in list(pending):
-                        fut.cancel()
-                    continue
-
-                while next_idx < total and len(pending) < workers:
-                    if self.isInterruptionRequested() or self._cancel_event.is_set():
-                        cancelled = True
-                        break
-                    pending.add(executor.submit(self._convert_single_item, next_idx, self.items[next_idx]))
-                    next_idx += 1
-
-        converted_files = []
-        for idx in sorted(results_by_idx.keys()):
-            converted_files.extend(results_by_idx[idx])
-        success_count = len(results_by_idx)
-        convert_errors = [errors_by_idx[idx] for idx in sorted(errors_by_idx.keys())]
-        failed_items = [self.items[idx] for idx in sorted(errors_by_idx.keys())]
-
-        logger.info(
-            "Завершение конвертации за %.2fs: успешно=%d, ошибок=%d, отменено=%s",
-            time.monotonic() - batch_t0, success_count, len(convert_errors), cancelled
-        )
-
-        if not cancelled:
-            self.convert_progress.emit(
-                total,
-                tr("converter.progress_convert_done", total=total)
-            )
-
-        if not cancelled and self.email_enabled and converted_files:
-            try:
-                logger.info("Отправка %d файлов на %s", len(converted_files), self.app_settings.get("email_to", ""))
-                send_email_attachments(
-                    self.app_settings,
-                    converted_files,
-                    APP_NAME,
-                    APP_VERSION,
-                    progress_callback=lambda pct, txt: self.email_progress.emit(pct, txt)
-                )
-                logger.info("Отправка по SMTP завершена успешно")
-            except Exception as e:
-                logger.exception("Ошибка отправки по SMTP: %s", e)
-                email_error = str(e)
-
-        self.finished_all.emit(success_count, converted_files, convert_errors, email_error, cancelled, failed_items)
-
-
-class TestEmailWorker(QThread):
-    """Фоновый поток для отправки тестового письма SMTP без блокировки интерфейса."""
-    finished_test = pyqtSignal(bool, str)
-
-    def __init__(self, app_settings, parent=None):
-        super().__init__(parent)
-        self.app_settings = app_settings
-
-    def run(self):
-        try:
-            dispatch_test_email(self.app_settings, APP_NAME, APP_VERSION)
-            self.finished_test.emit(True, "")
-        except Exception as e:
-            self.finished_test.emit(False, str(e))
-
-
-class SingleInstanceManager(QObject):
-    """Обеспечивает единый экземпляр приложения на Windows/macOS через QLocalServer/QLocalSocket."""
-
-    activation_requested = pyqtSignal(list)
-
-    def __init__(self, server_name=None, parent=None):
-        super().__init__(parent)
-        if not server_name:
-            try:
-                user_slug = "".join(ch for ch in getpass.getuser() if ch.isalnum() or ch in ("_", "-")) or "user"
-            except Exception:
-                user_slug = "user"
-            server_name = f"fbc_gui_single_instance_{user_slug}"
-        self.server_name = server_name
-        self._server = None
-
-    def try_send_to_running(self, paths=None):
-        """Пытается передать пути уже запущенному экземпляру; возвращает True, если он ответил."""
-        if not HAS_QT_NETWORK or QLocalSocket is None:
-            return False
-        sock = QLocalSocket()
-        sock.connectToServer(self.server_name)
-        if not sock.waitForConnected(250):
-            return False
-        payload = json.dumps({"paths": list(paths or [])}, ensure_ascii=False).encode("utf-8")
-        sock.write(payload)
-        sock.flush()
-        sock.waitForBytesWritten(500)
-        sock.disconnectFromServer()
-        return True
-
-    def start_server(self):
-        """Запускает локальный сервер для приёма файлов от повторных запусков."""
-        if not HAS_QT_NETWORK or QLocalServer is None:
-            return False
-        QLocalServer.removeServer(self.server_name)
-        self._server = QLocalServer(self)
-        self._server.newConnection.connect(self._on_new_connection)
-        if not self._server.listen(self.server_name):
-            logger.warning("Не удалось запустить QLocalServer (%s): %s", self.server_name, self._server.errorString())
-            self._server = None
-            return False
-        return True
-
-    def _on_new_connection(self):
-        if self._server is None:
-            return
-        while self._server.hasPendingConnections():
-            conn = self._server.nextPendingConnection()
-            if conn is None:
-                continue
-            conn.waitForReadyRead(300)
-            raw = bytes(conn.readAll())
-            conn.disconnectFromServer()
-            conn.deleteLater()
-            paths = []
-            if raw:
-                try:
-                    data = json.loads(raw.decode("utf-8", errors="replace"))
-                    if isinstance(data, dict) and isinstance(data.get("paths"), list):
-                        paths = [p for p in data["paths"] if isinstance(p, str) and os.path.exists(p)]
-                except Exception:
-                    pass
-            self.activation_requested.emit(paths)
-
-    def close(self):
-        if self._server is not None:
-            self._server.close()
-            QLocalServer.removeServer(self.server_name)
-            self._server = None
 
 
 class FbcApplication(QApplication):

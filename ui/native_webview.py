@@ -4,6 +4,7 @@ import sys
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit
 
+from core.config import atomic_write_text
 from core.logger import get_logger
 
 logger = get_logger("native_webview")
@@ -132,8 +133,7 @@ class MacOSWKWebViewWidget(QWidget):
         if base_dir and os.path.isdir(base_dir):
             render_path = os.path.join(base_dir, ".preview_render.html")
             try:
-                with open(render_path, "w", encoding="utf-8") as f:
-                    f.write(html_text)
+                atomic_write_text(render_path, html_text)
                 file_url = self._NSURL.fileURLWithPath_(os.path.abspath(render_path))
                 dir_url = self._NSURL.fileURLWithPath_isDirectory_(os.path.abspath(base_dir), True)
                 self._wk_view.loadFileURL_allowingReadAccessToURL_(file_url, dir_url)
@@ -170,8 +170,7 @@ class WindowsWebView2Widget(QWidget):
         if base_dir and os.path.isdir(base_dir):
             render_path = os.path.join(base_dir, ".preview_render.html")
             try:
-                with open(render_path, "w", encoding="utf-8") as f:
-                    f.write(html_text)
+                atomic_write_text(render_path, html_text)
                 file_url = QUrl.fromLocalFile(os.path.abspath(render_path)).toString()
                 if hasattr(self._wv, "load"):
                     self._wv.load(QUrl.fromLocalFile(os.path.abspath(render_path)))

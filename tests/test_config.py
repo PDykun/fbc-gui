@@ -9,6 +9,8 @@ from unittest.mock import patch
 from core.config import (
     DEFAULT_OUTPUT_NAME_TEMPLATE,
     DEVICE_PROFILES,
+    _save_smtp_password_secure,
+    atomic_write_text,
     get_default_app_settings,
     is_secure_password_storage_available,
     load_app_settings,
@@ -204,6 +206,48 @@ class TestConfig(unittest.TestCase):
             self.assertFalse(is_secure_password_storage_available())
         with patch("core.config.HAS_KEYRING", False), patch("core.config.sys.platform", "darwin"):
             self.assertTrue(is_secure_password_storage_available())
+
+    def test_atomic_write_text_leaves_no_temp_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = os.path.join(td, "sample.json")
+            atomic_write_text(target, '{"ok": true}')
+            with open(target, encoding="utf-8") as f:
+                self.assertEqual(json.load(f), {"ok": True})
+            self.assertEqual(os.listdir(td), ["sample.json"])
+
+    def test_load_app_settings_backs_up_corrupted_json(self):
+        with tempfile.TemporaryDirectory() as td:
+            sp = os.path.join(td, "settings.json")
+            raw_broken = "{not valid json"
+            with open(sp, "w", encoding="utf-8") as f:
+                f.write(raw_broken)
+
+            st = get_default_app_settings()
+            with patch("core.config._load_smtp_password_secure", return_value=""), patch(
+                "core.config._save_smtp_password_secure", return_value=True
+            ):
+                load_app_settings(sp, st)
+
+            bak_path = f"{sp}.bak"
+            self.assertTrue(os.path.isfile(bak_path))
+            with open(bak_path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), raw_broken)
+
+    def test_save_smtp_password_macos_uses_stdin_not_argv(self):
+        secret = 'p@ss "word" \\ тест'
+        fake_res = subprocess.CompletedProcess(["security", "-i"], 0, stdout="", stderr="")
+        with patch("core.config.HAS_KEYRING", False), patch(
+            "core.config.sys.platform", "darwin"
+        ), patch("core.config.subprocess.run", return_value=fake_res) as mock_run:
+            ok = _save_smtp_password_secure(secret)
+            self.assertTrue(ok)
+            mock_run.assert_called_once()
+            args, kwargs = mock_run.call_args
+            cmd = args[0]
+            self.assertEqual(cmd, ["security", "-i"])
+            self.assertNotIn(secret, cmd)
+            self.assertIn(secret.encode("utf-8").hex(), kwargs.get("input", ""))
+            self.assertIn("-X ", kwargs.get("input", ""))
 
 
 if __name__ == "__main__":

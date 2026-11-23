@@ -1,4 +1,5 @@
 import os
+import ssl
 import smtplib
 from email.message import EmailMessage
 
@@ -8,13 +9,25 @@ from core.i18n import tr
 MAX_EMAIL_ATTACHMENTS_BYTES = 20 * 1024 * 1024  # 20 МБ на одно письмо (запас под base64/MIME)
 
 
+def _build_ssl_context():
+    """Создаёт SSL-контекст с актуальным набором сертификатов certifi (при наличии)."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 def is_smtp_configured(app_settings):
     """Проверяет, заполнены ли обязательные параметры SMTP (независимо от автоотправки)."""
     smtp_host = app_settings.get("smtp_host", "").strip()
     smtp_port = str(app_settings.get("smtp_port", "")).strip()
     email_to = app_settings.get("email_to", "").strip()
     sender = (app_settings.get("email_from", "") or app_settings.get("smtp_user", "")).strip()
-    return bool(smtp_host and smtp_port.isdigit() and email_to and sender and "@" in email_to)
+    if not (smtp_host and smtp_port.isdigit() and email_to and sender and "@" in email_to):
+        return False
+    port_num = int(smtp_port)
+    return 1 <= port_num <= 65535
 
 
 def is_email_auto_send_ready(app_settings):
@@ -70,6 +83,8 @@ def _build_email_message(email_from, email_to, subject, batch_files, app_name, a
 def send_converted_files_via_email(app_settings, file_paths, app_name, app_version, progress_callback=None):
     if not file_paths:
         return
+    if not is_smtp_configured(app_settings):
+        raise ValueError(tr("settings.email_test_incomplete"))
 
     smtp_host = app_settings.get("smtp_host", "").strip()
     smtp_port = int(str(app_settings.get("smtp_port", "465")).strip())
@@ -103,14 +118,15 @@ def send_converted_files_via_email(app_settings, file_paths, app_name, app_versi
                 progress_callback(pct, tr("converter.progress_email_send", email=email_to))
             server.send_message(msg)
 
+    ssl_ctx = _build_ssl_context() if smtp_sec in ("ssl", "starttls") else None
     if smtp_sec == "ssl":
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30) as server:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30, context=ssl_ctx) as server:
             _send_all(server)
     else:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
             server.ehlo()
             if smtp_sec == "starttls":
-                server.starttls()
+                server.starttls(context=ssl_ctx)
                 server.ehlo()
             _send_all(server)
 
@@ -150,13 +166,14 @@ def send_test_email(app_settings, app_name, app_version):
             server.login(smtp_user, smtp_password)
         server.send_message(msg)
 
+    ssl_ctx = _build_ssl_context() if smtp_sec in ("ssl", "starttls") else None
     if smtp_sec == "ssl":
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as server:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20, context=ssl_ctx) as server:
             _dispatch(server)
     else:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
             server.ehlo()
             if smtp_sec == "starttls":
-                server.starttls()
+                server.starttls(context=ssl_ctx)
                 server.ehlo()
             _dispatch(server)

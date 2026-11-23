@@ -1,5 +1,7 @@
 altgraph==0.17.5
+certifi>=2024.8.30
 importlib_metadata==8.7.1
+keyring>=25.0.0
 macholib==1.16.4; sys_platform == "darwin"
 packaging==26.3
 pillow==11.3.0

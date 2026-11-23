@@ -29,7 +29,8 @@
     "warning": "Warning",
     "error": "Error",
     "done": "Done",
-    "choose_color": "Choose color"
+    "choose_color": "Choose color",
+    "busy_workers_warning": "Please wait for the current background operation (import, conversion, or email sending) to finish before performing this action."
   },
   "converter": {
     "banner_title": "Book List and Metadata Management",

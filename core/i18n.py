@@ -1,6 +1,7 @@
 import os
 import json
 from PyQt6.QtCore import QLocale
+from core.logger import get_logger
 
 
 def _deep_merge_dicts(base, override):
@@ -29,7 +30,7 @@ class LocaleManager:
                     data = json.load(f)
                 return data if isinstance(data, dict) else {}
             except Exception as e:
-                print(f"Ошибка чтения языкового файла {path}: {e}")
+                get_logger("i18n").warning("Ошибка чтения языкового файла %s: %s", path, e)
         return {}
 
     def _load_lang_dict(self, code):

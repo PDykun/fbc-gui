@@ -55,6 +55,7 @@ jobs:
             --add-data "locales:locales" \
             --add-data "themes:themes" \
             --add-data "presets_defaults:presets_defaults" \
+            --collect-data certifi \
             fbc_gui.py
 
           PLIST_PATH="dist/FBC GUI.app/Contents/Info.plist"
@@ -188,6 +189,7 @@ jobs:
             --distpath dist `
             --workpath build_win `
             --hidden-import=keyring.backends.Windows `
+            --collect-data=certifi `
             --version-file build_win/version_info.txt `
             --icon icon.ico `
             --add-data "icon.ico;." `

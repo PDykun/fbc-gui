@@ -333,6 +333,132 @@ def generate_css_content(st, fonts_dir):
     return '\n'.join(css_lines) + '\n'
 
 
+def _is_italic_font_file(fname):
+    stem = os.path.splitext(os.path.basename(fname or ""))[0].lower()
+    return bool(re.search(r'(?:italic|oblique|boit|(?:^|[-_\d])it)$', stem))
+
+
+def _is_bold_font_file(fname):
+    stem = os.path.splitext(os.path.basename(fname or ""))[0].lower()
+    return bool(re.search(r'(?:bold|black|semibold|demibold|(?:^|[-_\d])bo(?:it)?)$', stem))
+
+
+def _find_sibling_font_variants(fonts_dir, base_file):
+    """Ищет родственные начертания (Italic / Bold / BoldItalic) рядом с выбранным обычным шрифтом."""
+    variants = {}
+    if not base_file or not fonts_dir or not os.path.isdir(fonts_dir):
+        return variants
+    if _is_italic_font_file(base_file) or _is_bold_font_file(base_file):
+        return variants
+
+    stem, ext = os.path.splitext(base_file)
+    candidates = {
+        ("normal", "italic"): [],
+        ("bold", "normal"): [],
+        ("bold", "italic"): [],
+    }
+    if stem.endswith("_Regular"):
+        prefix = stem[:-8]
+        candidates[("normal", "italic")].extend([f"{prefix}_Italic{ext}", f"{prefix}-Italic{ext}"])
+        candidates[("bold", "normal")].extend([f"{prefix}_Bold{ext}", f"{prefix}-Bold{ext}"])
+        candidates[("bold", "italic")].extend([f"{prefix}_Bold-Italic{ext}", f"{prefix}_BoldItalic{ext}", f"{prefix}-BoldItalic{ext}"])
+    elif stem.endswith("-Regular"):
+        prefix = stem[:-8]
+        candidates[("normal", "italic")].extend([f"{prefix}-Italic{ext}", f"{prefix}_Italic{ext}"])
+        candidates[("bold", "normal")].extend([f"{prefix}-Bold{ext}", f"{prefix}_Bold{ext}"])
+        candidates[("bold", "italic")].extend([f"{prefix}-BoldItalic{ext}", f"{prefix}-Bold-Italic{ext}", f"{prefix}_BoldItalic{ext}"])
+    else:
+        candidates[("normal", "italic")].extend([f"{stem}It{ext}", f"{stem}-Italic{ext}", f"{stem}_Italic{ext}"])
+        candidates[("bold", "normal")].extend([f"{stem}Bo{ext}", f"{stem}-Bold{ext}", f"{stem}_Bold{ext}"])
+        candidates[("bold", "italic")].extend([f"{stem}BoIt{ext}", f"{stem}-BoldItalic{ext}", f"{stem}_BoldItalic{ext}"])
+
+    for key, names in candidates.items():
+        for cand in names:
+            if os.path.isfile(os.path.join(fonts_dir, cand)):
+                variants[key] = cand
+                break
+    return variants
+
+
+def _build_preview_font_faces(fonts_dir, para_file, title_file, author_file, drop_file):
+    """
+    Генерирует изолированные @font-face для превью (fbc-para, fbc-title, fbc-author, fbc-drop),
+    чтобы файлы одного семейства (например Newton15.ttf / Newton15Bo.ttf / Newton15It.ttf)
+    не перезаписывали друг друга в WebKit/браузере.
+    """
+    fonts_url_dir = fonts_dir.replace("\\", "/")
+    none_vals = ("__none__", "Нет", "None", "")
+
+    has_para = para_file not in none_vals
+    has_title = title_file not in none_vals
+    has_author = author_file not in none_vals
+    has_drop = drop_file not in none_vals
+
+    ff_lines = []
+
+    def _add_face(fam, fname, weight="normal", style="normal"):
+        ff_lines.append(
+            f'@font-face {{ font-family: "{fam}"; src: url("file://{fonts_url_dir}/{fname}"); '
+            f'font-weight: {weight}; font-style: {style}; }}'
+        )
+
+    if has_para:
+        _add_face("fbc-para", para_file, "normal", "normal")
+        for (wt, st_val), sib_file in _find_sibling_font_variants(fonts_dir, para_file).items():
+            _add_face("fbc-para", sib_file, wt, st_val)
+
+    if has_title:
+        _add_face("fbc-title", title_file, "normal", "normal")
+        if _is_bold_font_file(title_file):
+            _add_face("fbc-title", title_file, "bold", "normal")
+        else:
+            sibs = _find_sibling_font_variants(fonts_dir, title_file)
+            if ("bold", "normal") in sibs:
+                _add_face("fbc-title", sibs[("bold", "normal")], "bold", "normal")
+
+    if has_author:
+        if _is_italic_font_file(author_file):
+            _add_face("fbc-author", author_file, "normal", "italic")
+            _add_face("fbc-author", author_file, "normal", "normal")
+            if _is_bold_font_file(author_file):
+                _add_face("fbc-author", author_file, "bold", "italic")
+                _add_face("fbc-author", author_file, "bold", "normal")
+            else:
+                _add_face("fbc-author", author_file, "bold", "italic")
+                _add_face("fbc-author", author_file, "bold", "normal")
+        else:
+            _add_face("fbc-author", author_file, "normal", "normal")
+            if _is_bold_font_file(author_file):
+                _add_face("fbc-author", author_file, "bold", "normal")
+            else:
+                sibs = _find_sibling_font_variants(fonts_dir, author_file)
+                for (wt, st_val), sib_file in sibs.items():
+                    _add_face("fbc-author", sib_file, wt, st_val)
+
+    if has_drop:
+        ff_lines.append(
+            f'@font-face {{ font-family: "fbc-drop"; src: url("file://{fonts_url_dir}/{drop_file}"); }}'
+        )
+
+    para_stack = "'fbc-para', Georgia, serif" if has_para else "Georgia, serif"
+    title_stack = (
+        f"'fbc-title', {para_stack}" if has_title else para_stack
+    )
+    author_stack = (
+        f"'fbc-author', {para_stack}" if has_author else para_stack
+    )
+    drop_stack = (
+        f"'fbc-drop', {para_stack}" if has_drop else para_stack
+    )
+
+    return "\n        ".join(ff_lines), {
+        "para": para_stack,
+        "title": title_stack,
+        "author": author_stack,
+        "drop": drop_stack,
+    }
+
+
 def build_full_preview_html(
     st,
     font_families,
@@ -348,7 +474,9 @@ def build_full_preview_html(
     dropcaps_enable=True,
     use_web_engine=False,
 ):
-    """Собирает HTML-страницу для встроенного превью (QWebEngineView / QTextEdit) или открытия в браузере."""
+    """Собирает HTML-страницу для встроенного превью (WKWebView / WebView2 / QWebEngineView / QTextEdit) или браузера."""
+    import html as _html
+
     h1_sz, h1_cl, h1_al = st["h1_sz"], st["h1_cl"], st["h1_al"]
     auth_sz, auth_cl, auth_al, auth_style = st["auth_sz"], st["auth_cl"], st["auth_al"], st["auth_style"]
     h2_sz, h2_cl, h2_al = st["h2_sz"], st["h2_cl"], st["h2_al"]
@@ -369,27 +497,21 @@ def build_full_preview_html(
     author_file = st.get("font_author") or "PT-Astra-Serif_Regular.ttf"
     drop_file = st.get("font_drop") or "PomorskyUnicode.otf"
 
-    para_fam = font_families.get("para", "Georgia")
-    title_fam = font_families.get("title", "Georgia")
-    author_fam = font_families.get("author", "Georgia")
-    drop_fam = font_families.get("drop", "Georgia")
-
     rich_html = bool(for_browser or use_web_engine)
-    fonts_url_dir = fonts_dir.replace("\\", "/")
-    font_faces = ""
     if rich_html:
-        ff_lines = []
-        seen_ff = set()
-        for fam, fname in [
-            (para_fam, para_file),
-            (title_fam, title_file),
-            (author_fam, author_file),
-            (drop_fam, drop_file),
-        ]:
-            if fname and fname not in ("__none__", "Нет", "None") and (fam, fname) not in seen_ff:
-                seen_ff.add((fam, fname))
-                ff_lines.append(f'@font-face {{ font-family: "{fam}"; src: url("file://{fonts_url_dir}/{fname}"); }}')
-        font_faces = "\n        ".join(ff_lines)
+        font_faces, stacks = _build_preview_font_faces(
+            fonts_dir, para_file, title_file, author_file, drop_file
+        )
+        para_stack = stacks["para"]
+        title_stack = stacks["title"]
+        author_stack = stacks["author"]
+        drop_stack = stacks["drop"]
+    else:
+        font_faces = ""
+        para_stack = f"'{font_families.get('para', 'Georgia')}', Georgia, serif"
+        title_stack = f"'{font_families.get('title', 'Georgia')}', Georgia, serif"
+        author_stack = f"'{font_families.get('author', 'Georgia')}', Georgia, serif"
+        drop_stack = f"'{font_families.get('drop', 'Georgia')}', Georgia, serif"
 
     def _disp_font(fname):
         return tr("styles.font_none") if fname in ("__none__", "Нет", "None", "") else fname
@@ -402,55 +524,85 @@ def build_full_preview_html(
     note_bg_css = note_bg if note_bg != "transparent" else "#FDFBF7"
     pf_val = st.get("pdf_frame", "0")
     page_outline_css = f"outline: {pf_val} solid #EBE8E0;" if pf_val != "0" else ""
+    gray_css = "filter: grayscale(100%);" if grayscale else ""
 
-    if book_preview and (book_preview.get("title") or book_preview.get("blocks")):
-        import html as _html
-        parts = []
+    def _render_cover_placeholder(author_text, title_text, series_text=""):
+        a_esc = _html.escape(author_text or "")
+        t_esc = _html.escape(title_text or "")
+        s_esc = _html.escape(series_text or "")
+        s_html = f'<div class="cover-ph-series">{s_esc}</div>' if s_esc else ""
+        return (
+            f'<div class="cover-placeholder" style="{gray_css}">'
+            f'  <div class="cover-ph-inner">'
+            f'    <div class="cover-ph-author" style="font-family: {author_stack}; font-style: {auth_style};">{a_esc}</div>'
+            f'    <div class="cover-ph-ornament">&#10086;</div>'
+            f'    <div class="cover-ph-title" style="font-family: {title_stack};">{t_esc}</div>'
+            f'    {s_html}'
+            f'  </div>'
+            f'</div>'
+        )
+
+    is_book_mode = bool(book_preview and (book_preview.get("title") or book_preview.get("blocks")))
+
+    if is_book_mode:
+        running_title = book_preview.get("title") or ""
+        if book_preview.get("series"):
+            running_title = f'{book_preview["series"]} — {running_title}' if running_title else book_preview["series"]
+
         if book_preview.get("cover_data_uri"):
-            gray_css = "filter: grayscale(100%);" if grayscale else ""
-            parts.append(
-                f'<div style="text-align: {img_al}; margin: 0 0 18px 0;">'
-                f'<img src="{book_preview["cover_data_uri"]}" style="max-height: 240px; max-width: {img_w}; border-radius: 4px; box-shadow: 0 3px 12px rgba(0,0,0,0.16); {gray_css}">'
-                f'</div>'
+            cover_html = (
+                f'<img class="book-cover-img" src="{book_preview["cover_data_uri"]}" '
+                f'style="{gray_css}">'
             )
+        else:
+            cover_html = _render_cover_placeholder(
+                book_preview.get("author", ""),
+                book_preview.get("title", ""),
+                book_preview.get("series", ""),
+            )
+
+        right_parts = []
         if book_preview.get("author"):
-            parts.append(
-                f'<div style="font-family: \'{author_fam}\', Georgia, serif; font-size: {auth_sz}; color: {auth_cl}; text-align: {auth_al}; font-style: {auth_style}; font-weight: bold; margin-top: 4px; margin-bottom: 6px;">'
+            right_parts.append(
+                f'<div class="book-author" style="font-family: {author_stack}; font-size: {auth_sz}; color: {auth_cl}; '
+                f'text-align: {auth_al}; font-style: {auth_style}; font-weight: bold; margin: 4px 0 6px 0;">'
                 f'{_html.escape(book_preview["author"])}</div>'
             )
         if book_preview.get("title"):
-            parts.append(
-                f'<div style="font-family: \'{title_fam}\', Georgia, serif; font-size: {h1_sz}; color: {h1_cl}; text-align: {h1_al}; font-weight: bold; font-style: normal; margin-top: 4px; margin-bottom: 8px;">'
+            right_parts.append(
+                f'<div class="book-title" style="font-family: {title_stack}; font-size: {h1_sz}; color: {h1_cl}; '
+                f'text-align: {h1_al}; font-weight: bold; font-style: normal; margin: 4px 0 8px 0;">'
                 f'{_html.escape(book_preview["title"])}</div>'
             )
         if book_preview.get("series"):
-            parts.append(
-                f'<div style="font-family: \'{para_fam}\', Georgia, serif; text-align: {sub_al}; font-style: italic; font-weight: bold; color: #555555; margin-bottom: 14px;">'
-                f'{_html.escape(book_preview["series"])}</div>'
+            right_parts.append(
+                f'<div style="font-family: {para_stack}; text-align: {sub_al}; font-style: italic; font-weight: bold; '
+                f'color: #555555; margin-bottom: 14px;">{_html.escape(book_preview["series"])}</div>'
             )
         if book_preview.get("annotation"):
             anno_html = "<br>".join(book_preview["annotation"])
-            parts.append(
-                f'<div style="font-family: \'{para_fam}\', Georgia, serif; font-size: {anno_sz}; color: {anno_cl}; text-align: {anno_al}; font-style: {anno_style}; margin: 14px 28px;">'
-                f'{anno_html}</div>'
+            right_parts.append(
+                f'<div style="font-family: {para_stack}; font-size: {anno_sz}; color: {anno_cl}; text-align: {anno_al}; '
+                f'font-style: {anno_style}; font-weight: normal; margin: 14px 12px;">{anno_html}</div>'
             )
         if book_preview.get("epigraph_lines"):
             epi_html = "<br>".join(book_preview["epigraph_lines"])
-            parts.append(
-                f'<div style="font-family: \'{para_fam}\', Georgia, serif; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; font-style: {epi_style}; margin-left: 32%; margin-top: 12px; margin-bottom: 4px;">'
-                f'{epi_html}</div>'
+            right_parts.append(
+                f'<div style="font-family: {para_stack}; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; '
+                f'font-style: {epi_style}; margin-left: 22%; margin-top: 14px; margin-bottom: 4px;">{epi_html}</div>'
             )
             if book_preview.get("epigraph_author"):
-                parts.append(
-                    f'<div style="font-family: \'{para_fam}\', Georgia, serif; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; font-weight: bold; margin-left: 32%; margin-bottom: 16px;">'
+                right_parts.append(
+                    f'<div style="font-family: {para_stack}; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; '
+                    f'font-weight: bold; font-style: normal; margin-left: 22%; margin-bottom: 10px;">'
                     f'{book_preview["epigraph_author"]}</div>'
                 )
 
-        parts.append('<hr class="divider">')
-
+        body_parts = []
         if book_preview.get("chapter_title"):
-            parts.append(
-                f'<div style="font-family: \'{para_fam}\', Georgia, serif; font-size: {h2_sz}; color: {h2_cl}; text-align: {h2_al}; font-weight: bold; margin-top: 16px; margin-bottom: 10px;">'
+            body_parts.append(
+                f'<div class="chapter-heading" style="font-family: {para_stack}; font-size: {h2_sz}; color: {h2_cl}; '
+                f'text-align: {h2_al}; font-weight: bold; font-style: normal; margin: 0 0 12px 0;">'
                 f'{book_preview["chapter_title"]}</div>'
             )
 
@@ -462,82 +614,271 @@ def build_full_preview_html(
                     if m_lead:
                         lead_punct, first_ch, rest = m_lead.group(1), m_lead.group(2), m_lead.group(3)
                         dropcap_used = True
-                        parts.append(
-                            f'<p style="font-family: \'{para_fam}\', Georgia, serif; font-weight: normal; font-style: normal; text-indent: 0; text-align: {p_al}; margin: 6px 0;">'
-                            f'{lead_punct}<span style="font-family: \'{drop_fam}\', Georgia, serif; font-size: {drop_sz}; color: {drop_cl}; font-weight: bold; float: left; line-height: 0.85; margin-right: 6px;">{first_ch}</span>{rest}</p>'
+                        body_parts.append(
+                            f'<p class="has-dropcap" style="font-family: {para_stack}; font-weight: normal; font-style: normal; '
+                            f'text-indent: 0; text-align: {p_al}; margin: 0;">'
+                            f'{lead_punct}<span class="dropcap" style="font-family: {drop_stack}; font-size: {drop_sz}; '
+                            f'color: {drop_cl}; font-weight: bold; font-style: normal; float: left; line-height: 0.82; '
+                            f'margin: 2px 6px 0 0;">{first_ch}</span>{rest}</p>'
                         )
                         continue
-                parts.append(
-                    f'<p style="font-family: \'{para_fam}\', Georgia, serif; font-weight: normal; font-style: normal; text-indent: {indent_val}; text-align: {p_al}; margin: 6px 0;">'
-                    f'{bcontent}</p>'
+                body_parts.append(
+                    f'<p style="font-family: {para_stack}; font-weight: normal; font-style: normal; '
+                    f'text-indent: {indent_val}; text-align: {p_al}; margin: 0;">{bcontent}</p>'
                 )
             elif btype == "subtitle":
-                parts.append(
-                    f'<div style="font-family: \'{para_fam}\', Georgia, serif; text-align: {sub_al}; font-style: italic; font-weight: bold; color: #555555; margin: 12px 0;">'
-                    f'{bcontent}</div>'
+                body_parts.append(
+                    f'<div style="font-family: {para_stack}; text-align: {sub_al}; font-style: italic; font-weight: bold; '
+                    f'color: #555555; margin: 10px 0; break-after: avoid;">{bcontent}</div>'
                 )
             elif btype == "empty":
-                parts.append('<div style="height: 0.8em;"></div>')
+                body_parts.append('<div style="height: 0.8em;"></div>')
             elif btype == "poem":
-                parts.append(
-                    f'<div style="font-family: \'{para_fam}\', Georgia, serif; font-size: {poem_sz}; color: {poem_cl}; text-align: {poem_al}; font-style: {poem_style}; margin: 12px 2.5em;">'
-                    f'{bcontent}</div>'
+                body_parts.append(
+                    f'<div style="font-family: {para_stack}; font-size: {poem_sz}; color: {poem_cl}; text-align: {poem_al}; '
+                    f'font-style: {poem_style}; margin: 10px 1.8em; break-inside: avoid;">{bcontent}</div>'
                 )
             elif btype == "cite":
-                parts.append(
-                    f'<div style="font-family: \'{para_fam}\', Georgia, serif; font-size: {epi_sz}; color: {epi_cl}; font-style: italic; margin: 10px 2em; padding-left: 12px; border-left: 2px solid #cbd5e1;">'
-                    f'{bcontent}</div>'
+                body_parts.append(
+                    f'<div style="font-family: {para_stack}; font-size: {epi_sz}; color: {epi_cl}; font-style: italic; '
+                    f'margin: 10px 1.2em; padding-left: 10px; border-left: 2px solid #cbd5e1; break-inside: avoid;">{bcontent}</div>'
                 )
 
         if book_preview.get("footnote_paras"):
             fn_hdr = f'<div style="font-weight: bold; margin-bottom: 4px;">[{book_preview["footnote_title"]}]</div>' if book_preview.get("footnote_title") else ""
             fn_body = "<br>".join(book_preview["footnote_paras"])
-            parts.append(
-                f'<div style="font-family: \'{para_fam}\', Georgia, serif; font-size: {note_sz}; color: {note_cl}; background-color: {note_bg_css}; border: {note_border}; font-style: {note_style}; padding: 8px 12px; border-radius: 4px; margin: 14px 0;">'
+            body_parts.append(
+                f'<div style="font-family: {para_stack}; font-size: {note_sz}; color: {note_cl}; '
+                f'background-color: {note_bg_css}; border: {note_border}; font-style: {note_style}; '
+                f'padding: 8px 12px; border-radius: 4px; margin: 12px 0; break-inside: avoid;">'
                 f'{fn_hdr}{fn_body}</div>'
             )
 
-        parts.append(
-            f'<div style="text-align: center; font-size: 85%; font-style: italic; color: #888888; margin-top: 20px;">'
-            f'{tr("preview.sample_footer", app=app_name, ver=app_version)}</div>'
+        # Заполняем правую страницу первого разворота (стр. 2) началом главы, чтобы она была заполнена полностью наравне с обложкой
+        def _plain_len(html_chunk):
+            return len(re.sub(r'<[^>]+>', '', html_chunk or '').strip())
+
+        front_chars = sum(_plain_len(p) for p in right_parts)
+        target_right_chars = 1650
+        if body_parts:
+            right_parts.append('<hr class="divider">')
+            taken = 0
+            acc_chars = front_chars
+            min_take = 4 if front_chars < 900 else 3
+            while taken < len(body_parts):
+                chunk = body_parts[taken]
+                chunk_len = _plain_len(chunk)
+                if taken == 0 and 'class="chapter-heading"' in chunk:
+                    right_parts.append(chunk)
+                    acc_chars += chunk_len + 120
+                    taken += 1
+                    continue
+                if taken >= min_take and acc_chars + chunk_len > target_right_chars:
+                    break
+                right_parts.append(chunk)
+                acc_chars += max(chunk_len, 80)
+                taken += 1
+                if acc_chars >= target_right_chars and taken >= min_take:
+                    break
+            body_parts = body_parts[taken:]
+
+        extra_table_html = ""
+    else:
+        running_title = tr("preview.sample_title")
+        cover_html = _render_cover_placeholder(
+            tr("preview.sample_author"),
+            tr("preview.sample_title"),
         )
-        body_inner = "\n    ".join(parts)
+        right_parts = [
+            f'<div class="book-author" style="font-family: {author_stack}; font-size: {auth_sz}; color: {auth_cl}; '
+            f'text-align: {auth_al}; font-style: {auth_style}; font-weight: bold; margin: 4px 0 6px 0;">'
+            f'{tr("preview.sample_author")}</div>',
+            f'<div class="book-title" style="font-family: {title_stack}; font-size: {h1_sz}; color: {h1_cl}; '
+            f'text-align: {h1_al}; font-weight: bold; font-style: normal; margin: 4px 0 10px 0;">'
+            f'{tr("preview.sample_title")}</div>',
+            f'<div style="font-family: {para_stack}; text-align: {sub_al}; font-style: italic; font-weight: bold; '
+            f'color: #555555; margin-bottom: 14px;">{tr("preview.sample_subtitle")}</div>',
+            f'<div style="font-family: {para_stack}; font-size: {anno_sz}; color: {anno_cl}; text-align: {anno_al}; '
+            f'font-style: {anno_style}; font-weight: normal; margin: 14px 12px;">'
+            f'<b>{tr("preview.sample_anno_lbl")}</b> {tr("preview.sample_anno_txt")}</div>',
+            f'<div style="font-family: {para_stack}; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; '
+            f'font-style: {epi_style}; margin-left: 22%; margin-top: 14px; margin-bottom: 4px;">'
+            f'{tr("preview.sample_epi_txt")}</div>',
+            f'<div style="font-family: {para_stack}; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; '
+            f'font-weight: bold; font-style: normal; margin-left: 22%; margin-bottom: 10px;">'
+            f'{tr("preview.sample_epi_auth")}</div>',
+            '<hr class="divider">',
+            f'<div class="chapter-heading" style="font-family: {para_stack}; font-size: {h2_sz}; color: {h2_cl}; '
+            f'text-align: {h2_al}; font-weight: bold; font-style: normal; margin: 0 0 10px 0;">'
+            f'{tr("preview.sample_h2")}</div>',
+            f'<p class="has-dropcap" style="font-family: {para_stack}; font-weight: normal; font-style: normal; '
+            f'text-indent: 0; text-align: {p_al}; margin: 0;">'
+            f'<span class="dropcap" style="font-family: {drop_stack}; font-size: {drop_sz}; color: {drop_cl}; '
+            f'font-weight: bold; font-style: normal; float: left; line-height: 0.82; margin: 2px 6px 0 0;">'
+            f'{tr("preview.sample_drop_letter")}</span>{tr("preview.sample_p1")}</p>',
+            f'<p style="font-family: {para_stack}; font-weight: normal; font-style: normal; '
+            f'text-indent: {indent_val}; text-align: {p_al}; margin: 0;">'
+            f'{tr("preview.sample_p2", indent=indent_val)}</p>',
+        ]
+        body_parts = [
+            f'<div style="text-align: {img_al}; margin: 12px 0; break-inside: avoid;">'
+            f'  <div style="display: inline-block; width: {img_w}; max-width: 100%; box-sizing: border-box; border: 1px solid #d5cfc2; '
+            f'border-radius: 6px; padding: 8px 10px; background-color: #FAF7F0;">'
+            f'    <svg width="160" height="32" viewBox="0 0 180 36" xmlns="http://www.w3.org/2000/svg" style="{gray_css}">'
+            f'      <line x1="10" y1="18" x2="68" y2="18" stroke="{h2_cl}" stroke-width="1.5"/>'
+            f'      <polygon points="90,6 98,18 90,30 82,18" fill="{h1_cl}"/>'
+            f'      <line x1="112" y1="18" x2="170" y2="18" stroke="{h2_cl}" stroke-width="1.5"/>'
+            f'    </svg>'
+            f'    <div style="font-family: {para_stack}; font-size: {img_cap_sz}; color: {img_cap_cl}; '
+            f'font-style: {img_cap_st}; margin-top: 4px;">'
+            f'{tr("preview.sample_img_cap", w=img_w, svg_mode=svg_mode)}</div>'
+            f'  </div>'
+            f'</div>',
+            f'<div style="font-family: {para_stack}; text-align: {sub_al}; font-style: italic; font-weight: bold; '
+            f'color: #555555; margin: 10px 0; break-after: avoid;">{tr("preview.sample_scene_sub")}</div>',
+            f'<div style="font-family: {para_stack}; font-size: {h3_sz}; color: {h3_cl}; text-align: {h3_al}; '
+            f'font-weight: bold; font-style: normal; margin: 12px 0 6px 0; break-after: avoid;">{tr("preview.sample_h3")}</div>',
+            f'<p style="font-family: {para_stack}; font-weight: normal; font-style: normal; '
+            f'text-indent: {indent_val}; text-align: {p_al}; margin: 0;">{tr("preview.sample_p3")}</p>',
+            f'<div style="font-family: {para_stack}; font-size: {poem_sz}; color: {poem_cl}; text-align: {poem_al}; '
+            f'font-style: {poem_style}; margin: 10px 1.8em; break-inside: avoid;">{tr("preview.sample_poem")}</div>',
+            f'<div style="font-family: {para_stack}; font-size: {h4_sz}; color: {h4_cl}; text-align: {h4_al}; '
+            f'font-weight: bold; font-style: normal; margin: 12px 0 6px 0; break-after: avoid;">{tr("preview.sample_h4")}</div>',
+            f'<div style="font-family: {para_stack}; font-size: {note_sz}; color: {note_cl}; '
+            f'background-color: {note_bg_css}; border: {note_border}; font-style: {note_style}; '
+            f'padding: 8px 12px; border-radius: 4px; margin: 10px 0; break-inside: avoid;">'
+            f'<div style="font-weight: bold; margin-bottom: 4px;">{tr("preview.sample_note_hdr")}</div>'
+            f'{tr("preview.sample_note_txt", sz=note_sz, cl=note_cl, bg=note_bg, brd=note_border)}</div>',
+            f'<div style="font-family: {para_stack}; font-size: {h5_sz}; color: {h5_cl}; text-align: {h5_al}; '
+            f'font-weight: bold; font-style: normal; margin: 12px 0 6px 0; break-after: avoid;">{tr("preview.sample_h5")}</div>',
+        ]
+        extra_table_html = f"""
+    <div class="book-meta-card">
+        <table style="width: 100%; border-collapse: collapse; font-family: {para_stack}; font-size: 90%; color: #222222;" border="1" bordercolor="#ccc5b8" cellpadding="6" cellspacing="0">
+            <tr style="background-color: #EAE6DC; font-weight: bold;">
+                <th align="left">{tr("preview.tbl_col_elem")}</th>
+                <th align="left">{tr("preview.tbl_col_font")}</th>
+                <th align="left">{tr("preview.tbl_col_style")}</th>
+            </tr>
+            <tr>
+                <td>{tr("preview.tbl_row_author")}</td>
+                <td>{author_disp}</td>
+                <td>{auth_cl}, {auth_sz}, {auth_style}</td>
+            </tr>
+            <tr>
+                <td>{tr("preview.tbl_row_title")}</td>
+                <td>{title_disp}</td>
+                <td>{h1_cl}, {h1_sz}</td>
+            </tr>
+            <tr>
+                <td>{tr("preview.tbl_row_body")}</td>
+                <td>{para_disp}</td>
+                <td>{tr("preview.tbl_row_body_val", indent=indent_val, align=p_al_lbl)}</td>
+            </tr>
+            <tr>
+                <td>{tr("preview.tbl_row_drop")}</td>
+                <td>{drop_disp}</td>
+                <td>{drop_cl}, {drop_sz}</td>
+            </tr>
+            <tr>
+                <td>{tr("preview.tbl_row_img")}</td>
+                <td>{svg_mode}</td>
+                <td>{tr("preview.tbl_row_img_val", w=img_w, align=img_al_lbl)}</td>
+            </tr>
+        </table>
+    </div>"""
+
+    right_inner = "\n            ".join(right_parts)
+    body_inner = "\n            ".join(body_parts)
+    running_header_esc = _html.escape(running_title)
+    footer_note = tr("preview.sample_footer", app=app_name, ver=app_version)
+
+    # Для резервного QTextEdit (rich_html=False) отдаём двухколоночные развороты на таблицах HTML
+    if not rich_html:
+        fallback_spread2 = ""
+        if body_parts:
+            weights = [max(len(re.sub(r'<[^>]+>', '', p)), 60) for p in body_parts]
+            half = sum(weights) / 2.0
+            acc = 0
+            split_idx = max(1, len(body_parts) // 2)
+            for idx_p, w_p in enumerate(weights):
+                acc += w_p
+                if acc >= half:
+                    split_idx = idx_p + 1
+                    break
+            left_col_html = "\n".join(body_parts[:split_idx])
+            right_col_html = "\n".join(body_parts[split_idx:])
+            fallback_spread2 = f"""
+<hr class="divider">
+<div style="text-align: center; font-size: 85%; color: #8A857C; margin-bottom: 10px;">{running_header_esc}</div>
+<table width="100%" cellpadding="14" cellspacing="0">
+    <tr>
+        <td width="50%" valign="top" style="border-right: 1px solid #E5DFD3; padding-right: 22px;">{left_col_html}</td>
+        <td width="50%" valign="top" style="padding-left: 22px;">{right_col_html}</td>
+    </tr>
+    <tr>
+        <td align="center" style="font-size: 85%; color: #8A857C; padding-top: 8px;">3</td>
+        <td align="center" style="font-size: 85%; color: #8A857C; padding-top: 8px;">4</td>
+    </tr>
+</table>"""
+
         return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <title>{tr("preview.html_title", app=app_name)}</title>
 <style>
-    {font_faces}
     body {{
-        background-color: {"#EDEAE4" if rich_html else "#FDFBF7"};
-        color: #222222;
-        font-family: "{para_fam}", Georgia, serif;
-        margin: 0;
-        padding: {"24px" if rich_html else "8px"};
-        line-height: 1.55;
-    }}
-    .page {{
-        max-width: 720px;
-        margin: 0 auto;
         background-color: #FDFBF7;
-        padding: {"36px 46px" if rich_html else "10px 18px"};
-        {page_outline_css}
-        {"box-shadow: 0 4px 18px rgba(0,0,0,0.12); border-radius: 8px;" if rich_html else ""}
+        color: #222222;
+        font-family: {para_stack};
+        font-style: normal;
+        font-weight: normal;
+        margin: 0;
+        padding: 12px;
+        line-height: 1.48;
     }}
-    .divider {{
-        border: none;
-        border-top: 1px dashed #d5cfc2;
-        margin: 18px 0;
+    p {{
+        margin: 0;
+        font-style: normal;
+        font-weight: normal;
     }}
+    .divider {{ border: none; border-top: 1px dashed #d5cfc2; margin: 14px 0; }}
 </style>
 </head>
 <body>
-<div class="page">
-    {body_inner}
-</div>
+<table width="100%" cellpadding="14" cellspacing="0">
+    <tr>
+        <td width="46%" align="center" valign="middle" style="border-right: 1px solid #E5DFD3; padding: 0;">{cover_html}</td>
+        <td width="54%" valign="top" style="padding-left: 22px;">
+            <div style="text-align: center; font-size: 85%; color: #8A857C; margin-bottom: 10px;">{running_header_esc}</div>
+            {right_inner}
+        </td>
+    </tr>
+    <tr>
+        <td align="center" style="font-size: 85%; color: #8A857C;"></td>
+        <td align="center" style="font-size: 85%; color: #8A857C;">2</td>
+    </tr>
+</table>
+{fallback_spread2}
+{extra_table_html}
+<div style="text-align: center; font-size: 85%; font-style: italic; color: #888888; margin-top: 18px;">{footer_note}</div>
 </body>
 </html>"""
+
+    text_spread_html = ""
+    if body_parts:
+        text_spread_html = f"""
+    <section class="book-spread text-spread">
+        <div class="spread-header">{running_header_esc}</div>
+        <div class="book-columns">
+            {body_inner}
+        </div>
+        <div class="spread-footer">
+            <span class="page-num">3</span>
+            <span class="page-num">4</span>
+        </div>
+    </section>"""
 
     return f"""<!DOCTYPE html>
 <html>
@@ -546,144 +887,262 @@ def build_full_preview_html(
 <title>{tr("preview.html_title", app=app_name)}</title>
 <style>
     {font_faces}
-    body {{
-        background-color: {"#EDEAE4" if rich_html else "#FDFBF7"};
-        color: #222222;
-        font-family: "{para_fam}", Georgia, serif;
-        margin: 0;
-        padding: {"24px" if rich_html else "8px"};
-        line-height: 1.5;
+    * {{
+        box-sizing: border-box;
     }}
-    .page {{
-        max-width: 720px;
+    body {{
+        background-color: #E5E1D8;
+        color: #1E1E1E;
+        font-family: {para_stack};
+        font-weight: normal;
+        font-style: normal;
+        font-size: 15px;
+        margin: 0;
+        padding: 24px 20px 32px 20px;
+        line-height: 1.48;
+    }}
+    .book-container {{
+        max-width: 1120px;
         margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+    }}
+    .book-spread {{
+        position: relative;
         background-color: #FDFBF7;
-        padding: {"40px 50px" if rich_html else "10px 18px"};
+        border-radius: 6px;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14), 0 1px 4px rgba(0, 0, 0, 0.08);
         {page_outline_css}
-        {"box-shadow: 0 4px 18px rgba(0,0,0,0.12); border-radius: 6px;" if rich_html else ""}
+        overflow: hidden;
+    }}
+    .title-spread {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        min-height: 600px;
+    }}
+    .book-page {{
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+    }}
+    .cover-page {{
+        align-items: stretch;
+        justify-content: stretch;
+        padding: 0;
+        background: #FDFBF7;
+        border-right: 1px solid #E5DFD3;
+        overflow: hidden;
+    }}
+    .cover-page::after {{
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 22px;
+        background: linear-gradient(to right, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.14) 100%);
+        pointer-events: none;
+    }}
+    .book-cover-img {{
+        display: block;
+        width: 100%;
+        height: 100%;
+        min-height: 600px;
+        object-fit: cover;
+        object-position: center;
+        border-radius: 0;
+        box-shadow: none;
+    }}
+    .cover-placeholder {{
+        width: 100%;
+        height: 100%;
+        min-height: 600px;
+        background: linear-gradient(155deg, #FBF8F1 0%, #EFE8D8 100%);
+        border: none;
+        border-radius: 0;
+        padding: 28px;
+        box-shadow: none;
+        display: flex;
+        align-items: stretch;
+        justify-content: center;
+    }}
+    .cover-ph-inner {{
+        flex: 1;
+        border: 2px double #B8AA92;
+        padding: 28px 20px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        gap: 14px;
+    }}
+    .cover-ph-author {{
+        font-size: 16px;
+        color: #4A4338;
+        letter-spacing: 0.03em;
+    }}
+    .cover-ph-ornament {{
+        font-size: 20px;
+        color: #9C8B70;
+    }}
+    .cover-ph-title {{
+        font-size: 24px;
+        font-weight: bold;
+        color: #2B241B;
+        line-height: 1.25;
+    }}
+    .cover-ph-series {{
+        font-size: 13px;
+        color: #6B6254;
+        font-style: italic;
+        margin-top: 6px;
+    }}
+    .title-page {{
+        justify-content: space-between;
+        padding: 22px 44px 18px 46px;
+        background: linear-gradient(to left, #FDFBF7 94%, #F6F2EA 100%);
+        box-shadow: inset 18px 0 24px -18px rgba(0, 0, 0, 0.14);
+    }}
+    .running-header, .spread-header {{
+        text-align: center;
+        font-size: 12px;
+        font-style: normal;
+        font-weight: normal;
+        color: #8A857C;
+        letter-spacing: 0.01em;
+        min-height: 18px;
+    }}
+    .title-page-body {{
+        margin: auto 0;
+        padding: 14px 0;
+    }}
+    .page-num {{
+        display: block;
+        text-align: center;
+        font-size: 12px;
+        font-style: normal;
+        font-weight: normal;
+        color: #8A857C;
+    }}
+    .text-spread {{
+        padding: 22px 44px 18px 44px;
+    }}
+    .text-spread::before {{
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 36px;
+        transform: translateX(-50%);
+        background: linear-gradient(
+            to right,
+            rgba(0, 0, 0, 0) 0%,
+            rgba(0, 0, 0, 0.055) 48%,
+            rgba(0, 0, 0, 0.09) 50%,
+            rgba(0, 0, 0, 0.045) 52%,
+            rgba(0, 0, 0, 0) 100%
+        );
+        pointer-events: none;
+    }}
+    .spread-header {{
+        margin-bottom: 16px;
+    }}
+    .book-columns {{
+        column-count: 2;
+        column-gap: 72px;
+        column-fill: balance;
+        min-height: 520px;
+        hyphens: auto;
+        -webkit-hyphens: auto;
+    }}
+    .book-columns p {{
+        font-style: normal;
+        font-weight: normal;
+        line-height: 1.45;
+        margin: 0;
+        orphans: 2;
+        widows: 2;
+    }}
+    .chapter-heading {{
+        break-after: avoid;
+        -webkit-column-break-after: avoid;
+    }}
+    .spread-footer {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 72px;
+        margin-top: 18px;
     }}
     .divider {{
         border: none;
         border-top: 1px dashed #d5cfc2;
-        margin: 18px 0;
+        margin: 14px 0;
+    }}
+    .book-meta-card {{
+        background-color: #FDFBF7;
+        border-radius: 6px;
+        padding: 18px 24px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10);
+    }}
+    .preview-footer {{
+        text-align: center;
+        font-size: 12px;
+        font-style: italic;
+        color: #777268;
+        margin-top: 2px;
+    }}
+    @media (max-width: 760px) {{
+        .title-spread {{
+            grid-template-columns: 1fr;
+        }}
+        .cover-page {{
+            border-right: none;
+            border-bottom: 1px solid #E5DFD3;
+            box-shadow: none;
+        }}
+        .cover-page::after {{
+            display: none;
+        }}
+        .book-cover-img {{
+            min-height: 0;
+            max-height: 75vh;
+        }}
+        .title-page {{
+            box-shadow: none;
+        }}
+        .text-spread::before {{
+            display: none;
+        }}
+        .book-columns {{
+            column-count: 1;
+        }}
+        .spread-footer {{
+            grid-template-columns: 1fr;
+        }}
     }}
 </style>
 </head>
 <body>
-<div class="page">
-    <div style="font-family: '{author_fam}', Georgia, serif; font-size: {auth_sz}; color: {auth_cl}; text-align: {auth_al}; font-style: {auth_style}; font-weight: bold; margin-top: 4px; margin-bottom: 6px;">
-        {tr("preview.sample_author")}
-    </div>
-    <div style="font-family: '{title_fam}', Georgia, serif; font-size: {h1_sz}; color: {h1_cl}; text-align: {h1_al}; font-weight: bold; font-style: normal; margin-top: 4px; margin-bottom: 10px;">
-        {tr("preview.sample_title")}
-    </div>
-    <div style="font-family: '{para_fam}', Georgia, serif; text-align: {sub_al}; font-style: italic; font-weight: bold; color: #555555; margin-bottom: 16px;">
-        {tr("preview.sample_subtitle")}
-    </div>
-
-    <div style="font-family: '{para_fam}', Georgia, serif; font-size: {anno_sz}; color: {anno_cl}; text-align: {anno_al}; font-style: {anno_style}; margin: 14px 28px;">
-        <b>{tr("preview.sample_anno_lbl")}</b> {tr("preview.sample_anno_txt")}
-    </div>
-
-    <div style="font-family: '{para_fam}', Georgia, serif; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; font-style: {epi_style}; margin-left: 32%; margin-top: 12px; margin-bottom: 4px;">
-        {tr("preview.sample_epi_txt")}
-    </div>
-    <div style="font-family: '{para_fam}', Georgia, serif; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; font-weight: bold; margin-left: 32%; margin-bottom: 18px;">
-        {tr("preview.sample_epi_auth")}
-    </div>
-
-    <hr class="divider">
-
-    <div style="font-family: '{para_fam}', Georgia, serif; font-size: {h2_sz}; color: {h2_cl}; text-align: {h2_al}; font-weight: bold; margin-top: 16px; margin-bottom: 10px;">
-        {tr("preview.sample_h2")}
-    </div>
-
-    <p style="font-family: '{para_fam}', Georgia, serif; font-weight: normal; font-style: normal; text-indent: 0; text-align: {p_al}; margin: 6px 0;">
-        <span style="font-family: '{drop_fam}', Georgia, serif; font-size: {drop_sz}; color: {drop_cl}; font-weight: bold; float: left; line-height: 0.85; margin-right: 6px;">{tr("preview.sample_drop_letter")}</span>{tr("preview.sample_p1")}
-    </p>
-
-    <p style="font-family: '{para_fam}', Georgia, serif; font-weight: normal; font-style: normal; text-indent: {indent_val}; text-align: {p_al}; margin: 6px 0;">
-        {tr("preview.sample_p2", indent=indent_val)}
-    </p>
-
-    <div style="text-align: {img_al}; margin: 14px 0;">
-        <div style="display: inline-block; width: {img_w}; max-width: 440px; border: 1px solid #d5cfc2; border-radius: 6px; padding: 10px 14px; background-color: #FAF7F0;">
-            <svg width="180" height="36" viewBox="0 0 180 36" xmlns="http://www.w3.org/2000/svg" style="{"filter: grayscale(100%);" if grayscale else ""}">
-                <line x1="10" y1="18" x2="68" y2="18" stroke="{h2_cl}" stroke-width="1.5"/>
-                <polygon points="90,6 98,18 90,30 82,18" fill="{h1_cl}"/>
-                <line x1="112" y1="18" x2="170" y2="18" stroke="{h2_cl}" stroke-width="1.5"/>
-            </svg>
-            <div style="font-family: '{para_fam}', Georgia, serif; font-size: {img_cap_sz}; color: {img_cap_cl}; font-style: {img_cap_st}; margin-top: 4px;">
-                {tr("preview.sample_img_cap", w=img_w, svg_mode=svg_mode)}
-            </div>
+<div class="book-container">
+    <section class="book-spread title-spread">
+        <div class="book-page cover-page">
+            {cover_html}
         </div>
-    </div>
-
-    <div style="font-family: '{para_fam}', Georgia, serif; text-align: {sub_al}; font-style: italic; font-weight: bold; color: #555555; margin: 12px 0;">
-        {tr("preview.sample_scene_sub")}
-    </div>
-
-    <div style="font-family: '{para_fam}', Georgia, serif; font-size: {h3_sz}; color: {h3_cl}; text-align: {h3_al}; font-weight: bold; margin-top: 16px; margin-bottom: 8px;">
-        {tr("preview.sample_h3")}
-    </div>
-
-    <p style="font-family: '{para_fam}', Georgia, serif; font-weight: normal; font-style: normal; text-indent: {indent_val}; text-align: {p_al}; margin: 6px 0;">
-        {tr("preview.sample_p3")}
-    </p>
-
-    <div style="font-family: '{para_fam}', Georgia, serif; font-size: {poem_sz}; color: {poem_cl}; text-align: {poem_al}; font-style: {poem_style}; margin: 12px 2.5em;">
-        {tr("preview.sample_poem")}
-    </div>
-
-    <div style="font-family: '{para_fam}', Georgia, serif; font-size: {h4_sz}; color: {h4_cl}; text-align: {h4_al}; font-weight: bold; margin-top: 16px; margin-bottom: 8px;">
-        {tr("preview.sample_h4")}
-    </div>
-
-    <div style="font-family: '{para_fam}', Georgia, serif; font-size: {note_sz}; color: {note_cl}; background-color: {note_bg_css}; border: {note_border}; font-style: {note_style}; padding: 8px 12px; border-radius: 4px; margin: 10px 0;">
-        <div style="font-weight: bold; margin-bottom: 4px;">{tr("preview.sample_note_hdr")}</div>
-        {tr("preview.sample_note_txt", sz=note_sz, cl=note_cl, bg=note_bg, brd=note_border)}
-    </div>
-
-    <div style="font-family: '{para_fam}', Georgia, serif; font-size: {h5_sz}; color: {h5_cl}; text-align: {h5_al}; font-weight: bold; margin-top: 16px; margin-bottom: 8px;">
-        {tr("preview.sample_h5")}
-    </div>
-
-    <table style="width: 100%; border-collapse: collapse; margin-top: 8px; margin-bottom: 14px; font-family: '{para_fam}', Georgia, serif; font-size: 90%; color: #222222;" border="1" bordercolor="#999999" cellpadding="5" cellspacing="0">
-        <tr style="background-color: #EAE6DC; font-weight: bold;">
-            <th align="left">{tr("preview.tbl_col_elem")}</th>
-            <th align="left">{tr("preview.tbl_col_font")}</th>
-            <th align="left">{tr("preview.tbl_col_style")}</th>
-        </tr>
-        <tr>
-            <td>{tr("preview.tbl_row_author")}</td>
-            <td>{author_disp}</td>
-            <td>{auth_cl}, {auth_sz}, {auth_style}</td>
-        </tr>
-        <tr>
-            <td>{tr("preview.tbl_row_title")}</td>
-            <td>{title_disp}</td>
-            <td>{h1_cl}, {h1_sz}</td>
-        </tr>
-        <tr>
-            <td>{tr("preview.tbl_row_body")}</td>
-            <td>{para_disp}</td>
-            <td>{tr("preview.tbl_row_body_val", indent=indent_val, align=p_al_lbl)}</td>
-        </tr>
-        <tr>
-            <td>{tr("preview.tbl_row_drop")}</td>
-            <td>{drop_disp}</td>
-            <td>{drop_cl}, {drop_sz}</td>
-        </tr>
-        <tr>
-            <td>{tr("preview.tbl_row_img")}</td>
-            <td>{svg_mode}</td>
-            <td>{tr("preview.tbl_row_img_val", w=img_w, align=img_al_lbl)}</td>
-        </tr>
-    </table>
-
-    <div style="text-align: center; font-size: 85%; font-style: italic; color: #888888; margin-top: 18px;">
-        {tr("preview.sample_footer", app=app_name, ver=app_version)}
-    </div>
+        <div class="book-page title-page">
+            <div class="running-header">{running_header_esc}</div>
+            <div class="title-page-body">
+                {right_inner}
+            </div>
+            <div class="page-num">1</div>
+        </div>
+    </section>
+    {text_spread_html}
+    {extra_table_html}
+    <div class="preview-footer">{footer_note}</div>
 </div>
 </body>
 </html>"""

@@ -11,11 +11,16 @@ import tarfile
 import tempfile
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 
+from core.config import atomic_write_text
 from core.logger import get_logger
-from core.updater import parse_version_tuple
+from core.updater import is_safe_http_url, parse_version_tuple
+
+MAX_HTTP_META_BYTES = 2 * 1024 * 1024
+MAX_ARCHIVE_BIN_BYTES = 256 * 1024 * 1024
 
 try:
     from PyQt6.QtCore import QThread, pyqtSignal
@@ -269,7 +274,9 @@ def _build_ssl_context():
         return ssl.create_default_context()
 
 
-def _http_get_bytes(url, timeout=10, headers=None):
+def _http_get_bytes(url, timeout=10, headers=None, max_bytes=MAX_HTTP_META_BYTES):
+    if not is_safe_http_url(url, allow_relative=False):
+        raise ValueError(f"Unsupported URL scheme: {url}")
     req_headers = {
         "User-Agent": "FBC-GUI/2.8",
         "Accept": "application/vnd.github+json",
@@ -279,7 +286,10 @@ def _http_get_bytes(url, timeout=10, headers=None):
     req = urllib.request.Request(url, headers=req_headers)
     ctx = _build_ssl_context()
     with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-        return resp.read()
+        data = resp.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError(f"Response from {url} exceeds size limit ({max_bytes} bytes)")
+    return data
 
 
 def parse_checksums_text(text):
@@ -432,8 +442,7 @@ def _save_verified_cache(user_data_dir, entry):
         entries = [e for e in entries if isinstance(e, dict) and e.get("md5") != entry.get("md5")]
         entries.insert(0, entry)
         cache["verified"] = entries[:16]
-        with open(cache_path, "w", encoding="utf-8") as fh:
-            json.dump(cache, fh, ensure_ascii=False, indent=2)
+        atomic_write_text(cache_path, json.dumps(cache, ensure_ascii=False, indent=2))
     except Exception as e:
         logger.warning("Не удалось сохранить кэш проверки fbc: %s", e)
 
@@ -516,8 +525,20 @@ def verify_binary_against_github(info, user_data_dir=None, check_github=True, ti
     return {"verified": False, "source": "github", "reason": "no_matching_asset"}
 
 
+def _copy_stream_limited(src, dst, max_bytes=MAX_ARCHIVE_BIN_BYTES):
+    total = 0
+    while True:
+        chunk = src.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise RuntimeError(f"Extracted binary exceeds size limit ({max_bytes} bytes)")
+        dst.write(chunk)
+
+
 def _extract_fbc_from_archive(archive_path, dest_bin_path, bin_name):
-    """Безопасно извлекает исполняемый файл fbc/fbc.exe из .zip или .tar.gz архива."""
+    """Безопасно извлекает исполняемый файл fbc/fbc.exe из .zip или .tar.gz архива с лимитом размера."""
     low = archive_path.lower()
     target_lower = bin_name.lower()
 
@@ -533,7 +554,7 @@ def _extract_fbc_from_archive(archive_path, dest_bin_path, bin_name):
             if not match:
                 raise RuntimeError(f"Binary {bin_name} not found inside archive")
             with zf.open(match, "r") as src, open(dest_bin_path, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+                _copy_stream_limited(src, dst)
         return dest_bin_path
 
     if low.endswith((".tar.gz", ".tgz")):
@@ -549,7 +570,7 @@ def _extract_fbc_from_archive(archive_path, dest_bin_path, bin_name):
             if src is None:
                 raise RuntimeError(f"Failed to extract {bin_name} from archive")
             with src, open(dest_bin_path, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+                _copy_stream_limited(src, dst)
         return dest_bin_path
 
     raise RuntimeError(f"Unsupported archive format: {os.path.basename(archive_path)}")
@@ -563,6 +584,9 @@ def download_and_install_fbc(
     timeout=30,
 ):
     """Скачивает нужную версию fb2cng с GitHub, проверяет хэши и устанавливает в user_data_dir."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise FbcDownloadCancelledError("Download cancelled")
+
     os_name, arch = normalize_platform_arch()
     bin_name = get_fbc_binary_name(os_name)
 
@@ -577,12 +601,17 @@ def download_and_install_fbc(
         else:
             raise
 
+    if cancel_event is not None and cancel_event.is_set():
+        raise FbcDownloadCancelledError("Download cancelled")
+
     asset = select_release_asset(release, os_name=os_name, arch=arch)
     if not asset or not asset.get("browser_download_url"):
         raise RuntimeError(f"No compatible fb2cng asset found for {os_name}-{arch} in {release.get('tag_name')}")
 
     asset_name = str(asset["name"])
     dl_url = str(asset["browser_download_url"])
+    if not is_safe_http_url(dl_url, allow_relative=False):
+        raise RuntimeError(f"Unsupported download URL scheme: {dl_url}")
     expected_size = int(asset.get("size") or 0)
     checksums = fetch_release_checksums(release, timeout=10)
 
@@ -618,7 +647,8 @@ def download_and_install_fbc(
                 f"MD5 mismatch for {asset_name}: expected {expected_archive['md5']}, got {archive_hashes['md5']}"
             )
 
-        extracted_tmp = os.path.join(user_data_dir, f".{bin_name}.download.tmp")
+        fd_tmp, extracted_tmp = tempfile.mkstemp(prefix=f".{bin_name}.", suffix=".tmp", dir=user_data_dir)
+        os.close(fd_tmp)
         try:
             _extract_fbc_from_archive(archive_path, extracted_tmp, bin_name)
             if os.name != "nt":

@@ -127,12 +127,49 @@ class TestCssPreview(unittest.TestCase):
             "footnote_paras": ["Текст сноски."],
         }
         book_html = build_full_preview_html(
-            st, fams, "SVG", FONTS_DIR, "FBC GUI", "2.6", "По ширине", "По центру",
-            for_browser=False, grayscale=True, book_preview=book_data, dropcaps_enable=True
+            st, fams, "SVG", FONTS_DIR, "FBC GUI", "2.8.3", "По ширине", "По центру",
+            for_browser=False, grayscale=True, book_preview=book_data, dropcaps_enable=True,
+            use_web_engine=True,
         )
         self.assertIn("Война и мир", book_html)
         self.assertIn("Глава 1", book_html)
         self.assertIn("Текст сноски.", book_html)
+        self.assertIn("book-spread", book_html)
+        self.assertIn("cover-page", book_html)
+        self.assertIn("title-page", book_html)
+        self.assertIn("column-count: 2", book_html)
+        self.assertIn("object-fit: cover;", book_html)
+        self.assertIn("padding: 0;", book_html)
+
+    def test_preview_isolates_same_family_font_variants(self):
+        """Разные файлы одного семейства (Newton15/Bo/It) не должны перезаписывать друг друга в превью."""
+        st = _sample_state(
+            font_para="Newton15.ttf",
+            font_title="Newton15Bo.ttf",
+            font_author="Newton15It.ttf",
+            font_drop="Lombardina-Initial-One.ttf",
+            auth_style="italic",
+            anno_style="normal",
+        )
+        # Qt возвращает одинаковое имя семейства для всех трёх начертаний Newton15
+        fams = {
+            "para": "Newton15",
+            "title": "Newton15",
+            "author": "Newton15",
+            "drop": "Lombardina Initial One",
+        }
+        html_out = build_full_preview_html(
+            st, fams, "SVG", FONTS_DIR, "FBC GUI", "2.8.3", "По ширине", "По центру",
+            for_browser=False, use_web_engine=True,
+        )
+        self.assertIn('@font-face { font-family: "fbc-para"; src: url("file://', html_out)
+        self.assertIn('Newton15.ttf"); font-weight: normal; font-style: normal; }', html_out)
+        self.assertIn('@font-face { font-family: "fbc-title"; src: url("file://', html_out)
+        self.assertIn('Newton15Bo.ttf"); font-weight: bold; font-style: normal; }', html_out)
+        self.assertIn('@font-face { font-family: "fbc-author"; src: url("file://', html_out)
+        self.assertIn('Newton15It.ttf"); font-weight: normal; font-style: italic; }', html_out)
+        # Курсивный файл автора не должен быть назначен как normal/normal для fbc-para
+        self.assertNotIn('font-family: "fbc-para"; src: url("file://' + FONTS_DIR.replace("\\", "/") + '/Newton15It.ttf"); font-weight: normal; font-style: normal;', html_out)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,8 @@ import json
 import os
 import re
 
+from core.config import atomic_write_text
+
 PRESET_SCHEMA_VERSION = 1
 PRESET_FILE_EXT = ".fbcpreset.json"
 
@@ -127,13 +129,12 @@ def list_presets(presets_dir):
 
 
 def save_preset(presets_dir, name, app_settings, css_content=""):
-    """Сохраняет пресет в папку presets_dir и возвращает путь к файлу."""
+    """Атомарно сохраняет пресет в папку presets_dir и возвращает путь к файлу."""
     os.makedirs(presets_dir, exist_ok=True)
     payload = build_preset_payload(name, app_settings, css_content)
     filename = slugify_preset_name(payload["name"]) + PRESET_FILE_EXT
     target_path = os.path.join(presets_dir, filename)
-    with open(target_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    atomic_write_text(target_path, json.dumps(payload, ensure_ascii=False, indent=2))
     return target_path
 
 
@@ -145,7 +146,7 @@ def delete_preset(filepath):
 
 
 def export_preset_to_file(filepath, name, app_settings, css_content=""):
-    """Экспортирует пресет в произвольный файл .fbcpreset.json."""
+    """Атомарно экспортирует пресет в произвольный файл .fbcpreset.json."""
     target = str(filepath)
     if not target.lower().endswith(".json"):
         target += PRESET_FILE_EXT
@@ -153,8 +154,7 @@ def export_preset_to_file(filepath, name, app_settings, css_content=""):
     if parent:
         os.makedirs(parent, exist_ok=True)
     payload = build_preset_payload(name, app_settings, css_content)
-    with open(target, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    atomic_write_text(target, json.dumps(payload, ensure_ascii=False, indent=2))
     return target
 
 
@@ -191,8 +191,8 @@ def sync_bundled_presets(bundled_dir, presets_dir):
         src_fp = os.path.join(bundled_dir, fname)
         dst_fp = os.path.join(presets_dir, fname)
         if os.path.isfile(src_fp) and not os.path.exists(dst_fp):
-            with open(src_fp, "r", encoding="utf-8") as sf, open(dst_fp, "w", encoding="utf-8") as df:
-                df.write(sf.read())
+            with open(src_fp, "r", encoding="utf-8") as sf:
+                atomic_write_text(dst_fp, sf.read())
             copied.append(dst_fp)
     return copied
 
@@ -257,6 +257,6 @@ def restore_builtin_preset(presets_dir, bundled_dir, name=None, filename=None):
     os.makedirs(presets_dir, exist_ok=True)
     target_name = os.path.basename(filename) if filename else os.path.basename(builtin_fp)
     target_path = os.path.join(presets_dir, target_name)
-    with open(builtin_fp, "r", encoding="utf-8") as sf, open(target_path, "w", encoding="utf-8") as df:
-        df.write(sf.read())
+    with open(builtin_fp, "r", encoding="utf-8") as sf:
+        atomic_write_text(target_path, sf.read())
     return payload["name"], target_path, payload

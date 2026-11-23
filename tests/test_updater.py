@@ -34,6 +34,23 @@ class TestUpdater(unittest.TestCase):
         self.assertEqual(select_download_url(manifest, platform="linux"), "pkg/all")
         self.assertEqual(select_download_url({}, platform="linux", fallback_url="pkg/fb"), "pkg/fb")
 
+    def test_select_download_url_rejects_unsafe_schemes(self):
+        from core.updater import is_safe_http_url
+
+        self.assertTrue(is_safe_http_url("https://localhost/app"))
+        self.assertFalse(is_safe_http_url("ftp://localhost/app", allow_relative=True))
+        self.assertFalse(is_safe_http_url("mailto:user@localhost", allow_relative=True))
+        self.assertFalse(is_safe_http_url("//localhost/app", allow_relative=True))
+
+        unsafe_manifest = {
+            "downloads": {"darwin": "ftp://localhost/mac"},
+            "download_url": "mailto:user@localhost",
+        }
+        self.assertEqual(
+            select_download_url(unsafe_manifest, platform="darwin", fallback_url="pkg/fb"),
+            "pkg/fb",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

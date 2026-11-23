@@ -36,8 +36,11 @@ def init_logging(base_dir, log_filename="fbc_gui.log", max_bytes=2 * 1024 * 1024
         file_handler.setLevel(logging.INFO)
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            sys.stderr.write(f"fbc_gui: failed to initialize file logger at {log_path}: {e}\n")
+        except Exception:
+            pass
 
     if not getattr(sys, "frozen", False):
         console_handler = logging.StreamHandler(sys.stderr)

@@ -2,6 +2,8 @@ import io
 import os
 import sys
 import json
+import shutil
+import tempfile
 import textwrap
 import subprocess
 
@@ -354,6 +356,30 @@ def _to_int(val, default=95):
         return default
 
 
+def atomic_write_text(filepath, text, encoding="utf-8"):
+    """Атомарно записывает текст в файл через временный файл в той же директории и os.replace()."""
+    abs_path = os.path.abspath(filepath)
+    parent_dir = os.path.dirname(abs_path) or "."
+    os.makedirs(parent_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".fbc_tmp_", suffix=".tmp", dir=parent_dir)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as fh:
+            fh.write(text)
+            fh.flush()
+            try:
+                os.fsync(fh.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_path, abs_path)
+    except Exception:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def migrate_fbc_config_211(cfg_path, css_path):
     """Обновляет существующий config.yaml для совместимости с fb2cng 2.1.1."""
     if not os.path.exists(cfg_path):
@@ -410,8 +436,7 @@ def migrate_fbc_config_211(cfg_path, css_path):
         yaml.dump(data, buf)
         new_text = buf.getvalue()
         if new_text != orig_text:
-            with open(cfg_path, "w", encoding="utf-8") as f:
-                f.write(new_text)
+            atomic_write_text(cfg_path, new_text)
     except Exception as e:
         logger.exception("Ошибка миграции config.yaml: %s", e)
 
@@ -420,7 +445,7 @@ migrate_fbc_config_192 = migrate_fbc_config_211
 
 
 def _save_smtp_password_secure(password):
-    """Сохраняет SMTP-пароль в keyring или системной связке ключей macOS."""
+    """Сохраняет SMTP-пароль в keyring или системной связке ключей macOS (без передачи пароля в argv)."""
     if HAS_KEYRING:
         try:
             if password:
@@ -431,22 +456,36 @@ def _save_smtp_password_secure(password):
                 except Exception:
                     pass
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning("Ошибка сохранения пароля в keyring: %s", e)
             return False
     if sys.platform == "darwin":
         try:
             if password:
-                subprocess.run(
-                    ["security", "add-generic-password", "-U", "-a", KEYRING_SMTP_ACCOUNT, "-s", KEYRING_SERVICE, "-w", password],
-                    check=True, capture_output=True
+                pwd_hex = str(password).encode("utf-8").hex()
+                cmd_line = (
+                    f'add-generic-password -U -a "{KEYRING_SMTP_ACCOUNT}" '
+                    f'-s "{KEYRING_SERVICE}" -X {pwd_hex}\n'
                 )
+                res = subprocess.run(
+                    ["security", "-i"],
+                    input=cmd_line,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                stderr_txt = (res.stderr or "").strip()
+                if stderr_txt and "error" in stderr_txt.lower():
+                    logger.warning("security -i вернул ошибку при сохранении пароля: %s", stderr_txt)
+                    return False
             else:
                 subprocess.run(
                     ["security", "delete-generic-password", "-a", KEYRING_SMTP_ACCOUNT, "-s", KEYRING_SERVICE],
                     capture_output=True
                 )
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning("Ошибка сохранения пароля в Keychain macOS: %s", e)
             return False
     return False
 
@@ -494,10 +533,10 @@ def save_app_settings(settings_path, app_settings):
     elif pwd:
         logger.warning("Защищённое хранилище паролей (keyring) недоступно; SMTP-пароль сохранён в settings.json")
     try:
-        with open(settings_path, "w", encoding="utf-8") as f:
-            json.dump(data_to_save, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+        payload = json.dumps(data_to_save, ensure_ascii=False, indent=2)
+        atomic_write_text(settings_path, payload)
+    except Exception as e:
+        logger.exception("Ошибка сохранения settings.json (%s): %s", settings_path, e)
 
 
 def load_app_settings(settings_path, app_settings):
@@ -507,8 +546,15 @@ def load_app_settings(settings_path, app_settings):
                 data = json.load(f)
             if isinstance(data, dict):
                 app_settings.update(data)
-        except Exception:
-            pass
+            else:
+                raise ValueError("settings.json root is not a JSON object")
+        except Exception as e:
+            logger.warning("Повреждённый settings.json (%s): %s; создаётся резервная копия", settings_path, e)
+            backup_path = f"{settings_path}.bak"
+            try:
+                shutil.copy2(settings_path, backup_path)
+            except Exception as bak_err:
+                logger.warning("Не удалось создать резервную копию %s: %s", backup_path, bak_err)
         changed = False
         legacy_pwd = app_settings.get("smtp_password", "")
         if legacy_pwd:
@@ -742,7 +788,8 @@ def update_fbc_config_file(fbc_config_path, css_path, app_settings):
         css_norm = css_path.replace("\\", "/")
         _insert_key_after(doc, "stylesheet_path", DoubleQuotedScalarString(css_norm), "toc_type")
 
-        with open(fbc_config_path, "w", encoding="utf-8") as f:
-            yaml.dump(data, f)
+        buf = io.StringIO()
+        yaml.dump(data, buf)
+        atomic_write_text(fbc_config_path, buf.getvalue())
     except Exception as e:
         logger.exception("Ошибка сохранения FBC_CONFIG: %s", e)

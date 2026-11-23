@@ -5,10 +5,12 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import MagicMock, patch
 import zipfile
 
 from core.fb2_processor import (
     ConversionCancelledError,
+    _parse_fb2_root,
     DEFAULT_FILENAME_TOKENS,
     DEFAULT_TITLE_TOKENS,
     _run_cancellable_process,
@@ -496,6 +498,23 @@ class TestFb2Processor(unittest.TestCase):
             with zipfile.ZipFile(created[0], "r") as z:
                 opf = z.read("OEBPS/content.opf").decode("utf-8")
                 self.assertIn("(РК - 02) Война и мир", opf)
+
+    def test_parse_fb2_root_hardens_lxml_parser_flags(self):
+        broken_xml = b"<FictionBook><body><p>unclosed"
+        fake_lxml = MagicMock()
+        fake_lxml.fromstring.return_value = MagicMock()
+        fake_lxml.tostring.return_value = b"<FictionBook/>"
+
+        with patch("core.fb2_processor.HAS_LXML", True), patch("core.fb2_processor.LXML_ET", fake_lxml):
+            root = _parse_fb2_root(broken_xml)
+
+        self.assertIsNotNone(root)
+        fake_lxml.XMLParser.assert_called_once_with(
+            recover=True,
+            resolve_entities=False,
+            no_network=True,
+            huge_tree=False,
+        )
 
 
 if __name__ == "__main__":

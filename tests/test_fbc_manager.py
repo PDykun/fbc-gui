@@ -284,6 +284,28 @@ class TestFbcManager(unittest.TestCase):
             self.assertEqual(res["reason"], "incompatible_version")
             mock_dl.assert_called_once()
 
+    def test_copy_stream_limited_enforces_limit(self):
+        src = io.BytesIO(b"abcdefghij")
+        dst = io.BytesIO()
+        fbc_manager._copy_stream_limited(src, dst, max_bytes=10)
+        self.assertEqual(dst.getvalue(), b"abcdefghij")
+
+        src_big = io.BytesIO(b"0123456789X")
+        dst_big = io.BytesIO()
+        with self.assertRaises(RuntimeError):
+            fbc_manager._copy_stream_limited(src_big, dst_big, max_bytes=10)
+
+    def test_download_and_install_fbc_pre_cancelled(self):
+        import threading
+
+        ev = threading.Event()
+        ev.set()
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(fbc_manager, "fetch_github_release") as mock_fetch:
+                with self.assertRaises(fbc_manager.FbcDownloadCancelledError):
+                    fbc_manager.download_and_install_fbc(td, cancel_event=ev)
+            mock_fetch.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

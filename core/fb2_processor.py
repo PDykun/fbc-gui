@@ -326,7 +326,12 @@ def _parse_fb2_root(xml_bytes):
 
     if HAS_LXML:
         try:
-            parser = LXML_ET.XMLParser(recover=True)
+            parser = LXML_ET.XMLParser(
+                recover=True,
+                resolve_entities=False,
+                no_network=True,
+                huge_tree=False,
+            )
             l_root = LXML_ET.fromstring(clean_bytes or xml_bytes, parser=parser)
             if l_root is not None:
                 return ET.fromstring(LXML_ET.tostring(l_root, encoding='utf-8'))
@@ -989,7 +994,7 @@ def _fb2_inline_to_html(el):
     return "".join(parts)
 
 
-def extract_book_preview_data(xml_bytes, meta=None, cover_bytes=None, cover_mime=None, max_paragraphs=14):
+def extract_book_preview_data(xml_bytes, meta=None, cover_bytes=None, cover_mime=None, max_paragraphs=24):
     """Извлекает реальные фрагменты книги FB2 (обложка, аннотация, эпиграф, первая глава, сноска) для превью."""
     if not xml_bytes:
         return None

@@ -37,6 +37,8 @@ class TestEmailSender(unittest.TestCase):
 
         self.assertFalse(is_smtp_configured(self._valid_settings(smtp_host="")))
         self.assertFalse(is_smtp_configured(self._valid_settings(smtp_port="abc")))
+        self.assertFalse(is_smtp_configured(self._valid_settings(smtp_port="0")))
+        self.assertFalse(is_smtp_configured(self._valid_settings(smtp_port="70000")))
         self.assertFalse(is_smtp_configured(self._valid_settings(email_to="invalid")))
 
     def test_split_files_into_email_batches(self):
@@ -91,6 +93,8 @@ class TestEmailSender(unittest.TestCase):
             send_test_email(st, "FBC GUI", "2.5")
 
         mock_srv.starttls.assert_called_once()
+        self.assertIn("context", mock_srv.starttls.call_args.kwargs)
+        self.assertIsNotNone(mock_srv.starttls.call_args.kwargs["context"])
         mock_srv.login.assert_called_once_with("user@example.com", "secret")
         mock_srv.send_message.assert_called_once()
 

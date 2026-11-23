@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.i18n import tr
+from core.logger import get_logger
 from core.fb2_processor import (
     COVER_PREVIEW_SIZE, DEFAULT_FILENAME_TOKENS, DEFAULT_TITLE_TOKENS,
     FILENAME_TAG_IDS, TITLE_TAG_IDS,
@@ -191,7 +192,7 @@ class ExternalThemeRegistry:
                 with open(path, "r", encoding="utf-8") as f:
                     return f.read()
             except Exception as e:
-                print(f"Ошибка чтения файла темы {path}: {e}")
+                get_logger("theme").warning("Ошибка чтения файла темы %s: %s", path, e)
         return ""
 
 
