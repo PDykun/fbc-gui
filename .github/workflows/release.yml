@@ -33,8 +33,74 @@ jobs:
 
       - name: Build macOS app bundle and DMG
         run: |
-          chmod +x build_gui_full.sh make_dmg.sh
-          ./build_gui_full.sh
+          set -euo pipefail
+          APP_VER=$(python -c "import re; s=open('fbc_gui.py',encoding='utf-8').read(); print(re.search(r'^__version__\s*=\s*[\"\x27]([^\"\x27]+)', s, re.M).group(1))")
+          APP_BUILD=$(python -c "import re; s=open('fbc_gui.py',encoding='utf-8').read(); m=re.search(r'^__build__\s*=\s*(\d+)', s, re.M); print(m.group(1) if m else '1')")
+          echo "Building FBC GUI v${APP_VER} (build ${APP_BUILD}) for macOS..."
+
+          python -m PyInstaller \
+            --noconfirm \
+            --clean \
+            --windowed \
+            --name "FBC GUI" \
+            --icon "icon.icns" \
+            --add-data "config.yaml:." \
+            --add-data "ebook_styles.css:." \
+            --add-data "fonts/PT-Astra-Serif_Regular.ttf:fonts" \
+            --add-data "fonts/PT-Astra-Serif_Italic.ttf:fonts" \
+            --add-data "fonts/PT-Astra-Serif_Bold.ttf:fonts" \
+            --add-data "fonts/PT-Astra-Serif_Bold-Italic.ttf:fonts" \
+            --add-data "fonts/PomorskyUnicode.otf:fonts" \
+            --add-data "fonts/OFL-1.1.txt:fonts" \
+            --add-data "locales:locales" \
+            --add-data "themes:themes" \
+            --add-data "presets_defaults:presets_defaults" \
+            fbc_gui.py
+
+          PLIST_PATH="dist/FBC GUI.app/Contents/Info.plist"
+          python - "$PLIST_PATH" "$APP_VER" "$APP_BUILD" << 'EOF'
+          import sys, plistlib
+          plist_path, ver, build = sys.argv[1], sys.argv[2], sys.argv[3]
+          with open(plist_path, "rb") as f:
+              data = plistlib.load(f)
+          data["CFBundleIdentifier"] = "eu.pashka.fbc-gui"
+          data["CFBundleShortVersionString"] = ver
+          data["CFBundleVersion"] = f"{ver}.{build}"
+          data["CFBundleDocumentTypes"] = [
+              {
+                  "CFBundleTypeName": "FictionBook 2 e-book",
+                  "CFBundleTypeRole": "Viewer",
+                  "LSHandlerRank": "Alternate",
+                  "CFBundleTypeExtensions": ["fb2"],
+                  "LSItemContentTypes": ["org.fictionbook.fb2"],
+              },
+              {
+                  "CFBundleTypeName": "ZIP e-book archive",
+                  "CFBundleTypeRole": "Viewer",
+                  "LSHandlerRank": "Alternate",
+                  "CFBundleTypeExtensions": ["zip"],
+                  "LSItemContentTypes": ["public.zip-archive"],
+              },
+          ]
+          with open(plist_path, "wb") as f:
+              plistlib.dump(data, f)
+          EOF
+
+          codesign --force --deep --sign - "dist/FBC GUI.app"
+
+          mkdir -p installer build/dmg_staging
+          ditto "dist/FBC GUI.app" "build/dmg_staging/FBC GUI.app"
+          ln -s /Applications "build/dmg_staging/Applications"
+
+          DMG_PATH="installer/FBC_GUI_v${APP_VER}_mac.dmg"
+          rm -f "$DMG_PATH"
+          hdiutil create \
+            -volname "FBC GUI ${APP_VER}" \
+            -srcfolder "build/dmg_staging" \
+            -ov \
+            -format UDZO \
+            "$DMG_PATH"
+          rm -rf build/dmg_staging
 
       - name: Verify bundle excludes fbc and includes OFL-1.1.txt
         run: |
@@ -121,7 +187,6 @@ jobs:
             --name FBC_GUI `
             --distpath dist `
             --workpath build_win `
-            --specpath build_win `
             --hidden-import=keyring.backends.Windows `
             --version-file build_win/version_info.txt `
             --icon icon.ico `
@@ -143,6 +208,74 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          if (-not (Test-Path "installer.iss")) {
+            @'
+          #define MyAppName "FBC GUI"
+          #define MyAppExeName "FBC_GUI.exe"
+          #ifndef MyAppVersion
+            #define MyAppVersion GetStringFileInfo("dist\FBC_GUI.exe", "ProductVersion")
+          #endif
+          #define MyAppPublisher "Paul Dykoun"
+          #define MyAppURL "https://www.pashka.eu/fbc_gui"
+
+          [Setup]
+          AppId={{8D4F6A12-3C9B-4E7A-9F1E-2B5D8C7A0E3F}
+          AppName={#MyAppName}
+          AppVersion={#MyAppVersion}
+          AppPublisher={#MyAppPublisher}
+          AppPublisherURL={#MyAppURL}
+          AppSupportURL={#MyAppURL}
+          AppUpdatesURL={#MyAppURL}
+          DefaultDirName={autopf}\{#MyAppName}
+          DefaultGroupName={#MyAppName}
+          DisableProgramGroupPage=yes
+          PrivilegesRequired=lowest
+          PrivilegesRequiredOverridesAllowed=dialog
+          OutputDir=installer
+          OutputBaseFilename=FBC_GUI_Setup_v{#MyAppVersion}
+          Compression=lzma2/max
+          SolidCompression=yes
+          WizardStyle=modern
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+          SetupIconFile=icon.ico
+          UninstallDisplayIcon={app}\{#MyAppExeName}
+
+          [Languages]
+          Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+          Name: "english"; MessagesFile: "compiler:Default.isl"
+
+          [CustomMessages]
+          russian.ContextMenuTask=Добавить «Открыть в FBC GUI» в контекстное меню .fb2 и .zip
+          english.ContextMenuTask=Add "Open with FBC GUI" to .fb2 and .zip context menu
+          russian.OpenWithFbc=Открыть в FBC GUI
+          english.OpenWithFbc=Open with FBC GUI
+
+          [Tasks]
+          Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+          Name: "contextmenu"; Description: "{cm:ContextMenuTask}"; GroupDescription: "{cm:AdditionalIcons}"
+
+          [Files]
+          Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+          Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+
+          [Registry]
+          Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.fb2\shell\FBC_GUI"; ValueType: string; ValueName: ""; ValueData: "{cm:OpenWithFbc}"; Flags: uninsdeletekey; Tasks: contextmenu
+          Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.fb2\shell\FBC_GUI"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Flags: uninsdeletekey; Tasks: contextmenu
+          Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.fb2\shell\FBC_GUI\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Flags: uninsdeletekey; Tasks: contextmenu
+          Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.zip\shell\FBC_GUI"; ValueType: string; ValueName: ""; ValueData: "{cm:OpenWithFbc}"; Flags: uninsdeletekey; Tasks: contextmenu
+          Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.zip\shell\FBC_GUI"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Flags: uninsdeletekey; Tasks: contextmenu
+          Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.zip\shell\FBC_GUI\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Flags: uninsdeletekey; Tasks: contextmenu
+
+          [Icons]
+          Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"
+          Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
+
+          [Run]
+          Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+          '@ | Set-Content -Path "installer.iss" -Encoding utf8
+          }
+
           $isccCandidates = @(
             "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
             "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
