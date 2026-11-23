@@ -1,0 +1,212 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS DMG
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build macOS app bundle and DMG
+        run: |
+          chmod +x build_gui_full.sh make_dmg.sh
+          ./build_gui_full.sh
+
+      - name: Verify bundle excludes fbc and includes OFL-1.1.txt
+        run: |
+          if find "dist/FBC GUI.app" -name "fbc" -type f | grep -q .; then
+            echo "ERROR: Third-party fbc binary was unexpectedly bundled!"
+            exit 1
+          fi
+          if ! find "dist/FBC GUI.app" -name "OFL-1.1.txt" -type f | grep -q .; then
+            echo "ERROR: fonts/OFL-1.1.txt is missing from app bundle!"
+            exit 1
+          fi
+          ls -lh installer/*.dmg
+
+      - name: Upload macOS DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: installer/*.dmg
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows Installer (Inno Setup)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          try { pip install qtwebview2 } catch { Write-Host "qtwebview2 optional, continuing..." }
+
+      - name: Run unit tests
+        shell: pwsh
+        run: python -m unittest discover -s tests -v
+
+      - name: Build FBC_GUI.exe with PyInstaller
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path build_win | Out-Null
+
+          $metaJson = python -c @"
+          import json, re
+          s = open('fbc_gui.py', encoding='utf-8').read()
+          ver = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', s, re.M).group(1)
+          bld = int(re.search(r'^__build__\s*=\s*(\d+)', s, re.M).group(1))
+          name = re.search(r'^__app_name__\s*=\s*["\']([^"\']+)["\']', s, re.M).group(1)
+          auth = re.search(r'^__author__\s*=\s*["\']([^"\']+)["\']', s, re.M).group(1)
+          parts = [int(x) for x in ver.split('.') if x.isdigit()]
+          vt = tuple((parts + [0, 0, 0])[:3] + [bld])
+          ver_txt = f'''VSVersionInfo(
+            ffi=FixedFileInfo(filevers={vt}, prodvers={vt}, mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+            kids=[
+              StringFileInfo([StringTable(u"040904B0", [
+                StringStruct(u"CompanyName", u"{auth}"),
+                StringStruct(u"FileDescription", u"{name}"),
+                StringStruct(u"FileVersion", u"{ver}.{bld}"),
+                StringStruct(u"InternalName", u"FBC_GUI"),
+                StringStruct(u"OriginalFilename", u"FBC_GUI.exe"),
+                StringStruct(u"ProductName", u"{name}"),
+                StringStruct(u"ProductVersion", u"{ver}")
+              ])]),
+              VarFileInfo([VarStruct(u"Translation", [1033, 1200])])
+            ]
+          )'''
+          open('build_win/version_info.txt', 'w', encoding='utf-8').write(ver_txt)
+          print(json.dumps({'version': ver, 'build': bld}))
+          "@
+
+          $meta = $metaJson | ConvertFrom-Json
+          "APP_VER=$($meta.version)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "APP_BUILD=$($meta.build)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          pyinstaller --noconfirm --clean --windowed --onefile `
+            --name FBC_GUI `
+            --distpath dist `
+            --workpath build_win `
+            --specpath build_win `
+            --hidden-import=keyring.backends.Windows `
+            --version-file build_win/version_info.txt `
+            --icon icon.ico `
+            --add-data "icon.ico;." `
+            --add-data "config.yaml;." `
+            --add-data "ebook_styles.css;." `
+            --add-data "fonts/PT-Astra-Serif_Regular.ttf;fonts" `
+            --add-data "fonts/PT-Astra-Serif_Italic.ttf;fonts" `
+            --add-data "fonts/PT-Astra-Serif_Bold.ttf;fonts" `
+            --add-data "fonts/PT-Astra-Serif_Bold-Italic.ttf;fonts" `
+            --add-data "fonts/PomorskyUnicode.otf;fonts" `
+            --add-data "fonts/OFL-1.1.txt;fonts" `
+            --add-data "locales;locales" `
+            --add-data "themes;themes" `
+            --add-data "presets_defaults;presets_defaults" `
+            fbc_gui.py
+
+      - name: Build Windows Setup EXE with Inno Setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $isccCandidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+            "${env:LocalAppData}\Programs\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --no-progress -y
+            $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) {
+            throw "ISCC.exe (Inno Setup 6) not found"
+          }
+          & $iscc "/DMyAppVersion=${env:APP_VER}" "installer.iss"
+          Get-ChildItem installer\*.exe
+
+      - name: Upload Windows Setup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup
+          path: installer/*.exe
+          if-no-files-found: error
+
+  publish-release:
+    name: Create Draft GitHub Release
+    needs: [build-macos, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_assets
+          merge-multiple: true
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd release_assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create Draft GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER_NO_V="${TAG#v}"
+          MINOR_VER="${VER_NO_V%.*}"
+          NOTES_FILE="RELEASE_NOTES_v${MINOR_VER}.md"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, uploading/replacing assets..."
+            gh release upload "$TAG" release_assets/* --clobber
+          elif [ -f "$NOTES_FILE" ]; then
+            gh release create "$TAG" release_assets/* \
+              --draft \
+              --title "FBC GUI ${TAG}" \
+              --notes-file "$NOTES_FILE"
+          else
+            gh release create "$TAG" release_assets/* \
+              --draft \
+              --title "FBC GUI ${TAG}" \
+              --generate-notes
+          fi
