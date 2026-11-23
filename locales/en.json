@@ -492,5 +492,22 @@
     "desc_log": "Diagnostic log file of events and errors (fbc_gui.log)",
     "btn_open_log": "Open Log",
     "err_no_log": "Log file has not been created yet:\n{path}"
+  },
+  "fbc_setup": {
+    "title": "Setting up fb2cng converter",
+    "searching": "Searching for fb2cng (fbc) on your system...",
+    "verifying": "Verifying fb2cng version and checksum...",
+    "reason_not_found": "fb2cng was not found on your system. Downloading v{ver} from GitHub...",
+    "reason_incompatible_version": "An incompatible fb2cng version was detected. Downloading required v{ver} from GitHub...",
+    "reason_hash_mismatch": "Local fbc checksum did not match the official release. Downloading v{ver} from GitHub...",
+    "reason_default": "Downloading required fb2cng v{ver} from GitHub...",
+    "downloading_generic": "Downloading {name}...",
+    "progress": "Downloading {name}: {dl} / {total} MB",
+    "cancelling": "Cancelling download...",
+    "err_title": "Failed to prepare fb2cng",
+    "err_msg": "The fb2cng (fbc) converter was not found or failed verification, and automatic download from GitHub failed:\n\n{e}\n\nWould you like to retry?",
+    "btn_retry": "Retry Download",
+    "btn_skip": "Later",
+    "installed_msg": "fb2cng v{ver} has been downloaded and verified."
   }
 }

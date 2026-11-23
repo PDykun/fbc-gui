@@ -94,12 +94,15 @@ from core.css_preview import (
     generate_css_content as build_css_content,
     build_full_preview_html as render_preview_html
 )
+from core.fbc_manager import (
+    FBC_TARGET_VERSION,
+    FbcEnsureWorker,
+    resolve_local_fbc,
+)
 
 
 def setup_app_environment():
-    """Настраивает пути к встроенным ресурсам и рабочей папке пользователя."""
-    bin_name = "fbc.exe" if os.name == "nt" else "fbc"
-
+    """Настраивает пути к ресурсам, рабочей папке пользователя и ищет локальный fb2cng."""
     if getattr(sys, 'frozen', False):
         bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
         if sys.platform == "darwin":
@@ -136,15 +139,10 @@ def setup_app_environment():
                     if os.path.isfile(s_fp) and (not os.path.exists(d_fp) or sub_dir == "themes"):
                         shutil.copy2(s_fp, d_fp)
 
-    fbc_cmd = os.path.join(bundle_dir, bin_name)
-    if not os.path.exists(fbc_cmd):
-        fbc_cmd = os.path.join(user_data_dir, bin_name)
-
-    if os.name != "nt" and os.path.exists(fbc_cmd):
-        try:
-            os.chmod(fbc_cmd, 0o755)
-        except Exception:
-            pass
+    # Дистрибутив не включает сторонний бинарник fbc: ищем локально в PATH ОС и user_data_dir
+    local_fbc = resolve_local_fbc(user_data_dir=user_data_dir)
+    fbc_cmd = local_fbc["path"] if local_fbc else ""
+    fbc_ver = local_fbc["version"] if local_fbc else ""
 
     cfg_path = os.path.join(user_data_dir, "config.yaml")
     css_path = os.path.join(user_data_dir, "ebook_styles.css")
@@ -154,6 +152,7 @@ def setup_app_environment():
     return (
         user_data_dir,
         fbc_cmd,
+        fbc_ver,
         cfg_path,
         css_path,
         bundled_css_path,
@@ -169,7 +168,7 @@ def setup_app_environment():
 
 
 (
-    BASE_DIR, FBC_CMD, FBC_CONFIG, CSS_PATH, BUNDLED_CSS_PATH, FONTS_DIR,
+    BASE_DIR, FBC_CMD, FBC_DETECTED_VERSION, FBC_CONFIG, CSS_PATH, BUNDLED_CSS_PATH, FONTS_DIR,
     SETTINGS_PATH, LOCALES_DIR, BUNDLED_LOCALES_DIR,
     THEMES_DIR, BUNDLED_THEMES_DIR, PRESETS_DIR, BUNDLED_PRESETS_DIR
 ) = setup_app_environment()
@@ -191,7 +190,7 @@ from ui.theme import (
     build_theme_qss, build_qpalette_from_qss, start_window_crossfade,
     refresh_widget_halos,
     ThemeToggleWidget, show_themed_message, show_conversion_summary_dialog, show_update_dialog,
-    ConversionProgressDialog, ImportProgressDialog, BookEditDialog, BatchEditDialog
+    ConversionProgressDialog, ImportProgressDialog, FbcSetupDialog, BookEditDialog, BatchEditDialog
 )
 from ui.pages.converter_page import build_converter_page
 from ui.pages.css_page import build_visual_css_page
@@ -256,6 +255,12 @@ class MainWindow(QMainWindow):
         self._loading_css = False
         self._applying_theme = False
         self._update_worker = None
+        self._fbc_worker = None
+        self._fbc_setup_dlg = None
+        self._fbc_ready_callback = None
+        self._fbc_setup_interactive = False
+        self.fbc_cmd = FBC_CMD
+        self.fbc_version = FBC_DETECTED_VERSION or THIRD_PARTY_VERSION
         self._table_status_filter = "all"
         self.undo_stack = QUndoStack(self)
         self.undo_stack.canUndoChanged.connect(self._update_undo_redo_ui)
@@ -291,6 +296,7 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self._setup_shortcuts()
         self.refresh_preview()
+        QTimer.singleShot(150, self._ensure_fbc_on_startup)
         QTimer.singleShot(1500, self._schedule_startup_update_check)
 
     def _setup_shortcuts(self):
@@ -632,7 +638,8 @@ class MainWindow(QMainWindow):
         cnt = len(self.files_data)
         fmt = self.app_settings.get("output_format", DEFAULT_OUTPUT_FORMAT).upper()
         save_txt = tr("status.source_folder") if self.app_settings.get("save_mode") == "source" else tr("status.custom_folder")
-        return tr("status.summary", cnt=cnt, fmt=fmt, save=save_txt, ver=THIRD_PARTY_VERSION)
+        ver_txt = getattr(self, "fbc_version", THIRD_PARTY_VERSION) or THIRD_PARTY_VERSION
+        return tr("status.summary", cnt=cnt, fmt=fmt, save=save_txt, ver=ver_txt)
 
     def update_header_status(self):
         if hasattr(self, 'lbl_status_sub'):
@@ -1278,8 +1285,102 @@ class MainWindow(QMainWindow):
             self,
             parent,
             APP_NAME, APP_VERSION, APP_AUTHOR, APP_EMAIL, APP_URL,
-            THIRD_PARTY_NAME, THIRD_PARTY_VERSION, THIRD_PARTY_URL
+            THIRD_PARTY_NAME, getattr(self, "fbc_version", THIRD_PARTY_VERSION) or THIRD_PARTY_VERSION, THIRD_PARTY_URL
         )
+
+    def _ensure_fbc_on_startup(self, interactive=False, on_ready=None):
+        if self._fbc_worker is not None and self._fbc_worker.isRunning():
+            if on_ready is not None:
+                self._fbc_ready_callback = on_ready
+            return
+
+        self._fbc_setup_interactive = bool(interactive)
+        self._fbc_ready_callback = on_ready
+        self._fbc_setup_dlg = None
+
+        if interactive:
+            self._open_fbc_setup_dialog(tr("fbc_setup.searching"))
+
+        self._fbc_worker = FbcEnsureWorker(
+            user_data_dir=BASE_DIR,
+            target_version=FBC_TARGET_VERSION,
+            allow_download=True,
+            parent=self,
+        )
+        self._fbc_worker.status_changed.connect(self._on_fbc_status_changed)
+        self._fbc_worker.progress_changed.connect(self._on_fbc_progress_changed)
+        self._fbc_worker.finished_check.connect(self._on_fbc_check_finished)
+        if self._fbc_setup_dlg is not None:
+            self._fbc_setup_dlg.cancel_requested.connect(self._fbc_worker.cancel)
+        self._fbc_worker.start()
+
+    def _open_fbc_setup_dialog(self, status_text):
+        if self._fbc_setup_dlg is None:
+            self._fbc_setup_dlg = FbcSetupDialog(self, initial_status=status_text)
+            if self._fbc_worker is not None:
+                self._fbc_setup_dlg.cancel_requested.connect(self._fbc_worker.cancel)
+            self._fbc_setup_dlg.open()
+        else:
+            self._fbc_setup_dlg.set_status_text(status_text)
+
+    def _on_fbc_status_changed(self, status_code):
+        if status_code == "searching":
+            if self._fbc_setup_dlg is not None:
+                self._fbc_setup_dlg.set_status_text(tr("fbc_setup.searching"))
+        elif status_code == "verifying":
+            if self._fbc_setup_dlg is not None:
+                self._fbc_setup_dlg.set_status_text(tr("fbc_setup.verifying"))
+        elif status_code.startswith("downloading:"):
+            reason = status_code.split(":", 1)[1]
+            reason_key = {
+                "not_found": "fbc_setup.reason_not_found",
+                "incompatible_version": "fbc_setup.reason_incompatible_version",
+                "hash_mismatch": "fbc_setup.reason_hash_mismatch",
+            }.get(reason, "fbc_setup.reason_default")
+            self._open_fbc_setup_dialog(tr(reason_key, ver=FBC_TARGET_VERSION))
+
+    def _on_fbc_progress_changed(self, downloaded, total, asset_name):
+        if self._fbc_setup_dlg is None:
+            self._open_fbc_setup_dialog(tr("fbc_setup.downloading_generic", name=asset_name))
+        self._fbc_setup_dlg.update_download_progress(downloaded, total, asset_name)
+
+    def _on_fbc_check_finished(self, result):
+        global FBC_CMD
+        dlg = self._fbc_setup_dlg
+        self._fbc_setup_dlg = None
+        if dlg is not None:
+            dlg.finish_and_close()
+
+        cb = self._fbc_ready_callback
+        self._fbc_ready_callback = None
+
+        if result.get("ok") and result.get("path"):
+            FBC_CMD = result["path"]
+            self.fbc_cmd = result["path"]
+            if result.get("version"):
+                self.fbc_version = result["version"]
+                if hasattr(self, "lbl_third_party_ver"):
+                    self.lbl_third_party_ver.setText(f"<b>{tr('about.third_party_ver', ver=self.fbc_version)}</b>")
+            self.update_header_status()
+            if result.get("downloaded") and not cb:
+                logger.info("fb2cng v%s успешно установлен в %s", self.fbc_version, self.fbc_cmd)
+            if cb is not None:
+                QTimer.singleShot(0, cb)
+            return
+
+        if result.get("cancelled"):
+            return
+
+        err_text = result.get("error") or result.get("reason") or "unknown error"
+        retry = show_update_dialog(
+            self,
+            tr("fbc_setup.err_title"),
+            tr("fbc_setup.err_msg", e=err_text),
+            tr("fbc_setup.btn_retry"),
+            tr("fbc_setup.btn_skip"),
+        )
+        if retry:
+            QTimer.singleShot(0, lambda c=cb: self._ensure_fbc_on_startup(interactive=True, on_ready=c))
 
     def _schedule_startup_update_check(self):
         last_check = float(self.app_settings.get("last_update_check", 0) or 0)
@@ -2485,8 +2586,12 @@ class MainWindow(QMainWindow):
         if not items:
             show_themed_message(self, tr("common.warning"), tr("converter.warn_empty_list"), "warning")
             return
-        if not os.path.exists(FBC_CMD):
-            show_themed_message(self, tr("common.error"), tr("converter.err_no_fbc", path=FBC_CMD), "error")
+        fbc_bin = self.fbc_cmd or FBC_CMD
+        if not fbc_bin or not os.path.isfile(fbc_bin):
+            self._ensure_fbc_on_startup(
+                interactive=True,
+                on_ready=lambda it=items, d=debug: self._run_conversion(it, debug=d),
+            )
             return
 
         self.save_visual_css(show_alert=False)
@@ -2521,6 +2626,7 @@ class MainWindow(QMainWindow):
             app_settings=dict(self.app_settings),
             debug=debug,
             no_cover=no_cover,
+            fbc_cmd=fbc_bin,
             parent=self,
         )
         self._convert_worker.convert_progress.connect(progress_dlg.update_conversion)
@@ -2699,7 +2805,7 @@ class ConversionWorker(QThread):
     def __init__(
         self, items, selected_format, save_mode, custom_dir,
         title_style_params, compression, email_enabled, app_settings,
-        debug=False, no_cover=False, parent=None
+        debug=False, no_cover=False, fbc_cmd=None, parent=None
     ):
         super().__init__(parent)
         self.items = items
@@ -2712,6 +2818,7 @@ class ConversionWorker(QThread):
         self.app_settings = app_settings
         self.debug = bool(debug)
         self.no_cover = bool(no_cover)
+        self.fbc_cmd = fbc_cmd or FBC_CMD
         self._cancel_event = threading.Event()
 
     def cancel(self):
@@ -2748,7 +2855,7 @@ class ConversionWorker(QThread):
         t0 = time.monotonic()
         try:
             created = convert_book_file(
-                FBC_CMD, FBC_CONFIG, BASE_DIR,
+                self.fbc_cmd, FBC_CONFIG, BASE_DIR,
                 data, dest_dir, self.selected_format, self.title_style_params,
                 compression=self.compression,
                 cancel_event=self._cancel_event,

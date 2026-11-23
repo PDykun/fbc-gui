@@ -54,8 +54,8 @@ def build_about_page(
     tp_layout.setContentsMargins(0, 0, 0, 0)
     tp_layout.setSpacing(10)
 
-    lbl_tp_ver = QLabel(f"<b>{tr('about.third_party_ver', ver=third_party_version)}</b>")
-    tp_layout.addWidget(lbl_tp_ver)
+    win.lbl_third_party_ver = QLabel(f"<b>{tr('about.third_party_ver', ver=third_party_version)}</b>")
+    tp_layout.addWidget(win.lbl_third_party_ver)
 
     tp_label = third_party_url.replace("https://", "").replace("http://", "")
     btn_tp_url = QPushButton(tp_label)
