@@ -31,8 +31,8 @@ from PyQt6.QtWidgets import (
 
 # --- Метаинформация и версия программы ---
 __app_name__ = "FBC GUI"
-__version__ = "2.8.1"
-__build__ = 54
+__version__ = "2.8.2"
+__build__ = 59
 __author__ = "Paul Dykoun"
 __email__ = "me@pashka.eu"
 __url__ = "www.pashka.eu/fbc_gui"
