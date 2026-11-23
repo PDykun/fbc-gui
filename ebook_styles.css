@@ -1,0 +1,63 @@
+body { font-family: "paragraph"; font-weight: normal; font-style: normal; line-height: 100%; }
+@page { margin-left: 10px; margin-right: 10px; margin-top: 10px; margin-bottom: 5px;  }
+
+@font-face { font-family: "dropcaps"; src: url("fonts/PomorskyUnicode.otf"); }
+@font-face { font-family: "paragraph"; src: url("fonts/PT-Astra-Serif_Regular.ttf"); font-weight: normal; font-style: normal; }
+@font-face { font-family: "paragraph"; src: url("fonts/PT-Astra-Serif_Italic.ttf"); font-style: italic; font-weight: normal; }
+@font-face { font-family: "paragraph"; src: url("fonts/PT-Astra-Serif_Bold.ttf"); font-style: normal; font-weight: bold; }
+@font-face { font-family: "paragraph"; src: url("fonts/PT-Astra-Serif_Bold-Italic.ttf"); font-style: italic; font-weight: bold; }
+@font-face { font-family: "title-font"; src: url("fonts/PT-Astra-Serif_Regular.ttf"); font-weight: bold; font-style: normal; }
+@font-face { font-family: "title-font"; src: url("fonts/PT-Astra-Serif_Regular.ttf"); font-weight: normal; font-style: normal; }
+@font-face { font-family: "author-font"; src: url("fonts/PT-Astra-Serif_Regular.ttf"); font-style: italic; font-weight: normal; }
+@font-face { font-family: "author-font"; src: url("fonts/PT-Astra-Serif_Regular.ttf"); font-style: normal; font-weight: normal; }
+@font-face { font-family: "author-font"; src: url("fonts/PT-Astra-Serif_Regular.ttf"); font-style: italic; font-weight: bold; }
+@font-face { font-family: "author-font"; src: url("fonts/PT-Astra-Serif_Regular.ttf"); font-style: normal; font-weight: bold; }
+
+.body-title { page-break-before: always; margin-top: 2em; margin-bottom: 1.5em; text-indent: 0; text-align: center; }
+
+.book-author, span.book-author, .body-title .book-author, .body-title-header.book-author, .body-title-header .book-author, .text-author, .author {
+    font-family: "author-font", "paragraph" !important; font-size: 110% !important; font-weight: bold !important;
+    font-style: italic !important; color: green !important; text-align: center !important;
+    margin-top: 0.4em !important; margin-bottom: 0.4em !important; page-break-before: avoid;
+}
+
+.book-title, span.book-title, .body-title .book-title, .body-title-header.book-title, .body-title-header .book-title {
+    font-family: "title-font", "paragraph" !important; font-size: 150% !important; font-weight: bold !important;
+    font-style: normal !important; color: red !important; text-align: center !important;
+    margin-top: 0.8em !important; margin-bottom: 0.5em !important;
+}
+
+.body-title-header, .body-title h1, h1.body-title-header { font-family: "title-font", "paragraph"; font-size: 150%; font-weight: bold; color: red; text-align: center; }
+
+.chapter-title { page-break-before: always; margin-top: 2em; margin-bottom: 1em; text-indent: 0; }
+.chapter-title-header, .chapter-title h1, .chapter-title h2, h1.chapter-title-header { font-family: "paragraph"; font-size: 130%; font-weight: bold; color: blue; text-align: center; margin-top: 1em; margin-bottom: 0.8em; }
+
+.section-title-h2 { page-break-before: always; margin-top: 1.5em; margin-bottom: 0.8em; text-indent: 0; }
+.section-title-h2 .section-title-header, .section-title-h2 h2, .section-title-h2 h3 { font-family: "paragraph"; font-size: 120%; font-weight: bold; color: dimgray; text-align: center; }
+
+.section-title-h3 .section-title-header, .section-title-h3 h3, .section-title-h3 h4 { font-family: "paragraph"; font-size: 120%; font-weight: bold; color: green; text-align: center; }
+
+.section-title-h4 .section-title-header, .section-title-h4 h4, .section-title-h4 h5 { font-family: "paragraph"; font-size: 120%; font-weight: bold; color: magenta; text-align: center; }
+
+.section-subtitle, .subtitle, p.subtitle { font-family: "paragraph"; page-break-after: avoid; text-align: center; font-weight: bold; font-style: italic; margin-bottom: 0.8em; margin-top: 0.5em; text-indent: 0em; }
+
+p { font-family: "paragraph"; font-weight: normal; font-style: normal; text-indent: 1em; margin-bottom: 0pt; margin-top: 0pt; text-align: justify; }
+.emptyline { margin-top: 1em; }
+
+.dropcap, span.dropcaps, span.dropcap {
+    font-family: "dropcaps"; float: left; font-weight: bold; color: red; font-size: 4em;
+    line-height: 0.85; margin-top: 0em; margin-bottom: -0.2em; margin-right: 0.08em; padding-right: .1em;
+}
+.has-dropcap, p.has-dropcap { text-indent: 0 !important; text-align: justify; }
+
+.annotation { font-family: "paragraph"; margin: 1.5em; font-size: 70%; text-align: center; font-style: normal; color: blue; }
+
+.epigraph { font-family: "paragraph"; margin-left: 35%; text-align: right; margin-top: 0.5em; margin-bottom: 0.3em; font-style: italic; font-size: 100%; color: dimgray; }
+
+.poem { font-family: "paragraph"; text-indent: 0em; margin: 0.8em 0 0.8em 2.5em; font-style: italic; font-size: 70%; color: purple; text-align: left; }
+
+.footnote, .blocknote { font-family: "paragraph"; font-style: italic; font-size: 70%; border-radius: 4px; background: #e6e6fa; padding: 6px 10px; border: 1px #505050 solid; color: black; margin-top: 1em; margin-bottom: 1em; }
+
+.image, .image-block, div.image { text-align: center; text-indent: 0; margin: 0.8em 0; page-break-inside: avoid; }
+.image img, .image svg, img.image-inline, svg { max-width: 100%; height: auto; }
+.image-caption, p.image-caption { font-family: "paragraph"; font-size: 85%; color: dimgray; font-style: italic; text-align: center; text-indent: 0; margin-top: 0.3em; margin-bottom: 0.8em; }

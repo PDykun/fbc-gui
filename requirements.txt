@@ -1,0 +1,16 @@
+altgraph==0.17.5
+importlib_metadata==8.7.1
+macholib==1.16.4; sys_platform == "darwin"
+packaging==26.3
+pillow==11.3.0
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.10
+pyobjc-core==11.1; sys_platform == "darwin"
+pyobjc-framework-Cocoa==11.1; sys_platform == "darwin"
+pyobjc-framework-WebKit==11.1; sys_platform == "darwin"
+PyQt6==6.10.2
+PyQt6-Qt6==6.10.2
+PyQt6_sip==13.10.2
+ruamel.yaml==0.19.1
+setuptools==84.2.1
+zipp==3.23.1

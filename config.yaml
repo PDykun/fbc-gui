@@ -1,0 +1,344 @@
+# Content should be UTF-8!
+version: 1
+
+# NOTE: Some fields (have _template in the name) must be specified using go
+# template language: https://pkg.go.dev/text/template#pkg-overview with
+# additional functions from slim-sprig package available for processing:
+# https://go-task.github.io/slim-sprig. In all template contexts .Context
+# (string) and .Format (string) are available. .Context is set to the field
+# name to uniquely identify processing context. .Format is the requested output
+# format: epub2, epub3, kepub, kepub3, kfx, azw8, pdf, txt, or md.
+
+document:
+  # Some programs (CoolReader and some versions of FBReader) expect "old" zip
+  # format which does not have data descriptor. If you ever encounter
+  # unreadable epub/kepub files - turn this on
+  fix_zip: false
+
+  # open book from cover page, rather than from beginning of the text
+  # NOTE: ignored on Kindle devices
+  open_from_cover: true
+
+  # Navigation hierarchy type for device TOCs/nav maps.
+  # "normal"     - preserve section nesting
+  # "old_kindle" - restrict nesting for old Kindle/kindlegen compatibility
+  # "flat"       - make all navigation entries siblings
+  # Note: generated visible TOC pages should keep their normal/full structure.
+  toc_type: normal
+
+  # CSS stylesheet to use. If absent - default one will be supplied
+  stylesheet_path: "ebook_styles.css"
+
+  # When output_name_template is set output file name will be created using FB2
+  # metainformation
+  output_name_template: |
+    {{- $title := replace "/" "∕" .Title -}}
+    {{- $title = replace "\\" "∕" $title -}}
+    {{- $series := "" -}}{{- $series_abbr := "" -}}{{- $num := "" -}}
+    {{- if gt (len .Series) 0 -}}
+    {{-   $s := index .Series 0 -}}
+    {{-   $series = $s.Name -}}
+    {{-   $letters := list -}}
+    {{-   range $w := splitList " " $s.Name -}}{{- if $w -}}{{- $letters = append $letters (upper (first (splitList "" $w))) -}}{{- end -}}{{- end -}}
+    {{-   $series_abbr = join "" $letters -}}
+    {{-   if gt $s.Number 0 -}}{{- $num = printf "%02d" $s.Number -}}{{- end -}}
+    {{- end -}}
+    {{- $last := "" -}}{{- $first := "" -}}{{- $mid := "" -}}
+    {{- if gt (len .Authors) 0 -}}
+    {{-   $a := index .Authors 0 -}}
+    {{-   $last = $a.LastName -}}{{- $first = $a.FirstName -}}{{- $mid = $a.MiddleName -}}
+    {{- end -}}
+    {{- $format := .Format -}}
+    {{- $grp0 := "" -}}{{- $grp0_sep := "" -}}{{- $grp0_has := false -}}
+    {{- if $series_abbr -}}
+    {{-   if and $grp0_has $grp0_sep -}}{{- $grp0 = printf "%s%s" $grp0 $grp0_sep -}}{{- end -}}
+    {{-   $grp0 = printf "%s%s" $grp0 $series_abbr -}}
+    {{-   $grp0_sep = "" -}}{{- $grp0_has = true -}}
+    {{- else -}}
+    {{-   if not $grp0_has -}}{{- $grp0_sep = "" -}}{{- end -}}
+    {{- end -}}
+    {{- $grp0_sep = printf "%s%s" $grp0_sep " - " -}}
+    {{- if $num -}}
+    {{-   if and $grp0_has $grp0_sep -}}{{- $grp0 = printf "%s%s" $grp0 $grp0_sep -}}{{- end -}}
+    {{-   $grp0 = printf "%s%s" $grp0 $num -}}
+    {{-   $grp0_sep = "" -}}{{- $grp0_has = true -}}
+    {{- else -}}
+    {{-   if not $grp0_has -}}{{- $grp0_sep = "" -}}{{- end -}}
+    {{- end -}}
+    {{- if $grp0 -}}{{- $grp0 = printf "%s%s%s" "(" $grp0 ")" -}}{{- end -}}
+    {{- $out := "" -}}{{- $out_sep := "" -}}{{- $out_has := false -}}
+    {{- if $last -}}
+    {{-   if and $out_has $out_sep -}}{{- $out = printf "%s%s" $out $out_sep -}}{{- end -}}
+    {{-   $out = printf "%s%s" $out $last -}}
+    {{-   $out_sep = "" -}}{{- $out_has = true -}}
+    {{- else -}}
+    {{-   if not $out_has -}}{{- $out_sep = "" -}}{{- end -}}
+    {{- end -}}
+    {{- $out_sep = printf "%s%s" $out_sep " - " -}}
+    {{- if $grp0 -}}
+    {{-   if and $out_has $out_sep -}}{{- $out = printf "%s%s" $out $out_sep -}}{{- end -}}
+    {{-   $out = printf "%s%s" $out $grp0 -}}
+    {{-   $out_sep = "" -}}{{- $out_has = true -}}
+    {{- else -}}
+    {{-   if not $out_has -}}{{- $out_sep = "" -}}{{- end -}}
+    {{- end -}}
+    {{- $out_sep = printf "%s%s" $out_sep " " -}}
+    {{- $out_sep = printf "%s%s" $out_sep " - " -}}
+    {{- if $title -}}
+    {{-   if and $out_has $out_sep -}}{{- $out = printf "%s%s" $out $out_sep -}}{{- end -}}
+    {{-   $out = printf "%s%s" $out $title -}}
+    {{-   $out_sep = "" -}}{{- $out_has = true -}}
+    {{- else -}}
+    {{-   if not $out_has -}}{{- $out_sep = "" -}}{{- end -}}
+    {{- end -}}
+    {{- $out = regexReplaceAll " {2,}" (trim $out) " " -}}
+    {{- if not $out -}}{{- $out = $title -}}{{- end -}}
+    {{- $out = replace "/" "∕" $out -}}
+    {{- $out = replace "\\" "∕" $out -}}
+    {{ $out -}}
+
+  # Slugify/transliterate output file name - after all other processing on file
+  # name is completed
+  file_name_transliterate: false
+
+  # Insert soft hyphen symbols '\u00AD' inside words - for devices which do not
+  # support proper hyphenation
+  insert_soft_hyphen: false
+
+  metainformation:
+    title_template: |
+      {{- $title := .Title -}}
+      {{- $series := "" -}}{{- $series_abbr := "" -}}{{- $num := "" -}}
+      {{- if gt (len .Series) 0 -}}
+      {{-   $s := index .Series 0 -}}
+      {{-   $series = $s.Name -}}
+      {{-   $letters := list -}}
+      {{-   range $w := splitList " " $s.Name -}}{{- if $w -}}{{- $letters = append $letters (upper (first (splitList "" $w))) -}}{{- end -}}{{- end -}}
+      {{-   $series_abbr = join "" $letters -}}
+      {{-   if gt $s.Number 0 -}}{{- $num = printf "%02d" $s.Number -}}{{- end -}}
+      {{- end -}}
+      {{- $last := "" -}}{{- $first := "" -}}{{- $mid := "" -}}
+      {{- if gt (len .Authors) 0 -}}
+      {{-   $a := index .Authors 0 -}}
+      {{-   $last = $a.LastName -}}{{- $first = $a.FirstName -}}{{- $mid = $a.MiddleName -}}
+      {{- end -}}
+      {{- $format := .Format -}}
+      {{- $grp0 := "" -}}{{- $grp0_sep := "" -}}{{- $grp0_has := false -}}
+      {{- if $series_abbr -}}
+      {{-   if and $grp0_has $grp0_sep -}}{{- $grp0 = printf "%s%s" $grp0 $grp0_sep -}}{{- end -}}
+      {{-   $grp0 = printf "%s%s" $grp0 $series_abbr -}}
+      {{-   $grp0_sep = "" -}}{{- $grp0_has = true -}}
+      {{- else -}}
+      {{-   if not $grp0_has -}}{{- $grp0_sep = "" -}}{{- end -}}
+      {{- end -}}
+      {{- $grp0_sep = printf "%s%s" $grp0_sep " - " -}}
+      {{- if $num -}}
+      {{-   if and $grp0_has $grp0_sep -}}{{- $grp0 = printf "%s%s" $grp0 $grp0_sep -}}{{- end -}}
+      {{-   $grp0 = printf "%s%s" $grp0 $num -}}
+      {{-   $grp0_sep = "" -}}{{- $grp0_has = true -}}
+      {{- else -}}
+      {{-   if not $grp0_has -}}{{- $grp0_sep = "" -}}{{- end -}}
+      {{- end -}}
+      {{- if $grp0 -}}{{- $grp0 = printf "%s%s%s" "(" $grp0 ")" -}}{{- end -}}
+      {{- $out := "" -}}{{- $out_sep := "" -}}{{- $out_has := false -}}
+      {{- if $grp0 -}}
+      {{-   if and $out_has $out_sep -}}{{- $out = printf "%s%s" $out $out_sep -}}{{- end -}}
+      {{-   $out = printf "%s%s" $out $grp0 -}}
+      {{-   $out_sep = "" -}}{{- $out_has = true -}}
+      {{- else -}}
+      {{-   if not $out_has -}}{{- $out_sep = "" -}}{{- end -}}
+      {{- end -}}
+      {{- $out_sep = printf "%s%s" $out_sep " " -}}
+      {{- if $title -}}
+      {{-   if and $out_has $out_sep -}}{{- $out = printf "%s%s" $out $out_sep -}}{{- end -}}
+      {{-   $out = printf "%s%s" $out $title -}}
+      {{-   $out_sep = "" -}}{{- $out_has = true -}}
+      {{- else -}}
+      {{-   if not $out_has -}}{{- $out_sep = "" -}}{{- end -}}
+      {{- end -}}
+      {{- $out = regexReplaceAll " {2,}" (trim $out) " " -}}
+      {{- if not $out -}}{{- $out = $title -}}{{- end -}}
+      {{ $out -}}
+
+    creator_name_template: |
+      {{- .LastName -}}
+      {{- if .FirstName }} {{.FirstName}}{{ end -}}
+      {{- if .MiddleName }} {{.MiddleName }}{{ end -}}
+
+    transliterate: false
+
+  page_map:
+    enable: true
+    size: 2300
+    adobe_de: false
+
+  images:
+    # Do not skip images which cannot be decoded by program. Use them without
+    # any processing, allowing reader to decide what to do
+    use_broken: false
+
+    # Flatten transparent PNG/GIF/WebP images onto white background.
+    # For Kindle formats keep false so supported SVG graphics remain vector.
+    remove_transparency: false
+
+    # Force SVG rasterization independently of optimization. False keeps the
+    # output backend's normal behavior, including required rasterization.
+    # EPUB/KEPUB and external Markdown use PNG, preserving alpha unless
+    # remove_transparency is enabled. Kindle and embedded Markdown retain JPEG
+    # on white. PDF retains intrinsic SVG sizing and white pixel embedding.
+    rasterize_svg: false
+
+    # Output format for raster images ("auto", "jpeg", "png")
+    raster_format: auto
+
+    # Resize all images (but cover) with specified ratio
+    scale_factor: 1.0
+    fit_to_screen: true
+    baseline_jpeg: false
+    grayscale: none
+
+    # Enable optional JPEG/PNG recompression. This does not control resizing,
+    # transparency removal, or output-format compatibility conversions.
+    # JPEGs are re-encoded if their detected quality exceeds "jpeg_quality_level".
+    # PNGs use best compression, except PDF output skips optional PNG recompression.
+    # When enabled, grayscale detection is applied during JPEG encoding.
+    # Format compatibility conversions still happen when disabled:
+    # Kindle normalizes raster images to JPEG and rasterizes SVG; KEPUB/KEPUB3
+    # converts WebP to PNG, preserving transparency unless removal is requested.
+    # These conversions apply to covers as well as body images.
+    optimize: true
+
+    # JPEG quality level to use, percentage points (40% - 100%). For Kindle
+    # output this also affects PNG/GIF-to-JPEG conversion and SVG rasterization.
+    jpeg_quality_level: 95
+
+
+    screen:
+      # Reader screen size so images could be adjusted properly.
+      # Width and height are device pixels; PDF uses them with dpi to derive
+      # fixed page size in PDF points.
+      # This is used to prepare cover and some other operations, like SVG
+      # rasterization for Kindle and optional PNG output (PDF keeps intrinsic size).
+      width: 1264
+      height: 1680
+      dpi: 300
+
+    cover:
+      generate: false
+      resize: keepAR
+
+
+  markdown:
+    images: placeholder
+
+
+  kfx:
+    compression: none
+
+
+  azw3:
+    compression: standard
+    apnx: none
+
+  footnotes:
+    mode: float
+    bodies: ["notes", "comments", "примечания", "комментарии"]
+    backlink_template: |
+      {{- if eq .Format "pdf" -}}
+      {{-   if .PageNumber -}}
+      {{-     printf "[page\u00A0%d]" .PageNumber -}}
+      {{-   else -}}
+      {{-     "[<]" -}}
+      {{-   end -}}
+      {{- else if or (eq .Format "kfx") (eq .Format "azw8") -}}
+      {{-   if .LocationNumber -}}
+      {{-     printf "[loc\u00A0%d]" .LocationNumber -}}
+      {{-   else if .PageNumber -}}
+      {{-     printf "[page\u00A0%d]" .PageNumber -}}
+      {{-   else if .SectionTitle -}}
+      {{-     printf "[%s]" .SectionTitle -}}
+      {{-   else -}}
+      {{-     "[<]" -}}
+      {{-   end -}}
+      {{- else -}}
+      {{-   if .PageNumber -}}
+      {{-     printf "[page\u00A0%d]" .PageNumber -}}
+      {{-   else if .SectionTitle -}}
+      {{-     printf "[%s]" .SectionTitle -}}
+      {{-   else -}}
+      {{-     "[<]" -}}
+      {{-   end -}}
+      {{- end -}}
+    more_paragraphs: "(~) "
+    label_template: |
+      {{- if eq .Format "pdf" -}}
+      {{-   $bodyTitle := default "Notes" .BodyTitle -}}
+      {{-   $noteTitle := trim .NoteTitle -}}
+      {{-   $noteNumber := printf "%d" .NoteNumber -}}
+      {{-   $label := "" -}}
+      {{-   if gt .BodyNumber 0 -}}
+      {{-     $label = printf "%d.%s" .BodyNumber $noteNumber -}}
+      {{-   else -}}
+      {{-     $label = $noteNumber -}}
+      {{-   end -}}
+      {{-   if and $noteTitle (regexMatch "[^0-9[:space:]]" $noteTitle) -}}
+      {{-     printf "%s: %s" $bodyTitle $noteTitle -}}
+      {{-   else -}}
+      {{-     printf "%s: %s" $bodyTitle $label -}}
+      {{-   end -}}
+      {{- else -}}
+      {{-   if gt .BodyNumber 0 -}}
+      {{-     printf "%d" .BodyNumber -}}.
+      {{-   end -}}
+      {{-   printf "%d" .NoteNumber -}}
+      {{- end -}}
+
+  annotation:
+    enable: true
+    title: = = =
+    in_toc: false
+
+  toc_page:
+    placement: after
+    authors_template: |
+      {{- $names := list -}}
+      {{- range .Authors -}}
+      {{-   $name := list -}}
+      {{-   if .FirstName -}}{{ $name = append $name .FirstName -}}{{- end -}}
+      {{-   if .MiddleName -}}{{ $name = append $name .MiddleName -}}{{- end -}}
+      {{-   if .LastName -}}{{ $name = append $name .LastName }}{{- end -}}
+      {{-   if and (not $name) .Nickname -}}{{ $name = append $name .Nickname }}{{- end -}}
+      {{-   $names = append $names (join " " $name) -}}
+      {{- end -}}
+      {{- join ", " $names -}}
+    include_chapters_without_title: false
+
+  dropcaps:
+    enable: true
+    ignore_symbols: "'\"-.…0123456789‒–—«»“”<>"
+
+  text_transformations:
+    speech:
+      enable: false
+      from: "‐‑−–—―"
+      to: "— "
+    dashes:
+      enable: false
+      from: "‐‑−–—―"
+      to: "—"
+    dialogue:
+      enable: false
+      from: "‐‑−–—―"
+      to: " "
+
+logging:
+  console:
+    level: normal
+  file:
+    destination_template: "{{ .AppName }}.log"
+    panic_destination_template: "{{ .AppName }}-panic.log"
+    level: debug
+    mode: overwrite
+
+reporting:
+  destination_template: "{{ .AppName }}-report.zip"
