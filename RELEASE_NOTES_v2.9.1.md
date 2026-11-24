@@ -1,8 +1,8 @@
-# FBC GUI v2.9.1 (Build 75) — Release Notes
+# FBC GUI v2.9.1 (Build 76) — Release Notes
 
 ## Русская версия (RU)
 
-**Версия 2.9.1 (Ноябрь 2026) — Усиление безопасности, исправление работы с FB2/CSS/превью, локализациями, CI и потокобезопасностью • сборка 75**
+**Версия 2.9.1 (Ноябрь 2026) — Усиление безопасности, исправление работы с FB2/CSS/превью, локализациями, CI и потокобезопасностью • сборка 76**
 
 ### Что изменилось с версии 2.9 до 2.9.1
 
@@ -34,7 +34,7 @@
 
 ## English Version (EN)
 
-**Version 2.9.1 (November 2026) — Security Hardening, FB2/CSS/Preview Fixes, Localization Refresh, CI & Thread-Safety Improvements • build 75**
+**Version 2.9.1 (November 2026) — Security Hardening, FB2/CSS/Preview Fixes, Localization Refresh, CI & Thread-Safety Improvements • build 76**
 
 ### Changes from v2.9 to v2.9.1
 
