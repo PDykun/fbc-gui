@@ -27,7 +27,7 @@ document:
   toc_type: normal
 
   # CSS stylesheet to use. If absent - default one will be supplied
-  stylesheet_path: "/Users/pashka/Desktop/fbc/ebook_styles.css"
+  stylesheet_path: "ebook_styles.css"
 
   # When output_name_template is set output file name will be created using FB2
   # metainformation

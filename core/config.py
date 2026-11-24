@@ -380,6 +380,18 @@ def atomic_write_text(filepath, text, encoding="utf-8"):
         raise
 
 
+def _normalize_stylesheet_path(cfg_path, css_path):
+    """Возвращает относительное имя CSS, если он лежит рядом с config.yaml, для переносимости конфига."""
+    if not css_path:
+        return "ebook_styles.css"
+    try:
+        if cfg_path and os.path.dirname(os.path.abspath(cfg_path)) == os.path.dirname(os.path.abspath(css_path)):
+            return os.path.basename(css_path)
+    except OSError:
+        pass
+    return str(css_path).replace("\\", "/")
+
+
 def migrate_fbc_config_211(cfg_path, css_path):
     """Обновляет существующий config.yaml для совместимости с fb2cng 2.1.1."""
     if not os.path.exists(cfg_path):
@@ -428,7 +440,7 @@ def migrate_fbc_config_211(cfg_path, css_path):
             if fixed_tpl != raw_tpl:
                 doc["output_name_template"] = LiteralScalarString(fixed_tpl)
 
-        css_norm = css_path.replace("\\", "/")
+        css_norm = _normalize_stylesheet_path(cfg_path, css_path)
         if "stylesheet_path" in doc and str(doc["stylesheet_path"]) != css_norm:
             doc["stylesheet_path"] = DoubleQuotedScalarString(css_norm)
 
@@ -785,7 +797,7 @@ def update_fbc_config_file(fbc_config_path, css_path, app_settings):
         tpl_str = LiteralScalarString(tpl_body.rstrip("\n") + "\n")
         _insert_key_after(doc, "output_name_template", tpl_str, "stylesheet_path")
 
-        css_norm = css_path.replace("\\", "/")
+        css_norm = _normalize_stylesheet_path(fbc_config_path, css_path)
         _insert_key_after(doc, "stylesheet_path", DoubleQuotedScalarString(css_norm), "toc_type")
 
         buf = io.StringIO()
