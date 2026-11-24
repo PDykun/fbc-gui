@@ -241,6 +241,7 @@ jobs:
             --add-data "themes;themes" `
             --add-data "presets_defaults;presets_defaults" `
             fbc_gui.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Windows Setup EXE with Inno Setup (${{ matrix.arch }})
         shell: pwsh
@@ -333,12 +334,14 @@ jobs:
           $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) {
             choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
           if (-not $iscc) {
             throw "ISCC.exe (Inno Setup 6) not found"
           }
           & $iscc "/DMyAppVersion=${env:APP_VER}" "/DMyAppArch=${{ matrix.arch }}" "installer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem installer\*.exe
 
       - name: Upload Windows Setup artifact (${{ matrix.arch }})

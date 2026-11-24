@@ -588,12 +588,13 @@ def load_app_settings(settings_path, app_settings):
             sec_pwd = _load_smtp_password_secure()
             if sec_pwd:
                 app_settings["smtp_password"] = sec_pwd
+        valid_keys = {val for _, val in get_theme_choices()}
         raw_theme = app_settings.get("theme", "Modern")
         if raw_theme in ("Auto", "Авто"):
             if app_settings.get("theme_mode") not in ("auto", "light", "dark"):
                 app_settings["theme_mode"] = "auto"
             fam = app_settings.get("theme_family", "Modern")
-            app_settings["theme"] = fam if fam in ("Golden", "Modern") else "Modern"
+            app_settings["theme"] = fam if fam in valid_keys else "Modern"
             changed = True
         elif raw_theme in ("Midnight", "macOS Dark", "Tuck Midnight") and "theme_mode" not in app_settings:
             app_settings["theme_mode"] = "dark"
@@ -608,15 +609,14 @@ def load_app_settings(settings_path, app_settings):
             changed = True
 
         mapped_theme = LEGACY_THEME_MAP.get(app_settings.get("theme", "Modern"), app_settings.get("theme", "Modern"))
-        valid_keys = {val for _, val in get_theme_choices()}
         if mapped_theme not in valid_keys:
             mapped_theme = app_settings.get("theme_family") if app_settings.get("theme_family") in valid_keys else "Modern"
         if mapped_theme != app_settings.get("theme"):
             app_settings["theme"] = mapped_theme
             changed = True
 
-        if app_settings.get("theme_family") not in ("Golden", "Modern"):
-            app_settings["theme_family"] = mapped_theme if mapped_theme in ("Golden", "Modern") else "Modern"
+        if app_settings.get("theme_family") not in valid_keys:
+            app_settings["theme_family"] = mapped_theme if mapped_theme in valid_keys else "Modern"
             changed = True
         if app_settings.get("theme_mode") not in ("auto", "light", "dark"):
             app_settings["theme_mode"] = "auto"

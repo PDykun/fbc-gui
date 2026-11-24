@@ -441,8 +441,14 @@ def fit_image_to_cover_size(image_path, target_size=COVER_TARGET_SIZE):
             out = io.BytesIO()
             fitted.save(out, format="JPEG", quality=92)
             return out.getvalue(), "image/jpeg"
+    ext = os.path.splitext(image_path)[1].lower()
+    mime = {
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(ext, "image/jpeg")
     with open(image_path, "rb") as f:
-        return f.read(), "image/jpeg"
+        return f.read(), mime
 
 
 def _get_tag_values(meta, output_format=DEFAULT_OUTPUT_FORMAT):
