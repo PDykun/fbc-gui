@@ -171,6 +171,64 @@ class TestCssPreview(unittest.TestCase):
         # Курсивный файл автора не должен быть назначен как normal/normal для fbc-para
         self.assertNotIn('font-family: "fbc-para"; src: url("file://' + FONTS_DIR.replace("\\", "/") + '/Newton15It.ttf"); font-weight: normal; font-style: normal;', html_out)
 
+    def test_preview_sanitizes_malicious_cover_mime_and_uri(self):
+        from core.fb2_processor import extract_book_preview_data
+
+        fb2_xml = b'<?xml version="1.0" encoding="utf-8"?><FictionBook><description><title-info><book-title>Test</book-title></title-info></description><body><section><p>Hello</p></section></body></FictionBook>'
+        preview_data = extract_book_preview_data(
+            fb2_xml,
+            cover_bytes=b"\xff\xd8\xff",
+            cover_mime='image/jpeg" onload="alert(1)',
+        )
+        self.assertTrue(preview_data["cover_data_uri"].startswith("data:image/jpeg;base64,"))
+        self.assertNotIn("onload", preview_data["cover_data_uri"])
+
+        st = _sample_state()
+        fams = {"para": "PT Astra Serif", "title": "PT Astra Serif", "author": "PT Astra Serif", "drop": "Pomorsky Unicode"}
+        injected_data = dict(preview_data, cover_data_uri='data:image/jpeg;base64,AAA" onerror="alert(1)')
+        html_out = build_full_preview_html(
+            st, fams, "SVG", FONTS_DIR, "FBC GUI", "2.9", "По ширине", "По центру",
+            for_browser=True, book_preview=injected_data,
+        )
+        self.assertNotIn('" onerror="alert(1)', html_out)
+        self.assertIn("&quot; onerror=&quot;alert(1)", html_out)
+
+    def test_preview_font_uri_encodes_spaces_and_page_number_is_2(self):
+        with tempfile.TemporaryDirectory() as td:
+            spaced_dir = os.path.join(td, "My Fonts #1")
+            os.makedirs(spaced_dir, exist_ok=True)
+            font_path = os.path.join(spaced_dir, "My Font.ttf")
+            with open(font_path, "wb") as fh:
+                fh.write(b"TTF")
+
+            st = _sample_state(
+                font_para="My Font.ttf",
+                font_title="My Font.ttf",
+                font_author="My Font.ttf",
+                font_drop="__none__",
+            )
+            fams = {"para": "My Font", "title": "My Font", "author": "My Font", "drop": ""}
+            book_data = {
+                "author": "Автор",
+                "title": "Книга",
+                "series": "",
+                "cover_data_uri": "data:image/jpeg;base64,AAA",
+                "annotation": [],
+                "epigraph_lines": [],
+                "epigraph_author": "",
+                "chapter_title": "Глава 1",
+                "blocks": [("p", "Текст.")],
+                "footnote_title": "",
+                "footnote_paras": [],
+            }
+            html_out = build_full_preview_html(
+                st, fams, "SVG", spaced_dir, "FBC GUI", "2.9.1", "По ширине", "По центру",
+                for_browser=False, book_preview=book_data, use_web_engine=True,
+            )
+            self.assertIn("My%20Fonts%20%231/My%20Font.ttf", html_out)
+            self.assertIn('<div class="page-num">2</div>', html_out)
+            self.assertNotIn('<div class="page-num">1</div>', html_out)
+
 
 if __name__ == "__main__":
     unittest.main()

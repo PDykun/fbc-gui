@@ -44,6 +44,7 @@ class MacOSWKWebViewWidget(QWidget):
         self._attached = False
         self._pending_html = None
         self._pending_base_dir = ""
+        self._render_path = None
 
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
@@ -93,6 +94,13 @@ class MacOSWKWebViewWidget(QWidget):
             except Exception:
                 pass
             self._attached = False
+        render_path = getattr(self, "_render_path", None)
+        if render_path and os.path.isfile(render_path):
+            try:
+                os.remove(render_path)
+            except OSError:
+                pass
+            self._render_path = None
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -134,6 +142,7 @@ class MacOSWKWebViewWidget(QWidget):
             render_path = os.path.join(base_dir, ".preview_render.html")
             try:
                 atomic_write_text(render_path, html_text)
+                self._render_path = render_path
                 file_url = self._NSURL.fileURLWithPath_(os.path.abspath(render_path))
                 dir_url = self._NSURL.fileURLWithPath_isDirectory_(os.path.abspath(base_dir), True)
                 self._wk_view.loadFileURL_allowingReadAccessToURL_(file_url, dir_url)
@@ -160,17 +169,62 @@ class WindowsWebView2Widget(QWidget):
             raise ImportError("Не найден класс виджета в qtwebview2")
 
         super().__init__(parent)
+        self._render_path = None
         self._wv = widget_cls(self)
+        self._disable_javascript()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self._wv)
+        self.destroyed.connect(self._detach_native_view)
+
+    def _detach_native_view(self, *args):
+        wv = getattr(self, "_wv", None)
+        if wv is not None:
+            try:
+                if hasattr(wv, "close"):
+                    wv.close()
+            except Exception:
+                pass
+        render_path = getattr(self, "_render_path", None)
+        if render_path and os.path.isfile(render_path):
+            try:
+                os.remove(render_path)
+            except OSError:
+                pass
+            self._render_path = None
+
+    def closeEvent(self, event):
+        self._detach_native_view()
+        super().closeEvent(event)
+
+    def _disable_javascript(self):
+        """Отключает выполнение JavaScript в WebView2, если обёртка qtwebview2 поддерживает настройку."""
+        try:
+            if hasattr(self._wv, "set_script_enabled"):
+                self._wv.set_script_enabled(False)
+                return
+            if hasattr(self._wv, "setJavascriptEnabled"):
+                self._wv.setJavascriptEnabled(False)
+                return
+            settings = self._wv.settings() if callable(getattr(self._wv, "settings", None)) else getattr(self._wv, "settings", None)
+            if settings is not None:
+                if hasattr(settings, "IsScriptEnabled"):
+                    settings.IsScriptEnabled = False
+                elif hasattr(settings, "set_is_script_enabled"):
+                    settings.set_is_script_enabled(False)
+                elif hasattr(settings, "setJavascriptEnabled"):
+                    settings.setJavascriptEnabled(False)
+        except Exception as e:
+            logger.debug("Не удалось отключить JS в WebView2: %s", e)
 
     def set_preview_html(self, html_text, base_dir=""):
+        self._disable_javascript()
         if base_dir and os.path.isdir(base_dir):
             render_path = os.path.join(base_dir, ".preview_render.html")
             try:
                 atomic_write_text(render_path, html_text)
+                self._render_path = render_path
                 file_url = QUrl.fromLocalFile(os.path.abspath(render_path)).toString()
                 if hasattr(self._wv, "load"):
                     self._wv.load(QUrl.fromLocalFile(os.path.abspath(render_path)))

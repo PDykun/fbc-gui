@@ -4,6 +4,7 @@ import os
 import platform as py_platform
 import plistlib
 import re
+import shutil
 import ssl
 import subprocess
 import sys
@@ -45,14 +46,15 @@ class UpdateHashMismatchError(RuntimeError):
     """Исключение при несовпадении контрольной суммы SHA-256 скачанного обновления."""
 
 
-def is_safe_http_url(url, allow_relative=False):
-    """Проверяет, что URL использует безопасную схему http/https (или относительный путь при allow_relative=True)."""
+def is_safe_http_url(url, allow_relative=False, require_https=False):
+    """Проверяет, что URL использует безопасную схему https (или http при require_https=False)."""
     raw = str(url or "").strip()
     if not raw or any(ch in raw for ch in ("\r", "\n", "\x00")):
         return False
     parsed = urllib.parse.urlparse(raw)
     if parsed.scheme:
-        return parsed.scheme.lower() in ("http", "https") and bool(parsed.netloc)
+        allowed = ("https",) if require_https else ("http", "https")
+        return parsed.scheme.lower() in allowed and bool(parsed.netloc)
     return bool(allow_relative and not raw.startswith("//"))
 
 
@@ -215,7 +217,7 @@ def select_update_asset(manifest, sys_platform=None, machine=None, fallback_url=
                 filename = str(entry.get("filename") or entry.get("name") or "").strip()
                 if not raw_url and filename and release_base:
                     raw_url = f"{release_base}/{filename}"
-                if raw_url and is_safe_http_url(raw_url, allow_relative=True):
+                if raw_url and is_safe_http_url(raw_url, allow_relative=True, require_https=True):
                     if not filename:
                         filename = _extract_filename_from_url(raw_url)
                     sha256 = str(entry.get("sha256") or "").strip().lower()
@@ -226,7 +228,7 @@ def select_update_asset(manifest, sys_platform=None, machine=None, fallback_url=
                         "kind": _infer_asset_kind(filename, entry.get("kind", "")),
                         "platform_key": key,
                     }
-            elif isinstance(entry, str) and is_safe_http_url(entry, allow_relative=True):
+            elif isinstance(entry, str) and is_safe_http_url(entry, allow_relative=True, require_https=True):
                 raw_url = entry.strip()
                 filename = _extract_filename_from_url(raw_url)
                 return {
@@ -238,7 +240,7 @@ def select_update_asset(manifest, sys_platform=None, machine=None, fallback_url=
                 }
 
     top_url = manifest.get("download_url")
-    if isinstance(top_url, str) and is_safe_http_url(top_url, allow_relative=True):
+    if isinstance(top_url, str) and is_safe_http_url(top_url, allow_relative=True, require_https=True):
         raw_url = top_url.strip()
         filename = _extract_filename_from_url(raw_url)
         return {
@@ -301,7 +303,7 @@ def fetch_update_info(
         "error": None,
     }
     try:
-        if not is_safe_http_url(manifest_url, allow_relative=False):
+        if not is_safe_http_url(manifest_url, allow_relative=False, require_https=True):
             raise ValueError(f"Unsupported manifest URL scheme: {manifest_url}")
         req = urllib.request.Request(
             manifest_url,
@@ -342,8 +344,8 @@ def fetch_update_info(
             fallback_url=fallback_url,
         )
         selected_url = asset.get("url") or fallback_url
-        if selected_url and not is_safe_http_url(selected_url, allow_relative=False):
-            if fallback_url and is_safe_http_url(fallback_url, allow_relative=False):
+        if selected_url and not is_safe_http_url(selected_url, allow_relative=False, require_https=True):
+            if fallback_url and is_safe_http_url(fallback_url, allow_relative=False, require_https=True):
                 selected_url = urllib.parse.urljoin(fallback_url.rstrip("/") + "/", selected_url)
             else:
                 selected_url = fallback_url
@@ -375,7 +377,7 @@ def download_and_verify_update(
     if cancel_event is not None and cancel_event.is_set():
         raise UpdateCancelledError("Update download cancelled")
 
-    if not is_safe_http_url(download_url, allow_relative=False):
+    if not is_safe_http_url(download_url, allow_relative=False, require_https=True):
         raise ValueError(f"Unsupported download URL scheme: {download_url}")
 
     expected_clean = str(expected_sha256 or "").strip().lower()
@@ -386,6 +388,7 @@ def download_and_verify_update(
     if not safe_name or safe_name in (".", ".."):
         safe_name = "update.bin"
 
+    created_temp_dir = dest_dir is None
     target_dir = dest_dir or tempfile.mkdtemp(prefix="fbc_gui_update_")
     os.makedirs(target_dir, exist_ok=True)
     target_path = os.path.join(target_dir, safe_name)
@@ -399,7 +402,10 @@ def download_and_verify_update(
 
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp, open(target_path, "wb") as out_fh:
-            total = int(resp.headers.get("Content-Length") or 0)
+            try:
+                total = max(0, int(resp.headers.get("Content-Length") or 0))
+            except (TypeError, ValueError):
+                total = 0
             if total > MAX_UPDATE_FILE_BYTES:
                 raise ValueError(f"Update file exceeds size limit ({MAX_UPDATE_FILE_BYTES} bytes)")
             while True:
@@ -427,6 +433,8 @@ def download_and_verify_update(
         try:
             if os.path.exists(target_path):
                 os.remove(target_path)
+            if created_temp_dir and os.path.isdir(target_dir):
+                shutil.rmtree(target_dir, ignore_errors=True)
         except OSError:
             pass
         raise
@@ -441,22 +449,27 @@ def create_windows_portable_update_script(current_exe, new_exe, pid, script_dir=
     os.makedirs(out_dir, exist_ok=True)
     bat_path = os.path.join(out_dir, "fbc_gui_portable_update.bat")
 
-    cur_abs = os.path.abspath(current_exe)
-    new_abs = os.path.abspath(new_exe)
+    cur_abs = os.path.abspath(current_exe).replace("%", "%%")
+    new_abs = os.path.abspath(new_exe).replace("%", "%%")
     safe_pid = int(pid)
 
     script = (
         "@echo off\r\n"
         "setlocal\r\n"
+        "chcp 65001 >NUL\r\n"
         f"set \"TARGET_PID={safe_pid}\"\r\n"
         f"set \"CURRENT_EXE={cur_abs}\"\r\n"
         f"set \"NEW_EXE={new_abs}\"\r\n"
+        "set /a WAIT_TRIES=0\r\n"
         ":wait_loop\r\n"
-        "tasklist /FI \"PID eq %TARGET_PID%\" 2>NUL | find /I \"%TARGET_PID%\" >NUL\r\n"
+        "tasklist /FI \"PID eq %TARGET_PID%\" /FO CSV /NH 2>NUL | findstr /C:\",\\\"%TARGET_PID%\\\",\" >NUL\r\n"
         "if not errorlevel 1 (\r\n"
+        "    set /a WAIT_TRIES+=1\r\n"
+        "    if %WAIT_TRIES% GEQ 60 goto do_replace\r\n"
         "    timeout /t 1 /nobreak >NUL\r\n"
         "    goto wait_loop\r\n"
         ")\r\n"
+        ":do_replace\r\n"
         "move /Y \"%NEW_EXE%\" \"%CURRENT_EXE%\" >NUL\r\n"
         "if errorlevel 1 (\r\n"
         "    timeout /t 1 /nobreak >NUL\r\n"

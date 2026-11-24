@@ -225,8 +225,9 @@ class TestConfig(unittest.TestCase):
             st = get_default_app_settings()
             with patch("core.config._load_smtp_password_secure", return_value=""), patch(
                 "core.config._save_smtp_password_secure", return_value=True
-            ):
+            ), self.assertLogs("fbc_gui.config", level="WARNING") as cm:
                 load_app_settings(sp, st)
+            self.assertTrue(any("Повреждённый settings.json" in line for line in cm.output))
 
             bak_path = f"{sp}.bak"
             self.assertTrue(os.path.isfile(bak_path))
@@ -248,6 +249,23 @@ class TestConfig(unittest.TestCase):
             self.assertNotIn(secret, cmd)
             self.assertIn(secret.encode("utf-8").hex(), kwargs.get("input", ""))
             self.assertIn("-X ", kwargs.get("input", ""))
+
+    def test_atomic_write_text_preserves_permissions(self):
+        if os.name == "nt":
+            self.skipTest("POSIX file permissions are not applicable on Windows")
+        import stat
+
+        with tempfile.TemporaryDirectory() as td:
+            regular = os.path.join(td, "config.yaml")
+            with open(regular, "w", encoding="utf-8") as fh:
+                fh.write("v: 1\n")
+            os.chmod(regular, 0o644)
+            atomic_write_text(regular, "v: 2\n")
+            self.assertEqual(stat.S_IMODE(os.stat(regular).st_mode), 0o644)
+
+            settings_path = os.path.join(td, "settings.json")
+            atomic_write_text(settings_path, '{"ok": true}')
+            self.assertEqual(stat.S_IMODE(os.stat(settings_path).st_mode), 0o600)
 
 
 if __name__ == "__main__":

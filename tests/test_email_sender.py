@@ -98,6 +98,52 @@ class TestEmailSender(unittest.TestCase):
         mock_srv.login.assert_called_once_with("user@example.com", "secret")
         mock_srv.send_message.assert_called_once()
 
+    def test_smtp_security_validation_and_batch_cancel(self):
+        import threading
+        from core.email_sender import EmailCancelledError
+
+        with self.assertRaises(ValueError):
+            send_test_email(self._valid_settings(smtp_security="bogus"), "FBC GUI", "2.9.1")
+
+        # 'tls' нормализуется в starttls
+        mock_srv = MagicMock()
+        with patch("core.email_sender.smtplib.SMTP") as mock_smtp:
+            mock_smtp.return_value.__enter__.return_value = mock_srv
+            send_test_email(self._valid_settings(smtp_port="587", smtp_security="tls"), "FBC GUI", "2.9.1")
+        mock_srv.starttls.assert_called_once()
+
+        # Отмена между пакетами отправки
+        with tempfile.TemporaryDirectory() as td:
+            f1 = os.path.join(td, "b1.epub")
+            f2 = os.path.join(td, "b2.epub")
+            for fp in (f1, f2):
+                with open(fp, "wb") as fh:
+                    fh.write(b"x" * 100)
+
+            cancel_ev = threading.Event()
+            sent_count = 0
+
+            def _send_and_cancel(_msg):
+                nonlocal sent_count
+                sent_count += 1
+                cancel_ev.set()
+
+            srv = MagicMock()
+            srv.send_message.side_effect = _send_and_cancel
+            with patch("core.email_sender.smtplib.SMTP_SSL") as mock_ssl, patch(
+                "core.email_sender.split_files_into_email_batches", return_value=[[f1], [f2]]
+            ):
+                mock_ssl.return_value.__enter__.return_value = srv
+                with self.assertRaises(EmailCancelledError):
+                    send_converted_files_via_email(
+                        self._valid_settings(),
+                        [f1, f2],
+                        "FBC GUI",
+                        "2.9.1",
+                        cancel_event=cancel_ev,
+                    )
+            self.assertEqual(sent_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

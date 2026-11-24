@@ -40,12 +40,14 @@ def build_about_page(
     add_setting_row(c_layout, tr("about.lbl_author"), tr("about.desc_author"), QLabel(f"<b>{app_author}</b>"))
 
     btn_mail = QPushButton(app_email)
+    btn_mail.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_mail.clicked.connect(lambda: webbrowser.open(f"mailto:{app_email}"))
     add_setting_row(c_layout, tr("about.lbl_email"), tr("about.desc_email"), btn_mail)
 
     btn_web = QPushButton(app_url)
     btn_web.setObjectName("AccentButton")
     btn_web.setProperty("variant", "primary")
+    btn_web.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_web.clicked.connect(lambda: webbrowser.open(f"https://{app_url}"))
     add_setting_row(c_layout, tr("about.lbl_url"), tr("about.desc_url"), btn_web)
 

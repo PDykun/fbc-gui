@@ -9,6 +9,19 @@ from core.i18n import tr
 MAX_EMAIL_ATTACHMENTS_BYTES = 20 * 1024 * 1024  # 20 МБ на одно письмо (запас под base64/MIME)
 
 
+class EmailCancelledError(Exception):
+    """Исключение при отмене отправки писем пользователем."""
+
+
+def _normalize_smtp_security(raw_value):
+    val = str(raw_value or "ssl").strip().lower()
+    if val == "tls":
+        return "starttls"
+    if val in ("ssl", "starttls", "none"):
+        return val
+    raise ValueError(f"Unsupported smtp_security value: {raw_value!r}")
+
+
 def _build_ssl_context():
     """Создаёт SSL-контекст с актуальным набором сертификатов certifi (при наличии)."""
     try:
@@ -80,15 +93,19 @@ def _build_email_message(email_from, email_to, subject, batch_files, app_name, a
     return msg
 
 
-def send_converted_files_via_email(app_settings, file_paths, app_name, app_version, progress_callback=None):
+def send_converted_files_via_email(
+    app_settings, file_paths, app_name, app_version, progress_callback=None, cancel_event=None
+):
     if not file_paths:
         return
+    if cancel_event is not None and cancel_event.is_set():
+        raise EmailCancelledError("Email sending cancelled")
     if not is_smtp_configured(app_settings):
         raise ValueError(tr("settings.email_test_incomplete"))
 
     smtp_host = app_settings.get("smtp_host", "").strip()
     smtp_port = int(str(app_settings.get("smtp_port", "465")).strip())
-    smtp_sec = app_settings.get("smtp_security", "ssl").strip().lower()
+    smtp_sec = _normalize_smtp_security(app_settings.get("smtp_security", "ssl"))
     smtp_user = app_settings.get("smtp_user", "").strip()
     smtp_password = app_settings.get("smtp_password", "")
     email_from = (app_settings.get("email_from", "") or smtp_user).strip()
@@ -101,18 +118,19 @@ def send_converted_files_via_email(app_settings, file_paths, app_name, app_versi
     total_batches = len(batches)
     base_subject = tr("converter.email_subject", app=app_name, count=len(file_paths))
 
-    messages = []
-    for idx, batch in enumerate(batches, start=1):
-        subj = f"{base_subject} ({idx}/{total_batches})" if total_batches > 1 else base_subject
-        messages.append(_build_email_message(email_from, email_to, subj, batch, app_name, app_version))
-
+    if cancel_event is not None and cancel_event.is_set():
+        raise EmailCancelledError("Email sending cancelled")
     if progress_callback:
         progress_callback(45, tr("converter.progress_email_connect", host=smtp_host))
 
     def _send_all(server):
         if smtp_user:
             server.login(smtp_user, smtp_password)
-        for idx, msg in enumerate(messages, start=1):
+        for idx, batch in enumerate(batches, start=1):
+            if cancel_event is not None and cancel_event.is_set():
+                raise EmailCancelledError("Email sending cancelled")
+            subj = f"{base_subject} ({idx}/{total_batches})" if total_batches > 1 else base_subject
+            msg = _build_email_message(email_from, email_to, subj, batch, app_name, app_version)
             if progress_callback:
                 pct = 50 + int(45 * (idx - 1) / max(1, total_batches))
                 progress_callback(pct, tr("converter.progress_email_send", email=email_to))
@@ -141,7 +159,7 @@ def send_test_email(app_settings, app_name, app_version):
 
     smtp_host = app_settings.get("smtp_host", "").strip()
     smtp_port = int(str(app_settings.get("smtp_port", "465")).strip())
-    smtp_sec = app_settings.get("smtp_security", "ssl").strip().lower()
+    smtp_sec = _normalize_smtp_security(app_settings.get("smtp_security", "ssl"))
     smtp_user = app_settings.get("smtp_user", "").strip()
     smtp_password = app_settings.get("smtp_password", "")
     email_from = (app_settings.get("email_from", "") or smtp_user).strip()

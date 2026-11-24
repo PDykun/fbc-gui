@@ -16,6 +16,7 @@ except ImportError:
     HAS_QT_NETWORK = False
 
 from core.email_sender import (
+    EmailCancelledError,
     send_converted_files_via_email as send_email_attachments,
     send_test_email as dispatch_test_email,
 )
@@ -175,6 +176,7 @@ class ConversionWorker(QThread):
                 cancel_event=self._cancel_event,
                 debug=self.debug,
                 no_cover=self.no_cover,
+                claimed_outputs=self._claimed_outputs,
             )
             elapsed = time.monotonic() - t0
             logger.info(
@@ -216,6 +218,7 @@ class ConversionWorker(QThread):
             self.debug,
         )
 
+        self._claimed_outputs = set()
         results_by_idx = {}
         errors_by_idx = {}
         completed = 0
@@ -308,8 +311,12 @@ class ConversionWorker(QThread):
                     self.app_name,
                     self.app_version,
                     progress_callback=lambda pct, txt: self.email_progress.emit(pct, txt),
+                    cancel_event=self._cancel_event,
                 )
                 logger.info("Отправка по SMTP завершена успешно")
+            except EmailCancelledError:
+                logger.info("Отправка по SMTP отменена пользователем")
+                cancelled = True
             except Exception as e:
                 logger.exception("Ошибка отправки по SMTP: %s", e)
                 email_error = str(e)
@@ -399,8 +406,22 @@ class SingleInstanceManager(QObject):
             conn = self._server.nextPendingConnection()
             if conn is None:
                 continue
-            conn.waitForReadyRead(300)
-            raw = bytes(conn.read(self.MAX_IPC_PAYLOAD_BYTES + 1))
+            chunks = []
+            total_len = 0
+            limit = self.MAX_IPC_PAYLOAD_BYTES + 1
+            if conn.bytesAvailable() > 0 or conn.waitForReadyRead(300):
+                while total_len < limit:
+                    part = bytes(conn.read(limit - total_len))
+                    if part:
+                        chunks.append(part)
+                        total_len += len(part)
+                    if total_len >= limit:
+                        break
+                    if conn.bytesAvailable() > 0:
+                        continue
+                    if not conn.waitForReadyRead(50):
+                        break
+            raw = b"".join(chunks)
             conn.disconnectFromServer()
             conn.deleteLater()
             paths = []

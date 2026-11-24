@@ -1,5 +1,6 @@
 import io
 import os
+import stat
 import sys
 import json
 import shutil
@@ -361,6 +362,12 @@ def atomic_write_text(filepath, text, encoding="utf-8"):
     abs_path = os.path.abspath(filepath)
     parent_dir = os.path.dirname(abs_path) or "."
     os.makedirs(parent_dir, exist_ok=True)
+    target_mode = None
+    if os.name != "nt":
+        try:
+            target_mode = stat.S_IMODE(os.stat(abs_path).st_mode)
+        except OSError:
+            target_mode = 0o600 if os.path.basename(abs_path) == "settings.json" else 0o644
     fd, tmp_path = tempfile.mkstemp(prefix=".fbc_tmp_", suffix=".tmp", dir=parent_dir)
     try:
         with os.fdopen(fd, "w", encoding=encoding) as fh:
@@ -368,6 +375,11 @@ def atomic_write_text(filepath, text, encoding="utf-8"):
             fh.flush()
             try:
                 os.fsync(fh.fileno())
+            except OSError:
+                pass
+        if target_mode is not None:
+            try:
+                os.chmod(tmp_path, target_mode)
             except OSError:
                 pass
         os.replace(tmp_path, abs_path)

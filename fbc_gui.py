@@ -1,7 +1,6 @@
 import os
 import sys
 import time
-import struct
 import webbrowser
 import shutil
 
@@ -19,8 +18,8 @@ from PyQt6.QtWidgets import (
 
 # --- Метаинформация и версия программы ---
 __app_name__ = "FBC GUI"
-__version__ = "2.9"
-__build__ = 69
+__version__ = "2.9.1"
+__build__ = 75
 __author__ = "Paul Dykoun"
 __email__ = "me@pashka.eu"
 __url__ = "www.pashka.eu/fbc_gui"
@@ -45,11 +44,11 @@ from core.config import (
     update_fbc_config_file as write_fbc_config
 )
 from core.fb2_processor import (
-    COVER_PREVIEW_SIZE, ConversionCancelledError,
+    COVER_PREVIEW_SIZE,
     book_matches_filter,
-    collect_book_paths, collect_startup_paths, iter_fb2_from_file, get_book_xml,
-    extract_cover_from_fb2, extract_book_preview_data, save_book_changes_to_source,
-    fit_image_to_cover_size, simulate_fbc_target, parse_metadata, convert_book_file
+    collect_startup_paths, get_book_xml,
+    extract_book_preview_data, save_book_changes_to_source,
+    fit_image_to_cover_size, simulate_fbc_target
 )
 from core.undo_commands import (
     snapshot_book_state,
@@ -74,12 +73,11 @@ from core.presets import (
 from core.email_sender import (
     is_smtp_configured,
     is_email_auto_send_ready as check_email_auto_ready,
-    send_converted_files_via_email as send_email_attachments,
-    send_test_email as dispatch_test_email
 )
 from core.css_preview import (
     get_default_css_ui_state,
     parse_css_file_to_state,
+    parse_ttf_names,
     generate_css_content as build_css_content,
     build_full_preview_html as render_preview_html
 )
@@ -125,7 +123,7 @@ def setup_app_environment():
                 for f in os.listdir(src_sub):
                     s_fp = os.path.join(src_sub, f)
                     d_fp = os.path.join(dst_sub, f)
-                    if os.path.isfile(s_fp) and (not os.path.exists(d_fp) or sub_dir == "themes"):
+                    if os.path.isfile(s_fp) and (not os.path.exists(d_fp) or sub_dir in ("themes", "locales")):
                         shutil.copy2(s_fp, d_fp)
 
     # Дистрибутив не включает сторонний бинарник fbc: ищем локально в PATH ОС и user_data_dir
@@ -156,17 +154,7 @@ def setup_app_environment():
     )
 
 
-(
-    BASE_DIR, FBC_CMD, FBC_DETECTED_VERSION, FBC_CONFIG, CSS_PATH, BUNDLED_CSS_PATH, FONTS_DIR,
-    SETTINGS_PATH, LOCALES_DIR, BUNDLED_LOCALES_DIR,
-    THEMES_DIR, BUNDLED_THEMES_DIR, PRESETS_DIR, BUNDLED_PRESETS_DIR
-) = setup_app_environment()
-
 from core.logger import init_logging, get_logger, get_log_file_path
-LOG_PATH = init_logging(BASE_DIR)
-logger = get_logger("app")
-logger.info("%s v%s (build %s) started; base_dir=%s", APP_NAME, APP_VERSION, BUILD_NUMBER, BASE_DIR)
-
 from core.i18n import (
     LOCALE, init_locale, tr,
     LEGACY_ALIGN_MAP, LEGACY_STYLE_MAP, LEGACY_NOTE_BG_MAP, LEGACY_NOTE_BORDER_MAP,
@@ -191,7 +179,10 @@ from ui.theme import (
     resolve_theme_family_and_mode,
     build_theme_qss, build_qpalette_from_qss, start_window_crossfade,
     refresh_widget_halos,
-    ThemeToggleWidget, show_themed_message, show_conversion_summary_dialog, show_update_dialog,
+    ThemeToggleWidget
+)
+from ui.dialogs import (
+    show_themed_message, show_conversion_summary_dialog, show_update_dialog,
     ConversionProgressDialog, ImportProgressDialog, FbcSetupDialog, UpdateDownloadDialog,
     BookEditDialog, BatchEditDialog
 )
@@ -201,53 +192,35 @@ from ui.pages.preview_page import build_preview_page
 from ui.pages.settings_page import build_settings_page
 from ui.pages.about_page import build_about_page
 
-init_locale(LOCALES_DIR, BUNDLED_LOCALES_DIR)
-init_themes(THEMES_DIR, BUNDLED_THEMES_DIR)
+logger = get_logger("app")
+_RUNTIME_INITIALIZED = False
+BASE_DIR = FBC_CMD = FBC_DETECTED_VERSION = FBC_CONFIG = CSS_PATH = BUNDLED_CSS_PATH = ""
+FONTS_DIR = SETTINGS_PATH = LOCALES_DIR = BUNDLED_LOCALES_DIR = ""
+THEMES_DIR = BUNDLED_THEMES_DIR = PRESETS_DIR = BUNDLED_PRESETS_DIR = LOG_PATH = ""
 
 
-def parse_ttf_names(font_path):
-    names = {}
-    try:
-        with open(font_path, 'rb') as f:
-            data = f.read()
-        if len(data) < 12:
-            return names
-        num_tables = struct.unpack('>H', data[4:6])[0]
-        name_table_offset = None
-        for i in range(num_tables):
-            entry = data[12 + i * 16 : 12 + (i + 1) * 16]
-            if entry[0:4] == b'name':
-                name_table_offset = struct.unpack('>I', entry[8:12])[0]
-                break
-        if name_table_offset is None or name_table_offset + 6 > len(data):
-            return names
-        _, count, string_offset = struct.unpack('>HHH', data[name_table_offset : name_table_offset + 6])
-        record_offset = name_table_offset + 6
-        storage_offset = name_table_offset + string_offset
-        for i in range(count):
-            rec = data[record_offset + i * 12 : record_offset + (i + 1) * 12]
-            plat_id, _, _, name_id, length, str_off = struct.unpack('>HHHHHH', rec)
-            if name_id in (1, 4, 6):
-                str_bytes = data[storage_offset + str_off : storage_offset + str_off + length]
-                try:
-                    if plat_id in (0, 3):
-                        decoded = str_bytes.decode('utf-16-be')
-                    elif plat_id == 1:
-                        decoded = str_bytes.decode('mac_roman', errors='ignore')
-                    else:
-                        decoded = str_bytes.decode('latin1', errors='ignore')
-                    decoded = decoded.strip('\x00').strip()
-                    if decoded and (name_id not in names or plat_id == 3):
-                        names[name_id] = decoded
-                except Exception as dec_err:
-                    logger.debug("Ошибка декодирования имени TTF %s: %s", font_path, dec_err)
-    except Exception as e:
-        logger.warning("Ошибка парсинга TTF %s: %s", font_path, e)
-    return names
+def init_app_runtime():
+    """Инициализирует рабочую среду, логирование, локали и темы один раз при запуске приложения."""
+    global _RUNTIME_INITIALIZED, BASE_DIR, FBC_CMD, FBC_DETECTED_VERSION, FBC_CONFIG
+    global CSS_PATH, BUNDLED_CSS_PATH, FONTS_DIR, SETTINGS_PATH, LOCALES_DIR, BUNDLED_LOCALES_DIR
+    global THEMES_DIR, BUNDLED_THEMES_DIR, PRESETS_DIR, BUNDLED_PRESETS_DIR, LOG_PATH
+    if _RUNTIME_INITIALIZED:
+        return
+    (
+        BASE_DIR, FBC_CMD, FBC_DETECTED_VERSION, FBC_CONFIG, CSS_PATH, BUNDLED_CSS_PATH, FONTS_DIR,
+        SETTINGS_PATH, LOCALES_DIR, BUNDLED_LOCALES_DIR,
+        THEMES_DIR, BUNDLED_THEMES_DIR, PRESETS_DIR, BUNDLED_PRESETS_DIR
+    ) = setup_app_environment()
+    LOG_PATH = init_logging(BASE_DIR)
+    logger.info("%s v%s (build %s) started; base_dir=%s", APP_NAME, APP_VERSION, BUILD_NUMBER, BASE_DIR)
+    init_locale(LOCALES_DIR, BUNDLED_LOCALES_DIR)
+    init_themes(THEMES_DIR, BUNDLED_THEMES_DIR)
+    _RUNTIME_INITIALIZED = True
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
+        init_app_runtime()
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.resize(1380, 880)
@@ -265,6 +238,12 @@ class MainWindow(QMainWindow):
         self._test_email_worker = None
         self._convert_worker = None
         self._closing = False
+        self._pending_settings_save = False
+        self._pending_fbc_config_save = False
+        self._settings_save_timer = QTimer(self)
+        self._settings_save_timer.setSingleShot(True)
+        self._settings_save_timer.setInterval(400)
+        self._settings_save_timer.timeout.connect(self._flush_pending_settings)
         self._fbc_setup_dlg = None
         self._fbc_ready_callback = None
         self._fbc_setup_interactive = False
@@ -362,7 +341,7 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
 
-        for dlg_attr in ("_import_progress_dlg", "_fbc_setup_dlg", "_update_dl_dlg"):
+        for dlg_attr in ("_convert_progress_dlg", "_import_progress_dlg", "_fbc_setup_dlg", "_update_dl_dlg"):
             dlg = getattr(self, dlg_attr, None)
             if dlg is not None:
                 try:
@@ -390,8 +369,27 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
 
+    def _schedule_settings_save(self, update_fbc_config=False):
+        self._pending_settings_save = True
+        if update_fbc_config:
+            self._pending_fbc_config_save = True
+        self._settings_save_timer.start()
+
+    def _flush_pending_settings(self):
+        if self._settings_save_timer.isActive():
+            self._settings_save_timer.stop()
+        need_settings = self._pending_settings_save
+        need_fbc = self._pending_fbc_config_save
+        self._pending_settings_save = False
+        self._pending_fbc_config_save = False
+        if need_settings:
+            self.save_app_settings()
+        if need_fbc:
+            self.update_fbc_config_file()
+
     def closeEvent(self, event):
         self._closing = True
+        self._flush_pending_settings()
         self._stop_background_workers()
         self._detach_preview_native_view()
         self.save_app_settings()
@@ -424,8 +422,9 @@ class MainWindow(QMainWindow):
         """Переключение режима оформления (auto / light / dark) из верхнего переключателя."""
         m = str(mode).lower()
         self.app_settings["theme_mode"] = m if m in ("auto", "light", "dark") else "auto"
+        valid_families = {val for _, val in get_theme_choices()}
         family = self.app_settings.get("theme_family", "Modern")
-        if family not in ("Golden", "Modern"):
+        if family not in valid_families:
             family = "Modern"
         self.app_settings["theme_family"] = family
         self.app_settings["theme"] = family
@@ -1164,8 +1163,7 @@ class MainWindow(QMainWindow):
         if not getattr(self, "_applying_device_profile", False):
             self.app_settings["device_profile"] = "custom"
             self._set_device_profile_combo("custom")
-        self.save_app_settings()
-        self.update_fbc_config_file()
+        self._schedule_settings_save(update_fbc_config=True)
 
     def on_footnotes_mode_changed(self, val):
         self.app_settings["footnotes_mode"] = str(val or "float")
@@ -1349,11 +1347,8 @@ class MainWindow(QMainWindow):
 
     def on_email_field_changed(self, key, val):
         self.app_settings[key] = val.strip() if key != "smtp_password" else val
-        self.save_app_settings()
         self.update_convert_button_text()
-
-    def send_converted_files_via_email(self, file_paths):
-        send_email_attachments(self.app_settings, file_paths, APP_NAME, APP_VERSION)
+        self._schedule_settings_save(update_fbc_config=False)
 
     def send_test_email_clicked(self):
         if getattr(self, "_test_email_worker", None) is not None and self._test_email_worker.isRunning():
@@ -1560,7 +1555,7 @@ class MainWindow(QMainWindow):
                 cur_build=BUILD_NUMBER,
                 notes=notes,
             )
-            can_in_app = bool(result.get("sha256") and is_safe_http_url(result.get("download_url"), allow_relative=False))
+            can_in_app = bool(result.get("sha256") and is_safe_http_url(result.get("download_url"), allow_relative=False, require_https=True))
             if can_in_app:
                 action_label = tr("about.btn_open_dmg_update") if sys.platform == "darwin" else tr("about.btn_install_update")
             else:
@@ -1577,7 +1572,7 @@ class MainWindow(QMainWindow):
                     self._start_update_download(result)
                 else:
                     dl_url = result.get("download_url") or DEFAULT_RELEASES_URL
-                    if not is_safe_http_url(dl_url, allow_relative=False):
+                    if not is_safe_http_url(dl_url, allow_relative=False, require_https=True):
                         logger.warning("Отклонён небезопасный URL обновления: %s", dl_url)
                         dl_url = DEFAULT_RELEASES_URL
                     webbrowser.open(dl_url)
@@ -2140,7 +2135,9 @@ class MainWindow(QMainWindow):
         self.files_data = new_files_data
 
         self._updating_table_items = True
+        was_sorting = self.table.isSortingEnabled()
         self.table.setSortingEnabled(False)
+        self.table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         try:
             self.table.setRowCount(0)
             selected_rows = []
@@ -2154,21 +2151,31 @@ class MainWindow(QMainWindow):
             for r in selected_rows:
                 self.table.selectRow(r)
         finally:
+            if was_sorting:
+                self.table.setSortingEnabled(True)
             self._updating_table_items = False
         self.apply_table_filter()
         self.on_table_selection_changed()
 
     def move_selected_rows(self, delta):
-        """Перемещает выбранные строки таблицы вверх (delta=-1) или вниз (delta=+1)."""
+        """Перемещает выбранные видимые строки таблицы вверх (delta=-1) или вниз (delta=+1)."""
         if not hasattr(self, "table") or delta == 0:
             return
-        selected_rows = sorted({idx.row() for idx in self.table.selectionModel().selectedRows()})
-        if not selected_rows:
-            return
         row_count = self.table.rowCount()
-        if delta < 0 and selected_rows[0] <= 0:
+        visible_rows = [r for r in range(row_count) if not self.table.isRowHidden(r)]
+        selected_rows = sorted({
+            idx.row() for idx in self.table.selectionModel().selectedRows()
+            if not self.table.isRowHidden(idx.row())
+        })
+        if not selected_rows or len(visible_rows) < 2:
             return
-        if delta > 0 and selected_rows[-1] >= row_count - 1:
+        vis_pos = {r: i for i, r in enumerate(visible_rows)}
+        sel_vis_indices = [vis_pos[r] for r in selected_rows if r in vis_pos]
+        if not sel_vis_indices:
+            return
+        if delta < 0 and sel_vis_indices[0] <= 0:
+            return
+        if delta > 0 and sel_vis_indices[-1] >= len(visible_rows) - 1:
             return
 
         before_order = []
@@ -2180,11 +2187,13 @@ class MainWindow(QMainWindow):
             return
 
         after_order = list(before_order)
-        ordered = selected_rows if delta < 0 else list(reversed(selected_rows))
+        step = -1 if delta < 0 else 1
+        ordered_vis = sel_vis_indices if step < 0 else list(reversed(sel_vis_indices))
         selected_ids = [before_order[r] for r in selected_rows]
-        for r in ordered:
-            target = r + delta
-            after_order[r], after_order[target] = after_order[target], after_order[r]
+        for vi in ordered_vis:
+            src_row = visible_rows[vi]
+            dst_row = visible_rows[vi + step]
+            after_order[src_row], after_order[dst_row] = after_order[dst_row], after_order[src_row]
 
         if before_order != after_order:
             self.undo_stack.push(
@@ -2818,13 +2827,15 @@ class MainWindow(QMainWindow):
         no_cover = str(self.app_settings.get("no_cover", "false")).lower() == "true"
         email_enabled = self.is_email_auto_send_ready() and not debug
         progress_dlg = ConversionProgressDialog(self, len(items), show_email=email_enabled)
+        self._convert_progress_dlg = progress_dlg
 
         for it in items:
             if it.get("item_id"):
                 self._set_item_status(it["item_id"], "", "")
 
+        worker_items = [{**it, "meta": dict(it.get("meta") or {})} for it in items]
         self._convert_worker = ConversionWorker(
-            items=items,
+            items=worker_items,
             selected_format=selected_format,
             save_mode=save_mode,
             custom_dir=custom_dir,
@@ -2859,8 +2870,11 @@ class MainWindow(QMainWindow):
 
         self._convert_worker.finished_all.connect(_on_finished)
         self._convert_worker.start()
-        progress_dlg.exec()
-        self._convert_worker.wait()
+        try:
+            progress_dlg.exec()
+            self._convert_worker.wait()
+        finally:
+            self._convert_progress_dlg = None
 
         success_count = result_box.get("success_count", 0)
         converted_files = result_box.get("converted_files", [])
@@ -2991,10 +3005,11 @@ class FbcApplication(QApplication):
         self.files_opened.emit(batch)
 
 
-if __name__ == "__main__":
+def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V"):
         print(APP_VERSION)
         sys.exit(0)
+    init_app_runtime()
     app = FbcApplication(sys.argv)
     startup_paths = collect_startup_paths(sys.argv)
 
@@ -3015,3 +3030,7 @@ if __name__ == "__main__":
     if app._pending_open_files:
         QTimer.singleShot(150, app._flush_pending_files)
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

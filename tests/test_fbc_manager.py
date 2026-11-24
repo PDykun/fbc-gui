@@ -306,6 +306,71 @@ class TestFbcManager(unittest.TestCase):
                     fbc_manager.download_and_install_fbc(td, cancel_event=ev)
             mock_fetch.assert_not_called()
 
+    def test_verify_binary_does_not_cache_unhashed_github_release(self):
+        with tempfile.TemporaryDirectory() as td:
+            info = {
+                "is_fb2cng": True,
+                "compatible": True,
+                "version": "2.99.1",
+                "md5": "a" * 32,
+                "sha256": "b" * 64,
+            }
+            release_payload = {
+                "tag_name": "v2.99.1",
+                "assets": [
+                    {
+                        "name": "fbc-darwin-arm64.zip",
+                        "browser_download_url": "https://example.invalid/fbc-darwin-arm64.zip",
+                    }
+                ],
+            }
+            with mock.patch.object(fbc_manager, "normalize_platform_arch", return_value=("darwin", "arm64")), \
+                 mock.patch.object(fbc_manager, "fetch_github_release", return_value=release_payload), \
+                 mock.patch.object(fbc_manager, "fetch_release_checksums", return_value={}):
+                res = fbc_manager.verify_binary_against_github(info, user_data_dir=td, check_github=True)
+            self.assertTrue(res["verified"])
+            self.assertEqual(res["source"], "github_release_unhashed")
+            self.assertFalse(os.path.exists(os.path.join(td, fbc_manager.FBC_VERIFIED_CACHE_FILE)))
+
+    def test_download_rejects_plain_http_url(self):
+        with tempfile.TemporaryDirectory() as td:
+            release_payload = {
+                "tag_name": "v2.2.0",
+                "assets": [
+                    {
+                        "name": "fbc-darwin-arm64.zip",
+                        "size": 10,
+                        "browser_download_url": "http://example.invalid/fbc-darwin-arm64.zip",
+                    }
+                ],
+            }
+            with mock.patch.object(fbc_manager, "normalize_platform_arch", return_value=("darwin", "arm64")), \
+                 mock.patch.object(fbc_manager, "fetch_github_release", return_value=release_payload):
+                with self.assertRaises(RuntimeError) as ctx:
+                    fbc_manager.download_and_install_fbc(td, target_version="2.2.0")
+            self.assertIn("Unsupported download URL scheme", str(ctx.exception))
+
+    def test_download_fbc_enforces_size_limit_and_handles_bad_content_length(self):
+        with tempfile.TemporaryDirectory() as td:
+            release_payload = {
+                "tag_name": "v2.2.0",
+                "assets": [
+                    {
+                        "name": "fbc-darwin-arm64.zip",
+                        "size": 10,
+                        "browser_download_url": "https://example.invalid/fbc-darwin-arm64.zip",
+                    }
+                ],
+            }
+            bad_cl_big = _FakeHttpResponse(b"0123456789X", headers={"Content-Length": "invalid"})
+            with mock.patch.object(fbc_manager, "MAX_ARCHIVE_BIN_BYTES", 10), \
+                 mock.patch.object(fbc_manager, "normalize_platform_arch", return_value=("darwin", "arm64")), \
+                 mock.patch.object(fbc_manager, "fetch_github_release", return_value=release_payload), \
+                 mock.patch.object(fbc_manager.urllib.request, "urlopen", return_value=bad_cl_big):
+                with self.assertRaises(RuntimeError) as ctx:
+                    fbc_manager.download_and_install_fbc(td, target_version="2.2.0")
+            self.assertIn("size limit", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

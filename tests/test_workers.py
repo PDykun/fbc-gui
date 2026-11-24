@@ -8,16 +8,34 @@ from core import workers
 
 
 class _FakeConn:
-    def __init__(self, payload: bytes):
-        self._payload = payload
+    def __init__(self, payload: bytes, chunk_size: int | None = None):
+        if chunk_size and payload:
+            self._chunks = [payload[i:i + chunk_size] for i in range(0, len(payload), chunk_size)]
+        elif payload:
+            self._chunks = [payload]
+        else:
+            self._chunks = []
+        self._buf = b""
         self.disconnected = False
         self.deleted = False
 
+    def bytesAvailable(self):
+        return len(self._buf)
+
     def waitForReadyRead(self, _timeout):
-        return True
+        if self._buf:
+            return True
+        if self._chunks:
+            self._buf += self._chunks.pop(0)
+            return True
+        return False
 
     def read(self, max_bytes):
-        return self._payload[:max_bytes]
+        if not self._buf and self._chunks:
+            self._buf += self._chunks.pop(0)
+        out = self._buf[:max_bytes]
+        self._buf = self._buf[max_bytes:]
+        return out
 
     def disconnectFromServer(self):
         self.disconnected = True
@@ -50,7 +68,7 @@ class TestWorkers(unittest.TestCase):
             mgr.activation_requested.connect(received.append)
 
             payload = json.dumps({"paths": [real_file, missing_file, 123]}).encode("utf-8")
-            conn = _FakeConn(payload)
+            conn = _FakeConn(payload, chunk_size=16)
             mgr._server = _FakeServer([conn])
             mgr._on_new_connection()
 
@@ -156,6 +174,12 @@ class TestWorkers(unittest.TestCase):
         with mock.patch.object(workers, "dispatch_test_email", side_effect=RuntimeError("smtp down")):
             w_err.run()
         self.assertEqual(out_err, [(False, "smtp down")])
+
+    def test_single_instance_graceful_without_qt_network(self):
+        mgr = workers.SingleInstanceManager(server_name="test_no_net")
+        with mock.patch.object(workers, "HAS_QT_NETWORK", False):
+            self.assertFalse(mgr.try_send_to_running(["/tmp/a.fb2"]))
+            self.assertFalse(mgr.start_server())
 
 
 if __name__ == "__main__":

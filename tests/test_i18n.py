@@ -45,6 +45,44 @@ class TestLocaleManager(unittest.TestCase):
             # При несоответствии параметров форматирования не должно быть исключения
             self.assertEqual(mgr.get("common.hello", wrong_arg="X"), "Hello, {name}")
 
+    def test_bundled_locales_ru_en_parity_and_placeholders(self):
+        import re
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ru_path = os.path.join(project_root, "locales", "ru.json")
+        en_path = os.path.join(project_root, "locales", "en.json")
+
+        def _flatten(node, prefix=""):
+            out = {}
+            for k, v in node.items():
+                key = f"{prefix}.{k}" if prefix else k
+                if isinstance(v, dict):
+                    out.update(_flatten(v, key))
+                else:
+                    out[key] = v
+            return out
+
+        with open(ru_path, encoding="utf-8") as fh:
+            ru_flat = _flatten(json.load(fh))
+        with open(en_path, encoding="utf-8") as fh:
+            en_flat = _flatten(json.load(fh))
+
+        self.assertEqual(set(ru_flat.keys()), set(en_flat.keys()))
+        ph_re = re.compile(r"\{([a-zA-Z0-9_]+)(?:![rsa])?(?::[^}]+)?\}")
+        for key in sorted(ru_flat.keys()):
+            ru_val, en_val = ru_flat[key], en_flat[key]
+            self.assertEqual(type(ru_val), type(en_val), f"Type mismatch for {key}")
+            if isinstance(ru_val, str):
+                self.assertTrue(ru_val.strip(), f"Empty RU string for {key}")
+                self.assertTrue(en_val.strip(), f"Empty EN string for {key}")
+                self.assertEqual(
+                    set(ph_re.findall(ru_val)),
+                    set(ph_re.findall(en_val)),
+                    f"Placeholder mismatch for {key}",
+                )
+            elif isinstance(ru_val, list):
+                self.assertEqual(len(ru_val), len(en_val), f"List length mismatch for {key}")
+
 
 if __name__ == "__main__":
     unittest.main()

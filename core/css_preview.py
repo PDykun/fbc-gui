@@ -1,7 +1,10 @@
 import os
 import re
+import struct
+from pathlib import Path
 
 from core.i18n import tr
+from core.logger import get_logger
 
 
 DEFAULT_CSS_UI_STATE = {
@@ -85,6 +88,48 @@ def get_default_css_ui_state():
 def get_monochrome_css_ui_state():
     """Возвращает эталонное чёрно-белое состояние стилей для монохромных ридеров."""
     return dict(MONOCHROME_CSS_UI_STATE)
+
+
+def parse_ttf_names(font_path):
+    """Извлекает метаданные имён (family, full, postscript) из таблицы name TTF/OTF-шрифта."""
+    names = {}
+    try:
+        with open(font_path, 'rb') as f:
+            data = f.read()
+        if len(data) < 12:
+            return names
+        num_tables = struct.unpack('>H', data[4:6])[0]
+        name_table_offset = None
+        for i in range(num_tables):
+            entry = data[12 + i * 16 : 12 + (i + 1) * 16]
+            if entry[0:4] == b'name':
+                name_table_offset = struct.unpack('>I', entry[8:12])[0]
+                break
+        if name_table_offset is None or name_table_offset + 6 > len(data):
+            return names
+        _, count, string_offset = struct.unpack('>HHH', data[name_table_offset : name_table_offset + 6])
+        record_offset = name_table_offset + 6
+        storage_offset = name_table_offset + string_offset
+        for i in range(count):
+            rec = data[record_offset + i * 12 : record_offset + (i + 1) * 12]
+            plat_id, _, _, name_id, length, str_off = struct.unpack('>HHHHHH', rec)
+            if name_id in (1, 4, 6):
+                str_bytes = data[storage_offset + str_off : storage_offset + str_off + length]
+                try:
+                    if plat_id in (0, 3):
+                        decoded = str_bytes.decode('utf-16-be')
+                    elif plat_id == 1:
+                        decoded = str_bytes.decode('mac_roman', errors='ignore')
+                    else:
+                        decoded = str_bytes.decode('latin1', errors='ignore')
+                    decoded = decoded.strip('\x00').strip()
+                    if decoded and (name_id not in names or plat_id == 3):
+                        names[name_id] = decoded
+                except Exception as dec_err:
+                    get_logger("css_preview").debug("Ошибка декодирования имени TTF %s: %s", font_path, dec_err)
+    except Exception as e:
+        get_logger("css_preview").warning("Ошибка парсинга TTF %s: %s", font_path, e)
+    return names
 
 
 def parse_css_file_to_state(css_path):
@@ -216,17 +261,19 @@ def generate_css_content(st, fonts_dir):
     has_drop = drop_font != "__none__"
 
     extra_para_faces = ""
-    if has_para and para_font.startswith("PT-Astra-Serif") and os.path.exists(os.path.join(fonts_dir, "PT-Astra-Serif_Regular.ttf")):
-        para_reg = "PT-Astra-Serif_Regular.ttf"
-        para_it = "PT-Astra-Serif_Italic.ttf" if os.path.exists(os.path.join(fonts_dir, "PT-Astra-Serif_Italic.ttf")) else para_reg
-        para_bo = "PT-Astra-Serif_Bold.ttf" if os.path.exists(os.path.join(fonts_dir, "PT-Astra-Serif_Bold.ttf")) else para_reg
-        para_boit = "PT-Astra-Serif_Bold-Italic.ttf" if os.path.exists(os.path.join(fonts_dir, "PT-Astra-Serif_Bold-Italic.ttf")) else para_bo
-        extra_para_faces = "\n".join([
-            f'@font-face {{ font-family: "paragraph"; src: url("fonts/{para_it}"); font-style: italic; font-weight: normal; }}',
-            f'@font-face {{ font-family: "paragraph"; src: url("fonts/{para_bo}"); font-style: normal; font-weight: bold; }}',
-            f'@font-face {{ font-family: "paragraph"; src: url("fonts/{para_boit}"); font-style: italic; font-weight: bold; }}'
-        ])
-        para_font = para_reg
+    if has_para:
+        if para_font.startswith("PT-Astra-Serif") and os.path.exists(os.path.join(fonts_dir, "PT-Astra-Serif_Regular.ttf")):
+            para_font = "PT-Astra-Serif_Regular.ttf"
+        sibs = _find_sibling_font_variants(fonts_dir, para_font)
+        if sibs:
+            extra_lines = []
+            for (wt, st_val) in (("normal", "italic"), ("bold", "normal"), ("bold", "italic")):
+                sib_file = sibs.get((wt, st_val))
+                if sib_file:
+                    extra_lines.append(
+                        f'@font-face {{ font-family: "paragraph"; src: url("fonts/{sib_file}"); font-style: {st_val}; font-weight: {wt}; }}'
+                    )
+            extra_para_faces = "\n".join(extra_lines)
 
     para_decl = 'font-family: "paragraph"; ' if has_para else ''
     drop_decl = 'font-family: "dropcaps"; ' if has_drop else ''
@@ -386,7 +433,6 @@ def _build_preview_font_faces(fonts_dir, para_file, title_file, author_file, dro
     чтобы файлы одного семейства (например Newton15.ttf / Newton15Bo.ttf / Newton15It.ttf)
     не перезаписывали друг друга в WebKit/браузере.
     """
-    fonts_url_dir = fonts_dir.replace("\\", "/")
     none_vals = ("__none__", "Нет", "None", "")
 
     has_para = para_file not in none_vals
@@ -396,9 +442,12 @@ def _build_preview_font_faces(fonts_dir, para_file, title_file, author_file, dro
 
     ff_lines = []
 
+    def _font_uri(fname):
+        return Path(os.path.join(fonts_dir, fname)).resolve().as_uri()
+
     def _add_face(fam, fname, weight="normal", style="normal"):
         ff_lines.append(
-            f'@font-face {{ font-family: "{fam}"; src: url("file://{fonts_url_dir}/{fname}"); '
+            f'@font-face {{ font-family: "{fam}"; src: url("{_font_uri(fname)}"); '
             f'font-weight: {weight}; font-style: {style}; }}'
         )
 
@@ -420,12 +469,8 @@ def _build_preview_font_faces(fonts_dir, para_file, title_file, author_file, dro
         if _is_italic_font_file(author_file):
             _add_face("fbc-author", author_file, "normal", "italic")
             _add_face("fbc-author", author_file, "normal", "normal")
-            if _is_bold_font_file(author_file):
-                _add_face("fbc-author", author_file, "bold", "italic")
-                _add_face("fbc-author", author_file, "bold", "normal")
-            else:
-                _add_face("fbc-author", author_file, "bold", "italic")
-                _add_face("fbc-author", author_file, "bold", "normal")
+            _add_face("fbc-author", author_file, "bold", "italic")
+            _add_face("fbc-author", author_file, "bold", "normal")
         else:
             _add_face("fbc-author", author_file, "normal", "normal")
             if _is_bold_font_file(author_file):
@@ -437,7 +482,7 @@ def _build_preview_font_faces(fonts_dir, para_file, title_file, author_file, dro
 
     if has_drop:
         ff_lines.append(
-            f'@font-face {{ font-family: "fbc-drop"; src: url("file://{fonts_url_dir}/{drop_file}"); }}'
+            f'@font-face {{ font-family: "fbc-drop"; src: url("{_font_uri(drop_file)}"); }}'
         )
 
     para_stack = "'fbc-para', Georgia, serif" if has_para else "Georgia, serif"
@@ -550,8 +595,9 @@ def build_full_preview_html(
             running_title = f'{book_preview["series"]} — {running_title}' if running_title else book_preview["series"]
 
         if book_preview.get("cover_data_uri"):
+            safe_cover_uri = _html.escape(book_preview["cover_data_uri"], quote=True)
             cover_html = (
-                f'<img class="book-cover-img" src="{book_preview["cover_data_uri"]}" '
+                f'<img class="book-cover-img" src="{safe_cover_uri}" '
                 f'style="{gray_css}">'
             )
         else:
@@ -1137,7 +1183,7 @@ def build_full_preview_html(
             <div class="title-page-body">
                 {right_inner}
             </div>
-            <div class="page-num">1</div>
+            <div class="page-num">2</div>
         </div>
     </section>
     {text_spread_html}

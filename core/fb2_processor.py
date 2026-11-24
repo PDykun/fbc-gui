@@ -1,6 +1,7 @@
 import os
 import re
 import io
+import stat
 import html
 import shutil
 import base64
@@ -754,6 +755,8 @@ def update_fb2_xml(xml_bytes, meta, cover_bytes=None, cover_mime="image/jpeg", c
         t_el = title_info.find(_qtag(ns_uri, 'book-title'))
         if t_el is not None:
             t_el.text = meta['title']
+        elif meta.get('title'):
+            ET.SubElement(title_info, _qtag(ns_uri, 'book-title')).text = meta['title']
         a_el = title_info.find(_qtag(ns_uri, 'author'))
         if a_el is None:
             a_el = ET.SubElement(title_info, _qtag(ns_uri, 'author'))
@@ -777,23 +780,46 @@ def update_fb2_xml(xml_bytes, meta, cover_bytes=None, cover_mime="image/jpeg", c
             title_info.remove(seq_el)
 
         if cover_modified and cover_bytes:
+            norm_mime = (cover_mime or 'image/jpeg').strip().lower()
+            ext_map = {'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif'}
+            cover_id = 'cover' + ext_map.get(norm_mime, '.jpg')
+
             coverpage_el = title_info.find(_qtag(ns_uri, 'coverpage'))
             if coverpage_el is None:
                 coverpage_el = ET.SubElement(title_info, _qtag(ns_uri, 'coverpage'))
             image_el = coverpage_el.find(_qtag(ns_uri, 'image'))
             if image_el is None:
                 image_el = ET.SubElement(coverpage_el, _qtag(ns_uri, 'image'))
-            image_el.set(f'{{{XLINK_NS}}}href', '#cover.jpg')
+
+            old_cover_id = None
+            for k, v in list(image_el.attrib.items()):
+                if k.endswith('href') and v.startswith('#'):
+                    old_cover_id = v[1:]
+                    if k != f'{{{XLINK_NS}}}href':
+                        del image_el.attrib[k]
+            image_el.set(f'{{{XLINK_NS}}}href', f'#{cover_id}')
 
             target_bin = None
+            old_bin = None
             for bin_el in root.findall(_qtag(root_ns, 'binary')):
-                if bin_el.attrib.get('id') == 'cover.jpg':
+                bid = bin_el.attrib.get('id')
+                if bid == cover_id:
                     target_bin = bin_el
-                    break
+                elif old_cover_id and bid == old_cover_id:
+                    old_bin = bin_el
+            if old_bin is not None and old_cover_id != cover_id:
+                body_refs = set()
+                for b_el in root.findall(_qtag(root_ns, 'body')):
+                    for img in b_el.iter():
+                        for ak, av in img.attrib.items():
+                            if ak.endswith('href') and av.startswith('#'):
+                                body_refs.add(av[1:])
+                if old_cover_id not in body_refs:
+                    root.remove(old_bin)
             if target_bin is None:
                 target_bin = ET.SubElement(root, _qtag(root_ns, 'binary'))
-                target_bin.set('id', 'cover.jpg')
-            target_bin.set('content-type', cover_mime or 'image/jpeg')
+                target_bin.set('id', cover_id)
+            target_bin.set('content-type', norm_mime or 'image/jpeg')
             target_bin.text = base64.encodebytes(cover_bytes).decode('ascii')
 
     body = root.find(_qtag(root_ns, 'body'))
@@ -802,6 +828,7 @@ def update_fb2_xml(xml_bytes, meta, cover_bytes=None, cover_mime="image/jpeg", c
         if body_title is not None:
             paras = body_title.findall(_qtag(root_ns, 'p'))
             if len(paras) >= 1 and meta.get('title'):
+                paras[-1].clear()
                 paras[-1].text = meta['title']
 
     return ET.tostring(root, encoding='utf-8', xml_declaration=True)
@@ -825,6 +852,13 @@ def save_book_changes_to_source(data):
         cover_modified=bool(data.get("cover_modified", False)),
     )
 
+    orig_mode = None
+    if os.name != "nt":
+        try:
+            orig_mode = stat.S_IMODE(os.stat(src_path).st_mode)
+        except OSError:
+            orig_mode = 0o644
+
     parent_dir = os.path.dirname(os.path.abspath(src_path)) or "."
     if src_path.lower().endswith(".zip"):
         target_entry = data.get("archive_entry")
@@ -847,6 +881,11 @@ def save_book_changes_to_source(data):
                             zout.writestr(info, new_xml_bytes, compress_type=zipfile.ZIP_DEFLATED)
                         else:
                             zout.writestr(info, zin.read(info.filename))
+            if orig_mode is not None:
+                try:
+                    os.chmod(tmp_zip, orig_mode)
+                except OSError:
+                    pass
             os.replace(tmp_zip, src_path)
         except Exception:
             if os.path.exists(tmp_zip):
@@ -857,6 +896,11 @@ def save_book_changes_to_source(data):
         try:
             with os.fdopen(fd, "wb") as fh:
                 fh.write(new_xml_bytes)
+            if orig_mode is not None:
+                try:
+                    os.chmod(tmp_fb2, orig_mode)
+                except OSError:
+                    pass
             os.replace(tmp_fb2, src_path)
         except Exception:
             if os.path.exists(tmp_fb2):
@@ -1010,7 +1054,10 @@ def extract_book_preview_data(xml_bytes, meta=None, cover_bytes=None, cover_mime
 
     cover_data_uri = ""
     if cover_bytes:
-        mime = (cover_mime or "image/jpeg").strip()
+        raw_mime = (cover_mime or "image/jpeg").strip().lower()
+        if raw_mime == "image/jpg":
+            raw_mime = "image/jpeg"
+        mime = raw_mime if raw_mime in ("image/jpeg", "image/png", "image/webp", "image/gif") else "image/jpeg"
         b64 = base64.b64encode(cover_bytes).decode("ascii")
         cover_data_uri = f"data:{mime};base64,{b64}"
 
@@ -1158,6 +1205,8 @@ def _run_cancellable_process(cmd, cwd, cancel_event=None):
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
     }
     if os.name == "nt":
         popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -1259,6 +1308,13 @@ def _attach_stylesheet_file(base_dir, fbc_config, tmp_work_dir):
     return dst_css
 
 
+def _split_output_name(filename):
+    low = filename.lower()
+    if low.endswith(".kepub.epub"):
+        return filename[:-len(".kepub.epub")], filename[-len(".kepub.epub"):]
+    return os.path.splitext(filename)
+
+
 def convert_book_file(
     fbc_cmd,
     fbc_config,
@@ -1270,7 +1326,8 @@ def convert_book_file(
     compression=None,
     cancel_event=None,
     debug=False,
-    no_cover=False
+    no_cover=False,
+    claimed_outputs=None
 ):
     """Конвертирует одну книгу через fbc в изолированной временной папке и при необходимости патчит заголовки EPUB."""
     if cancel_event is not None and cancel_event.is_set():
@@ -1356,7 +1413,17 @@ def convert_book_file(
                 with _DEST_MOVE_LOCK:
                     os.makedirs(dest_dir, exist_ok=True)
                     for src_fp in produced_tmp:
-                        dst_fp = os.path.join(dest_dir, os.path.basename(src_fp))
+                        base_out = os.path.basename(src_fp)
+                        dst_fp = os.path.join(dest_dir, base_out)
+                        if claimed_outputs is not None:
+                            stem, ext = _split_output_name(base_out)
+                            norm_dst = os.path.normcase(os.path.abspath(dst_fp))
+                            suffix_n = 2
+                            while norm_dst in claimed_outputs:
+                                dst_fp = os.path.join(dest_dir, f"{stem} ({suffix_n}){ext}")
+                                norm_dst = os.path.normcase(os.path.abspath(dst_fp))
+                                suffix_n += 1
+                            claimed_outputs.add(norm_dst)
                         if os.path.exists(dst_fp):
                             os.remove(dst_fp)
                         shutil.move(src_fp, dst_fp)

@@ -149,6 +149,13 @@ def get_note_border_options():
 
 
 def get_theme_choices():
+    try:
+        from ui.theme import THEME_REGISTRY
+        families = THEME_REGISTRY.discover_families()
+        if families:
+            return [(fam, fam) for fam in families]
+    except Exception:
+        pass
     return [
         ("Golden", "Golden"),
         ("Modern", "Modern")

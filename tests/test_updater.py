@@ -146,18 +146,24 @@ class TestUpdater(unittest.TestCase):
 
     def test_select_download_url_rejects_unsafe_schemes(self):
         self.assertTrue(is_safe_http_url("https://localhost/app"))
+        self.assertTrue(is_safe_http_url("https://localhost/app", require_https=True))
+        self.assertFalse(is_safe_http_url("http://localhost/app", require_https=True))
         self.assertFalse(is_safe_http_url("ftp://localhost/app", allow_relative=True))
         self.assertFalse(is_safe_http_url("mailto:user@localhost", allow_relative=True))
         self.assertFalse(is_safe_http_url("//localhost/app", allow_relative=True))
 
         unsafe_manifest = {
-            "downloads": {"darwin": "ftp://localhost/mac"},
+            "downloads": {"darwin": "http://localhost/mac"},
             "download_url": "mailto:user@localhost",
         }
         self.assertEqual(
             select_download_url(unsafe_manifest, platform="darwin", fallback_url="pkg/fb"),
             "pkg/fb",
         )
+        info_http = fetch_update_info("2.8", 60, manifest_url="http://example.invalid/version.json")
+        self.assertIsNotNone(info_http["error"])
+        with self.assertRaises(ValueError):
+            download_and_verify_update("http://example.invalid/app.exe", "a" * 64)
 
     def test_sha256_verification_and_download_flow(self):
         payload = b"FBC GUI installer test payload 2.9"
@@ -291,7 +297,7 @@ class TestUpdater(unittest.TestCase):
     def test_create_windows_portable_update_script(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bat = create_windows_portable_update_script(
-                current_exe=os.path.join(tmpdir, "old.exe"),
+                current_exe=os.path.join(tmpdir, "100%_Папка", "old.exe"),
                 new_exe=os.path.join(tmpdir, "new.exe"),
                 pid=9999,
                 script_dir=tmpdir,
@@ -299,9 +305,75 @@ class TestUpdater(unittest.TestCase):
             self.assertTrue(os.path.isfile(bat))
             with open(bat, "r", encoding="utf-8") as fh:
                 text = fh.read()
+            self.assertIn("chcp 65001 >NUL", text)
+            self.assertIn("WAIT_TRIES", text)
+            self.assertIn('findstr /C:",\\"%TARGET_PID%\\","', text)
+            self.assertIn("100%%_Папка", text)
             self.assertIn("9999", text)
             self.assertIn("old.exe", text)
             self.assertIn("new.exe", text)
+
+    def test_download_and_verify_update_cleans_created_temp_dir_on_error(self):
+        created_dirs = []
+        real_mkdtemp = tempfile.mkdtemp
+
+        def _tracking_mkdtemp(*args, **kwargs):
+            path = real_mkdtemp(*args, **kwargs)
+            created_dirs.append(path)
+            return path
+
+        with mock.patch("core.updater.tempfile.mkdtemp", side_effect=_tracking_mkdtemp), \
+             mock.patch("core.updater.urllib.request.urlopen", return_value=_MockResponse(b"corrupted")):
+            with self.assertRaises(UpdateHashMismatchError):
+                download_and_verify_update(
+                    download_url="https://example.invalid/releases/download/v2.9.1/app.dmg",
+                    expected_sha256="0" * 64,
+                    filename="app.dmg",
+                    dest_dir=None,
+                )
+
+        self.assertEqual(len(created_dirs), 1)
+        self.assertFalse(os.path.exists(created_dirs[0]))
+
+    def test_download_and_verify_update_handles_malformed_content_length(self):
+        payload = b"valid update bytes"
+        good_sha = hashlib.sha256(payload).hexdigest()
+        resp = _MockResponse(payload, headers={"Content-Length": "not-a-number"})
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch("core.updater.urllib.request.urlopen", return_value=resp):
+                path = download_and_verify_update(
+                    download_url="https://example.invalid/releases/download/v2.9.1/app.dmg",
+                    expected_sha256=good_sha,
+                    filename="app.dmg",
+                    dest_dir=td,
+                )
+            self.assertTrue(os.path.isfile(path))
+            self.assertEqual(compute_file_sha256(path), good_sha)
+
+    def test_update_manifest_resets_stale_assets_on_version_change(self):
+        from update_version_json import update_manifest
+
+        with tempfile.TemporaryDirectory() as td:
+            manifest_path = os.path.join(td, "version.json")
+            with open(manifest_path, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "version": "2.9",
+                        "build": 69,
+                        "assets": {"macos-arm64": {"filename": "old.dmg", "sha256": "a" * 64}},
+                        "downloads": {"macos-arm64": "https://example.invalid/old.dmg", "darwin": "https://example.invalid/old.dmg"},
+                    },
+                    fh,
+                )
+
+            update_manifest(manifest_path, td, "2.9.1", 75)
+            with open(manifest_path, encoding="utf-8") as fh:
+                updated = json.load(fh)
+
+            self.assertEqual(updated["version"], "2.9.1")
+            self.assertEqual(updated["build"], 75)
+            self.assertEqual(updated["assets"], {})
+            self.assertEqual(updated["downloads"], {})
 
 
 if __name__ == "__main__":

@@ -516,6 +516,87 @@ class TestFb2Processor(unittest.TestCase):
             huge_tree=False,
         )
 
+    def test_update_fb2_xml_creates_missing_title_clears_body_children_and_cleans_old_cover(self):
+        src_fb2 = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" '
+            'xmlns:l="http://www.w3.org/1999/xlink">'
+            "<description><title-info>"
+            "<author><first-name>Иван</first-name><last-name>Петров</last-name></author>"
+            '<coverpage><image l:href="#cover.jpg"/></coverpage>'
+            "</title-info></description>"
+            "<body><title><p>Иван Петров</p><p>Старое <strong>название</strong></p></title>"
+            "<section><p>Текст.</p></section></body>"
+            f'<binary id="cover.jpg" content-type="image/jpeg">{FAKE_JPG_B64}</binary>'
+            "</FictionBook>"
+        ).encode("utf-8")
+        fake_png = b"\x89PNG\r\n\x1a\nFAKEPNG"
+        updated = update_fb2_xml(
+            src_fb2,
+            {"first": "Иван", "last": "Петров", "mid": "", "series": "", "num": "", "title": "Новое название"},
+            cover_bytes=fake_png,
+            cover_mime="image/png",
+            cover_modified=True,
+        )
+        self.assertEqual(parse_metadata(updated)["title"], "Новое название")
+        cov_bytes, cov_mime = extract_cover_from_fb2(updated)
+        self.assertEqual(cov_bytes, fake_png)
+        self.assertEqual(cov_mime, "image/png")
+        text = updated.decode("utf-8")
+        self.assertIn('id="cover.png"', text)
+        self.assertNotIn('id="cover.jpg"', text)
+        self.assertNotIn("<strong>", text)
+
+    def test_convert_book_file_disambiguates_same_batch_collisions(self):
+        with tempfile.TemporaryDirectory() as td:
+            fb2_path = os.path.join(td, "book.fb2")
+            out_dir = os.path.join(td, "out")
+            with open(fb2_path, "wb") as fh:
+                fh.write(VALID_FB2)
+
+            def _fake_fbc(cmd, cwd, cancel_event=None):
+                tmp_out_dir = cmd[-1]
+                ep = os.path.join(tmp_out_dir, "Duplicate.kepub.epub")
+                with zipfile.ZipFile(ep, "w") as z:
+                    z.writestr("mimetype", "application/epub+zip")
+                return "", ""
+
+            data = {"path": fb2_path, "display_name": "book.fb2", "meta": parse_metadata(VALID_FB2)}
+            style_params = {
+                "h1_sz": "150%", "h1_cl": "red", "h1_al": "center",
+                "auth_sz": "110%", "auth_cl": "green", "auth_al": "center", "auth_style": "italic",
+            }
+            claimed = set()
+            with patch("core.fb2_processor._run_cancellable_process", side_effect=_fake_fbc):
+                first = convert_book_file(
+                    "fbc", "config.yaml", td, data, out_dir, "kepub3", style_params, claimed_outputs=claimed
+                )
+                second = convert_book_file(
+                    "fbc", "config.yaml", td, data, out_dir, "kepub3", style_params, claimed_outputs=claimed
+                )
+
+            self.assertEqual(os.path.basename(first[0]), "Duplicate.kepub.epub")
+            self.assertEqual(os.path.basename(second[0]), "Duplicate (2).kepub.epub")
+            self.assertTrue(os.path.isfile(first[0]))
+            self.assertTrue(os.path.isfile(second[0]))
+
+    def test_graceful_degradation_without_pil_and_lxml(self):
+        from core.fb2_processor import fit_image_to_cover_size
+
+        with tempfile.TemporaryDirectory() as td:
+            img_path = os.path.join(td, "raw.jpg")
+            with open(img_path, "wb") as fh:
+                fh.write(FAKE_JPG)
+            with patch("core.fb2_processor.HAS_PIL", False):
+                raw_bytes, mime = fit_image_to_cover_size(img_path)
+            self.assertEqual(raw_bytes, FAKE_JPG)
+            self.assertEqual(mime, "image/jpeg")
+
+        bare_amp = VALID_FB2.replace("Война и мир".encode("utf-8"), "Война & мир".encode("utf-8"))
+        with patch("core.fb2_processor.HAS_LXML", False):
+            root = _parse_fb2_root(bare_amp)
+        self.assertIsNotNone(root)
+
 
 if __name__ == "__main__":
     unittest.main()

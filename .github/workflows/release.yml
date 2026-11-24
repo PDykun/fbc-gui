@@ -160,17 +160,23 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ("${{ matrix.arch }}" -eq "arm64") {
-            try {
-              pip install -r requirements.txt
-            } catch {
+            pip install -r requirements.txt
+            if ($LASTEXITCODE -ne 0) {
               Write-Host "Pinned wheel unavailable on win_arm64, installing latest compatible packages..."
-              pip install PyQt6 Pillow pyinstaller ruamel.yaml keyring certifi packaging
+              pip install "PyQt6>=6.6,<7" "Pillow>=10.0,<12" "pyinstaller>=6.0,<7" "ruamel.yaml>=0.18,<1" "keyring>=25.0,<27" "certifi>=2024.8.30" "packaging>=24.0,<27"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
           } else {
             pip install -r requirements.txt
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          try { pip install qtwebview2 } catch { Write-Host "qtwebview2 optional, continuing..." }
+          pip install qtwebview2
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "qtwebview2 optional, continuing..."
+            $global:LASTEXITCODE = 0
+          }
 
       - name: Run unit tests
         shell: pwsh

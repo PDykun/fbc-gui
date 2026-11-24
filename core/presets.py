@@ -63,8 +63,14 @@ def extract_preset_settings(app_settings):
     if not isinstance(app_settings, dict):
         return result
     for key in PRESET_SETTING_KEYS:
-        if key in app_settings:
-            result[key] = copy.deepcopy(app_settings[key])
+        if key not in app_settings:
+            continue
+        val = app_settings[key]
+        if key == "css_ui_state" and not isinstance(val, dict):
+            continue
+        if key in ("filename_tokens", "title_template_tokens") and not isinstance(val, list):
+            continue
+        result[key] = copy.deepcopy(val)
     return result
 
 

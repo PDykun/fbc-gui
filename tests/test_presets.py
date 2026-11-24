@@ -195,6 +195,49 @@ class TestPresets(unittest.TestCase):
                 self.assertNotIn("red", css_content.lower())
                 self.assertNotIn("#8b0000", css_content.lower())
 
+    def test_preset_edge_cases_and_corrupt_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            # 1. Невалидный JSON, не-словарь и некорректное поле settings
+            for fname, raw in (
+                ("broken.fbcpreset.json", "{not valid json"),
+                ("array.fbcpreset.json", "[1, 2, 3]"),
+                ("bad_settings.fbcpreset.json", json.dumps({"name": "Bad", "settings": "nope"})),
+            ):
+                p = os.path.join(td, fname)
+                with open(p, "w", encoding="utf-8") as fh:
+                    fh.write(raw)
+                with self.assertRaises(ValueError):
+                    load_preset_file(p)
+
+            # 2. list_presets пропускает повреждённые файлы и возвращает валидные
+            st = get_default_app_settings()
+            save_preset(td, "Valid Preset", st, "body {}")
+            listed = list_presets(td)
+            self.assertEqual([it["name"] for it in listed], ["Valid Preset"])
+
+            # 3. apply_preset_to_settings игнорирует приватные/неизвестные ключи и битый css_ui_state
+            target = get_default_app_settings()
+            target["smtp_password"] = "secret"
+            target["custom_output_dir"] = "/safe/dir"
+            target["css_ui_state"] = {"h1_cl": "red"}
+            apply_preset_to_settings(
+                target,
+                {
+                    "settings": {
+                        "output_format": "azw3",
+                        "smtp_password": "hacked",
+                        "custom_output_dir": "/evil",
+                        "unknown_future_key": "ignored",
+                        "css_ui_state": "not-a-dict",
+                    }
+                },
+            )
+            self.assertEqual(target["output_format"], "azw3")
+            self.assertEqual(target["smtp_password"], "secret")
+            self.assertEqual(target["custom_output_dir"], "/safe/dir")
+            self.assertNotIn("unknown_future_key", target)
+            self.assertEqual(target.get("css_ui_state"), {"h1_cl": "red"})
+
 
 if __name__ == "__main__":
     unittest.main()

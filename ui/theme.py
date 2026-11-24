@@ -3,15 +3,15 @@ import re
 import sys
 import subprocess
 
-from PyQt6.QtCore import Qt, QUrl, QEasingCurve, QPropertyAnimation, QRectF, QPointF, QRect, QPoint, QSize, QMimeData, pyqtSignal
+from PyQt6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRectF, QPointF, QRect, QPoint, QSize, QMimeData, pyqtSignal
 from PyQt6.QtGui import (
-    QColor, QGuiApplication, QPalette, QPixmap, QDrag, QDesktopServices,
+    QColor, QGuiApplication, QPalette, QPixmap, QDrag,
     QPainter, QPainterPath, QLinearGradient, QPen, QFontMetrics
 )
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLayout,
-    QPushButton, QLabel, QComboBox, QFrame, QProgressBar, QCheckBox,
-    QColorDialog, QInputDialog, QDialog, QLineEdit, QFileDialog, QPlainTextEdit,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLayout,
+    QPushButton, QLabel, QComboBox, QFrame,
+    QColorDialog, QDialog, QLineEdit,
     QGraphicsOpacityEffect, QGraphicsDropShadowEffect,
     QStyledItemDelegate, QStyle
 )
@@ -19,9 +19,9 @@ from PyQt6.QtWidgets import (
 from core.i18n import tr
 from core.logger import get_logger
 from core.fb2_processor import (
-    COVER_PREVIEW_SIZE, DEFAULT_FILENAME_TOKENS, DEFAULT_TITLE_TOKENS,
+    DEFAULT_FILENAME_TOKENS, DEFAULT_TITLE_TOKENS,
     FILENAME_TAG_IDS, TITLE_TAG_IDS,
-    fit_image_to_cover_size, render_title_metadata_preview, simulate_fbc_target
+    render_title_metadata_preview, simulate_fbc_target
 )
 
 
@@ -401,7 +401,6 @@ class RoundedRowDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         if not index.isValid() or index.column() in (0, 7, 8):
             return None
-        from PyQt6.QtWidgets import QLineEdit
         editor = QLineEdit(parent)
         bg = self.tokens.get("row_sel_mid", "#4D4334")
         fg = self.tokens.get("row_sel_text", "#F8FAFC")
@@ -546,7 +545,6 @@ class ThemeModeButton(QPushButton):
         super().paintEvent(event)
         import math
         from PyQt6.QtWidgets import QStyleOptionButton
-        from PyQt6.QtCore import QPointF
 
         opt = QStyleOptionButton()
         self.initStyleOption(opt)
@@ -677,12 +675,6 @@ class ThemeToggleWidget(QFrame):
         else:
             self.set_mode(mode)
 
-
-from ui.dialogs import (
-    show_themed_message, show_conversion_summary_dialog, show_update_dialog,
-    ConversionProgressDialog, ImportProgressDialog, FbcSetupDialog, UpdateDownloadDialog,
-    ask_themed_text, BookEditDialog, BatchEditDialog
-)
 
 
 class PillSelector(QWidget):

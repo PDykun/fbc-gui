@@ -21,6 +21,7 @@ from core.updater import is_safe_http_url, parse_version_tuple
 
 MAX_HTTP_META_BYTES = 2 * 1024 * 1024
 MAX_ARCHIVE_BIN_BYTES = 256 * 1024 * 1024
+FBC_HTTP_USER_AGENT = "FBC-GUI/2.9"
 
 try:
     from PyQt6.QtCore import QThread, pyqtSignal
@@ -275,10 +276,10 @@ def _build_ssl_context():
 
 
 def _http_get_bytes(url, timeout=10, headers=None, max_bytes=MAX_HTTP_META_BYTES):
-    if not is_safe_http_url(url, allow_relative=False):
+    if not is_safe_http_url(url, allow_relative=False, require_https=True):
         raise ValueError(f"Unsupported URL scheme: {url}")
     req_headers = {
-        "User-Agent": "FBC-GUI/2.8",
+        "User-Agent": FBC_HTTP_USER_AGENT,
         "Accept": "application/vnd.github+json",
     }
     if headers:
@@ -492,9 +493,14 @@ def verify_binary_against_github(info, user_data_dir=None, check_github=True, ti
     try:
         release = fetch_github_release(version=version, timeout=timeout)
     except urllib.error.HTTPError as e:
-        if e.code == 404:
+        code = e.code
+        try:
+            e.close()
+        except Exception:
+            pass
+        if code == 404:
             return {"verified": False, "source": "github", "reason": "unknown_release"}
-        logger.warning("GitHub API недоступен при проверке fbc v%s (HTTP %s)", version, e.code)
+        logger.warning("GitHub API недоступен при проверке fbc v%s (HTTP %s)", version, code)
         return {"verified": True, "source": "offline_version_only", "reason": ""}
     except Exception as e:
         logger.warning("Не удалось связаться с GitHub для проверки fbc v%s: %s", version, e)
@@ -514,13 +520,10 @@ def verify_binary_against_github(info, user_data_dir=None, check_github=True, ti
         )
         return {"verified": True, "source": "github_checksum", "reason": ""}
 
-    # Релиз v{version} существует на GitHub, но публикует только архивы без отдельного MD5 бинарника
+    # Релиз v{version} существует на GitHub, но публикует только архивы без отдельного хэша бинарника:
+    # допускаем запуск, но НЕ кэшируем хэш как криптографически подтверждённый.
     if select_release_asset(release, os_name=os_name, arch=arch) is not None:
-        _save_verified_cache(
-            user_data_dir,
-            {"version": version, "md5": md5_hex, "sha256": sha256_hex, "tag": release.get("tag_name", "")},
-        )
-        return {"verified": True, "source": "github_release_verified", "reason": ""}
+        return {"verified": True, "source": "github_release_unhashed", "reason": ""}
 
     return {"verified": False, "source": "github", "reason": "no_matching_asset"}
 
@@ -596,7 +599,12 @@ def download_and_install_fbc(
     try:
         release = fetch_github_release(version=target_version, timeout=15)
     except urllib.error.HTTPError as e:
-        if e.code == 404 and target_version != "latest":
+        code = e.code
+        if code == 404 and target_version != "latest":
+            try:
+                e.close()
+            except Exception:
+                pass
             release = fetch_github_release(version="latest", timeout=15)
         else:
             raise
@@ -608,9 +616,11 @@ def download_and_install_fbc(
     if not asset or not asset.get("browser_download_url"):
         raise RuntimeError(f"No compatible fb2cng asset found for {os_name}-{arch} in {release.get('tag_name')}")
 
-    asset_name = str(asset["name"])
+    asset_name = os.path.basename(str(asset["name"]).replace("\\", "/")).strip()
+    if not asset_name or asset_name in (".", ".."):
+        raise RuntimeError(f"Invalid release asset name: {asset.get('name')}")
     dl_url = str(asset["browser_download_url"])
-    if not is_safe_http_url(dl_url, allow_relative=False):
+    if not is_safe_http_url(dl_url, allow_relative=False, require_https=True):
         raise RuntimeError(f"Unsupported download URL scheme: {dl_url}")
     expected_size = int(asset.get("size") or 0)
     checksums = fetch_release_checksums(release, timeout=10)
@@ -618,20 +628,27 @@ def download_and_install_fbc(
     os.makedirs(user_data_dir, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="fbc_dl_") as tmp_dir:
         archive_path = os.path.join(tmp_dir, asset_name)
-        req = urllib.request.Request(dl_url, headers={"User-Agent": "FBC-GUI/2.8"})
+        req = urllib.request.Request(dl_url, headers={"User-Agent": FBC_HTTP_USER_AGENT})
         ctx = _build_ssl_context()
 
         downloaded = 0
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp, open(archive_path, "wb") as out_fh:
-            total = int(resp.headers.get("Content-Length") or expected_size or 0)
+            try:
+                total = max(0, int(resp.headers.get("Content-Length") or expected_size or 0))
+            except (TypeError, ValueError):
+                total = max(0, expected_size)
+            if total > MAX_ARCHIVE_BIN_BYTES:
+                raise RuntimeError(f"Download exceeds size limit ({MAX_ARCHIVE_BIN_BYTES} bytes)")
             while True:
                 if cancel_event is not None and cancel_event.is_set():
                     raise FbcDownloadCancelledError("Download cancelled")
                 chunk = resp.read(65536)
                 if not chunk:
                     break
-                out_fh.write(chunk)
                 downloaded += len(chunk)
+                if downloaded > MAX_ARCHIVE_BIN_BYTES:
+                    raise RuntimeError(f"Download exceeds size limit ({MAX_ARCHIVE_BIN_BYTES} bytes)")
+                out_fh.write(chunk)
                 if progress_callback:
                     progress_callback(downloaded, total, asset_name)
 

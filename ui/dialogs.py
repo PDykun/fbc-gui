@@ -551,7 +551,7 @@ class BookEditDialog(QDialog):
         self.lbl_target_val.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         form.addRow(QLabel(tr("converter.edit_dlg_target")), self.lbl_target_val)
 
-        for ed in (self.ed_series, self.ed_num, self.ed_title):
+        for ed in (self.ed_last, self.ed_first, self.ed_mid, self.ed_series, self.ed_num, self.ed_title):
             ed.textChanged.connect(self._update_target_preview)
         self._update_target_preview()
 
