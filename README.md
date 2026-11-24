@@ -4,15 +4,19 @@
 
 **Cross-platform desktop studio for converting, styling, and delivering FB2 e-books with [`fb2cng`](https://github.com/rupor-github/fb2cng)**
 
-[![Website](https://img.shields.io/badge/Website-pashka.eu%2Ffbc__gui-0ea5e9?style=for-the-badge&logo=safari&logoColor=white)](https://pashka.eu/fbc_gui/)
-[![GitHub Release](https://img.shields.io/github/v/release/PDykun/fbc-gui?style=for-the-badge&color=22c55e)](https://github.com/PDykun/fbc-gui/releases)
-[![Unit Tests](https://github.com/PDykun/fbc-gui/actions/workflows/tests.yml/badge.svg)](https://github.com/PDykun/fbc-gui/actions/workflows/tests.yml)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge)](LICENSE)
+<p>
+  <a href="https://pashka.eu/fbc_gui/"><img src="https://img.shields.io/badge/Website-pashka.eu%2Ffbc__gui-0ea5e9?style=for-the-badge&logo=safari&logoColor=white" alt="Website"></a>
+  <a href="https://github.com/PDykun/fbc-gui/releases"><img src="https://img.shields.io/github/v/release/PDykun/fbc-gui?style=for-the-badge&color=22c55e" alt="GitHub Release"></a>
+  <a href="https://github.com/PDykun/fbc-gui/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/PDykun/fbc-gui/tests.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=Unit%20Tests" alt="Unit Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge" alt="License: GPL v3"></a>
+</p>
 
-[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20%26%20Intel-111827?style=flat-square&logo=apple)](https://github.com/PDykun/fbc-gui/releases)
-[![Windows](https://img.shields.io/badge/Windows-64--bit%20Installer-0078D6?style=flat-square&logo=windows)](https://github.com/PDykun/fbc-gui/releases)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#running-from-source)
-[![PyQt6](https://img.shields.io/badge/UI-PyQt6-41CD52?style=flat-square&logo=qt&logoColor=white)](#detailed-reference)
+<p>
+  <a href="https://github.com/PDykun/fbc-gui/releases"><img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%26%20Intel-111827?style=flat-square&logo=apple" alt="macOS"></a>
+  <a href="https://github.com/PDykun/fbc-gui/releases"><img src="https://img.shields.io/badge/Windows-x64%20%26%20ARM64-0078D6?style=flat-square&logo=windows" alt="Windows"></a>
+  <a href="#running-from-source"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
+  <a href="#detailed-reference"><img src="https://img.shields.io/badge/UI-PyQt6-41CD52?style=flat-square&logo=qt&logoColor=white" alt="PyQt6"></a>
+</p>
 
 [Official Website](https://pashka.eu/fbc_gui/) •
 [Download Installers](https://github.com/PDykun/fbc-gui/releases) •
@@ -26,7 +30,7 @@
 
 ---
 
-**FBC GUI** is a fast, native desktop studio (macOS & Windows) built around the next-generation [`fb2cng`](https://github.com/rupor-github/fb2cng) converter. Instead of juggling raw YAML configs, hand-edited CSS, command-line flags, or heavy library managers, FBC GUI gives you a **visual typography editor with live book preview**, **batch metadata & cover editing with full Undo/Redo**, **drag-and-drop filename & title template builders**, **one-click e-reader presets**, and **direct Send-to-Kindle / SMTP delivery** — all in a single clean interface.
+**FBC GUI** is a fast, native desktop studio (**macOS Apple Silicon & Intel**, **Windows x64 & ARM64**) built around the next-generation [`fb2cng`](https://github.com/rupor-github/fb2cng) converter. Instead of juggling raw YAML configs, hand-edited CSS, command-line flags, or heavy library managers, FBC GUI gives you a **visual typography editor with two-page book-spread preview**, **batch metadata & cover editing with full Undo/Redo**, **drag-and-drop filename & title template builders**, **one-click e-reader presets**, **direct Send-to-Kindle / SMTP delivery**, and **SHA-256 verified in-app updates** — all in a single clean interface.
 
 > [!TIP]
 > **Official project website, screenshots & full visual guide (EN / RU):** **[https://pashka.eu/fbc_gui/](https://pashka.eu/fbc_gui/)**
@@ -42,7 +46,7 @@ Most FB2 conversion workflows force a trade-off: **Calibre** is heavy and uses a
 | **Native `fb2cng` engine** (EPUB2/3, KEPUB, AZW3, KFX/AZW8, PDF, TXT, MD) | ✅ All 10 formats | ✅ CLI flags | ⚠️ Generic pipeline | ❌ Limited formats |
 | **Zero-config engine setup** (auto-detect, MD5/SHA256 verify & GitHub download) | ✅ Automatic | ❌ Manual | ❌ N/A | ➖ Cloud |
 | **Visual CSS & typography studio** (fonts, drop caps, footnotes, headings, SVG) | ✅ Live controls | ❌ Manual CSS | ⚠️ Raw CSS box | ❌ None |
-| **Live preview on your actual FB2 book** (WebKit / Edge WebView2 + E-Ink B&W mode) | ✅ Real book & sample | ❌ None | ⚠️ After convert | ❌ None |
+| **Live preview on your actual FB2 book** (2-page spread, WebKit / WebView2 + E-Ink B&W) | ✅ 2-page spread & sample | ❌ None | ⚠️ After convert | ❌ None |
 | **Visual drag-and-drop Go-template builder** (`output_name` & `title_template`) | ✅ Pill timeline | ❌ Hand-written Go | ⚠️ Python templates | ❌ None |
 | **Batch metadata, series auto-numbering & cover auto-fit (`600×900`)** | ✅ Inline + Undo/Redo | ❌ External tools | ✅ Library-bound | ❌ None |
 | **Write edited metadata & covers back into source `.fb2` / `.zip`** | ✅ Atomic save-back | ❌ Read-only | ⚠️ Copies to DB | ❌ None |
@@ -71,9 +75,9 @@ Most FB2 conversion workflows force a trade-off: **Calibre** is heavy and uses a
 
 ### 🎨 Visual CSS & Live Book Preview
 - **Complete visual stylesheet builder (`ebook_styles.css`):** configure body/title/author/drop-cap fonts (or `None` to use e-reader system fonts), heading hierarchy (`H1–H5`), paragraph alignment & indents, drop caps, annotations, epigraphs, poems, footnotes (background & border), illustration widths, and PDF page frames.
-- **Real-book live preview:** renders your currently selected FB2 book (cover, annotation, epigraph, first chapter, poems, footnotes) or a comprehensive style sample inside a native web view (**WKWebView** on macOS, **Edge WebView2** on Windows) — or open directly in your system browser.
+- **Two-page book-spread live preview:** renders your currently selected FB2 book as a realistic spread — full-bleed cover with spine shadow on the left page and title, annotation, epigraph, and opening chapter on the right — or a comprehensive style sample inside a native web view (**WKWebView** on macOS, **Edge WebView2** on Windows) or your system browser.
 - **E-Ink Grayscale preview:** toggle `Grayscale (Luma)` to inspect how illustrations and typography will look on monochrome e-ink screens.
-- **Automatic font embedding:** selected fonts from `fonts/` (including bundled open-source **PT Astra Serif** and **Pomorsky Unicode**) are automatically resolved and embedded during conversion.
+- **Automatic font embedding & weight isolation:** selected fonts from `fonts/` (including bundled open-source **PT Astra Serif** and **Pomorsky Unicode**) are automatically resolved with properly isolated Regular / Bold / Italic `@font-face` rules and embedded during conversion.
 
 ### 📱 Device Presets, Typography & Template Builders
 - **8 built-in e-reader presets + custom shareable bundles (`.fbcpreset.json`):** switch entire conversion + CSS configurations in one click, restore defaults, or export/import presets with friends (private SMTP credentials and local paths are automatically stripped).
@@ -83,14 +87,16 @@ Most FB2 conversion workflows force a trade-off: **Calibre** is heavy and uses a
 - **Full `fb2cng` typography & image controls:** soft hyphenation, drop caps toggle, direct speech / dash / dialogue `text_transformations`, separate annotation page, visible TOC placement (`None / Before / After`), open-from-cover, auto-generated fallback covers, `--no-cover`, Baseline JPEG compatibility, SVG vector vs. raster toggle, transparency removal, grayscale, screen resolution & DPI.
 
 ### ✉️ Direct Send-to-Kindle & Email Delivery
-- **Automatic SMTP delivery:** optionally email converted books straight to your Kindle / PocketBook / personal inbox right after conversion finishes, with automatic **20 MB batch splitting**, SSL / STARTTLS support, and a built-in **Send Test Email** check.
-- **OS-native secret storage:** SMTP passwords are stored in **macOS Keychain** or **Windows Credential Manager** via `keyring` (never exported in presets).
+- **Automatic SMTP delivery:** optionally email converted books straight to your Kindle / PocketBook / personal inbox right after conversion finishes, with automatic **20 MB batch splitting**, `certifi`-verified SSL / STARTTLS support, and a built-in **Send Test Email** check.
+- **Hardened OS-native secret storage:** SMTP passwords are stored securely in **macOS Keychain** (passed via `stdin`, never exposed in process arguments) or **Windows Credential Manager** via `keyring`, and are never exported in presets.
 
-### 🖥️ Native Desktop Experience
+### 🖥️ Native Desktop Experience, Auto-Updates & Security
+- **Built-in GitHub Releases auto-updater (SHA-256 verified):** checks `releases/latest/download/version.json` via CDN (no API rate limits) automatically after launch or on demand via **Help → Check for Updates...** and the **About** page. Uses semantic versioning (`packaging.version`), detects your exact OS and CPU architecture (`macos-arm64`, `macos-x64`, `windows-x64`, `windows-arm64`), downloads in-app with MB progress and cancellation, verifies **SHA-256** checksums before launch, and applies updates natively (silent Inno Setup upgrade with auto-relaunch on Windows; auto-mounted `.dmg` in Finder on macOS).
 - **Single-instance & OS file integration:** open `.fb2` / `.zip` files via macOS Finder *"Open With"* / Dock drag-and-drop or the optional Windows Explorer context menu — files automatically route into the running window.
 - **2 theme families × 3 appearance modes:** **Modern** and **Golden** external QSS themes with **Auto (system) / Light / Dark** smooth crossfade switching.
 - **Bilingual UI:** instant switching between **English** and **Russian** via external `locales/*.json` files.
 - **Clean, verified `fb2cng` auto-setup:** no third-party binaries are bundled in the repo or installers. On startup, FBC GUI scans your OS `PATH` and standard install paths, verifies binary identity (`--version`), version compatibility (`>= 2.1.1`), and MD5/SHA256 checksums against [rupor-github/fb2cng](https://github.com/rupor-github/fb2cng), and automatically downloads the matching platform release if needed.
+- **Security & reliability hardening:** atomic writes (`fsync` + `os.replace`) for configs, CSS, and presets (with automatic `.bak` recovery on corrupted settings), XXE-hardened `lxml` parsing, `http`/`https` URL validation, and `certifi`-backed TLS verification.
 
 ---
 
@@ -158,28 +164,29 @@ flowchart LR
 
 ```text
 fbc-gui/
-├── fbc_gui.py              # Main window, SingleInstanceManager, QFileOpenEvent & worker threads
+├── fbc_gui.py              # Main window, menu actions, QFileOpenEvent & app orchestration
 ├── core/
 │   ├── fbc_manager.py      # OS PATH discovery, --version & MD5/SHA256 check, GitHub auto-download
-│   ├── fb2_processor.py    # Resilient FB2/ZIP parser, cover autofit, Go-template generator, fbc runner
-│   ├── config.py           # settings.json, config.yaml migration/sync, device profiles, keyring
-│   ├── css_preview.py      # ebook_styles.css parser/generator & live HTML preview builder
+│   ├── fb2_processor.py    # Resilient XXE-safe FB2/ZIP parser, cover autofit, Go-template generator
+│   ├── workers.py          # SingleInstanceManager, FileImportWorker, ConversionWorker, TestEmailWorker
+│   ├── config.py           # Atomic settings.json/config.yaml sync, device profiles, Keychain/keyring
+│   ├── css_preview.py      # ebook_styles.css parser/generator & 2-page book-spread HTML preview
 │   ├── presets.py          # User & bundled *.fbcpreset.json manager (strips private credentials)
-│   ├── email_sender.py     # SMTP SSL/STARTTLS sender with 20 MB batching
+│   ├── email_sender.py     # certifi-verified SMTP SSL/STARTTLS sender with 20 MB batching
 │   ├── undo_commands.py    # QUndoStack commands for metadata, covers, removals & reordering
-│   ├── updater.py          # Background version checker
+│   ├── updater.py          # GitHub Releases auto-updater, semver, SHA-256 verify & OS installers
 │   ├── i18n.py             # External JSON localization loader
 │   └── logger.py           # Application diagnostics logger
 ├── ui/
 │   ├── theme.py            # External QSS theme registry, PillSelector, ColorPicker, TemplateBuilder
-│   ├── dialogs.py          # Themed dialogs (Progress, FbcSetup, BookEdit, BatchEdit, Summary)
+│   ├── dialogs.py          # Themed dialogs (Progress, FbcSetup, UpdateDownload, BookEdit, BatchEdit, Summary)
 │   ├── native_webview.py   # WKWebView (macOS) / Edge WebView2 (Windows) / fallback renderer
 │   └── pages/              # Converter, Styles, Preview, Settings, About views
 ├── themes/                 # modern_{dark,light}.qss & golden_{dark,light}.qss
 ├── locales/                # en.json & ru.json
 ├── presets_defaults/       # 8 built-in device presets
 ├── fonts/                  # PT Astra Serif & Pomorsky Unicode + OFL-1.1.txt
-└── tests/                  # 52 unit tests across all core modules
+└── tests/                  # 76 unit tests across core, UI, and worker modules
 ```
 
 </details>
@@ -188,10 +195,18 @@ fbc-gui/
 
 ## Download & Installation
 
-Prebuilt installers for **macOS (`.dmg`)** and **Windows (`_Setup.exe`)** are built automatically via GitHub Actions:
+Native prebuilt installers for all **4 supported platforms** are built automatically via GitHub Actions matrix builds with `SHA256SUMS.txt` and `version.json` integrity manifests:
+
+| Platform | Architecture | Installer |
+| :--- | :--- | :--- |
+| **macOS** | Apple Silicon (`ARM64`) | `FBC_GUI_v*_macos_arm64.dmg` |
+| **macOS** | Intel (`x64`) | `FBC_GUI_v*_macos_x64.dmg` |
+| **Windows** | Intel / AMD (`x64`) | `FBC_GUI_Setup_v*_win_x64.exe` |
+| **Windows** | ARM (`ARM64`) | `FBC_GUI_Setup_v*_win_arm64.exe` |
 
 - 🌐 **Official Website & Guides:** **[https://pashka.eu/fbc_gui/](https://pashka.eu/fbc_gui/)**
 - 📦 **Direct Installer Downloads:** **[GitHub Releases](https://github.com/PDykun/fbc-gui/releases)**
+- 🔄 **In-App Updates:** once installed, FBC GUI checks GitHub Releases automatically (or via **Help → Check for Updates...**), verifies the **SHA-256** checksum, and installs the matching build for your OS and architecture.
 
 > [!NOTE]
 > **No third-party binaries bundled:** `fb2cng` (`fbc` / `fbc.exe`) is intentionally excluded from this repository and from all installers. On first launch, FBC GUI automatically locates `fb2cng` in your system `PATH` or downloads and verifies the matching release from [rupor-github/fb2cng](https://github.com/rupor-github/fb2cng).
@@ -205,7 +220,7 @@ Prebuilt installers for **macOS (`.dmg`)** and **Windows (`_Setup.exe`)** are bu
 
 ### Setup & Launch
 ```bash
-git clone https://github.com/PDykun/fbc-gui.git
+git clone "[https://github.com/PDykun/fbc-gui.git](https://github.com/PDykun/fbc-gui.git)"
 cd fbc-gui
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
