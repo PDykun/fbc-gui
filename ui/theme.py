@@ -680,8 +680,8 @@ class ThemeToggleWidget(QFrame):
 
 from ui.dialogs import (
     show_themed_message, show_conversion_summary_dialog, show_update_dialog,
-    ConversionProgressDialog, ImportProgressDialog, FbcSetupDialog, ask_themed_text,
-    BookEditDialog, BatchEditDialog
+    ConversionProgressDialog, ImportProgressDialog, FbcSetupDialog, UpdateDownloadDialog,
+    ask_themed_text, BookEditDialog, BatchEditDialog
 )
 
 

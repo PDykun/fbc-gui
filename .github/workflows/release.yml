@@ -11,8 +11,16 @@ permissions:
 
 jobs:
   build-macos:
-    name: Build macOS DMG
-    runs-on: macos-latest
+    name: Build macOS DMG (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,12 +39,14 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 
-      - name: Build macOS app bundle and DMG
+      - name: Build macOS app bundle and DMG (${{ matrix.arch }})
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           APP_VER=$(python -c "import re; s=open('fbc_gui.py',encoding='utf-8').read(); print(re.search(r'^__version__\s*=\s*[\"\x27]([^\"\x27]+)', s, re.M).group(1))")
           APP_BUILD=$(python -c "import re; s=open('fbc_gui.py',encoding='utf-8').read(); m=re.search(r'^__build__\s*=\s*(\d+)', s, re.M); print(m.group(1) if m else '1')")
-          echo "Building FBC GUI v${APP_VER} (build ${APP_BUILD}) for macOS..."
+          echo "Building FBC GUI v${APP_VER} (build ${APP_BUILD}) for macOS (${TARGET_ARCH})..."
 
           python -m PyInstaller \
             --noconfirm \
@@ -93,7 +103,7 @@ jobs:
           ditto "dist/FBC GUI.app" "build/dmg_staging/FBC GUI.app"
           ln -s /Applications "build/dmg_staging/Applications"
 
-          DMG_PATH="installer/FBC_GUI_v${APP_VER}_mac.dmg"
+          DMG_PATH="installer/FBC_GUI_v${APP_VER}_macos_${TARGET_ARCH}.dmg"
           rm -f "$DMG_PATH"
           hdiutil create \
             -volname "FBC GUI ${APP_VER}" \
@@ -115,38 +125,58 @@ jobs:
           fi
           ls -lh installer/*.dmg
 
-      - name: Upload macOS DMG artifact
+      - name: Upload macOS DMG artifact (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
         with:
-          name: macos-dmg
+          name: macos-${{ matrix.arch }}-dmg
           path: installer/*.dmg
           if-no-files-found: error
 
   build-windows:
-    name: Build Windows Installer (Inno Setup)
-    runs-on: windows-latest
+    name: Build Windows Installer (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+            python_arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+            python_arch: arm64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.12 (${{ matrix.python_arch }})
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          architecture: ${{ matrix.python_arch }}
           cache: "pip"
 
       - name: Install dependencies
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            try {
+              pip install -r requirements.txt
+            } catch {
+              Write-Host "Pinned wheel unavailable on win_arm64, installing latest compatible packages..."
+              pip install PyQt6 Pillow pyinstaller ruamel.yaml keyring certifi packaging
+            }
+          } else {
+            pip install -r requirements.txt
+          }
           try { pip install qtwebview2 } catch { Write-Host "qtwebview2 optional, continuing..." }
 
       - name: Run unit tests
         shell: pwsh
         run: python -m unittest discover -s tests -v
 
-      - name: Build FBC_GUI.exe with PyInstaller
+      - name: Build FBC_GUI.exe with PyInstaller (${{ matrix.arch }})
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -206,7 +236,7 @@ jobs:
             --add-data "presets_defaults;presets_defaults" `
             fbc_gui.py
 
-      - name: Build Windows Setup EXE with Inno Setup
+      - name: Build Windows Setup EXE with Inno Setup (${{ matrix.arch }})
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -216,6 +246,9 @@ jobs:
           #define MyAppExeName "FBC_GUI.exe"
           #ifndef MyAppVersion
             #define MyAppVersion GetStringFileInfo("dist\FBC_GUI.exe", "ProductVersion")
+          #endif
+          #ifndef MyAppArch
+            #define MyAppArch "x64"
           #endif
           #define MyAppPublisher "Paul Dykoun"
           #define MyAppURL "https://www.pashka.eu/fbc_gui"
@@ -234,14 +267,21 @@ jobs:
           PrivilegesRequired=lowest
           PrivilegesRequiredOverridesAllowed=dialog
           OutputDir=installer
-          OutputBaseFilename=FBC_GUI_Setup_v{#MyAppVersion}
+          OutputBaseFilename=FBC_GUI_Setup_v{#MyAppVersion}_win_{#MyAppArch}
           Compression=lzma2/max
           SolidCompression=yes
           WizardStyle=modern
+          #if MyAppArch == "arm64"
+          ArchitecturesAllowed=arm64
+          ArchitecturesInstallIn64BitMode=arm64
+          #else
           ArchitecturesAllowed=x64compatible
           ArchitecturesInstallIn64BitMode=x64compatible
+          #endif
           SetupIconFile=icon.ico
           UninstallDisplayIcon={app}\{#MyAppExeName}
+          CloseApplications=yes
+          RestartApplications=no
 
           [Languages]
           Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
@@ -275,6 +315,7 @@ jobs:
 
           [Run]
           Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+          Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall skipifnotsilent
           '@ | Set-Content -Path "installer.iss" -Encoding utf8
           }
 
@@ -291,13 +332,13 @@ jobs:
           if (-not $iscc) {
             throw "ISCC.exe (Inno Setup 6) not found"
           }
-          & $iscc "/DMyAppVersion=${env:APP_VER}" "installer.iss"
+          & $iscc "/DMyAppVersion=${env:APP_VER}" "/DMyAppArch=${{ matrix.arch }}" "installer.iss"
           Get-ChildItem installer\*.exe
 
-      - name: Upload Windows Setup artifact
+      - name: Upload Windows Setup artifact (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
         with:
-          name: windows-setup
+          name: windows-${{ matrix.arch }}-setup
           path: installer/*.exe
           if-no-files-found: error
 
@@ -316,11 +357,117 @@ jobs:
           path: release_assets
           merge-multiple: true
 
-      - name: Generate SHA256 checksums
+      - name: Generate SHA256 checksums and version.json manifest
         run: |
           cd release_assets
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          cd ..
+
+          python3 - << 'EOF'
+          import hashlib
+          import json
+          import os
+          import re
+
+          repo = os.environ.get("GITHUB_REPOSITORY", "PDykun/fbc-gui")
+          tag = os.environ.get("GITHUB_REF_NAME", "")
+
+          with open("fbc_gui.py", "r", encoding="utf-8") as fh:
+              src = fh.read()
+          m_ver = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', src, re.M)
+          m_bld = re.search(r'^__build__\s*=\s*(\d+)', src, re.M)
+          version = (tag.lstrip("vV") if tag else "") or (m_ver.group(1) if m_ver else "1.0")
+          build = int(m_bld.group(1)) if m_bld else 1
+          release_base = f"https://github.com/{repo}/releases/download/v{version}"
+
+          def sha256_file(path):
+              h = hashlib.sha256()
+              with open(path, "rb") as f:
+                  for chunk in iter(lambda: f.read(65536), b""):
+                      h.update(chunk)
+              return h.hexdigest().lower()
+
+          def classify_asset(fname):
+              low = fname.lower()
+              if low.endswith(".dmg"):
+                  if "arm64" in low or "apple" in low:
+                      return ["macos-arm64"], "dmg"
+                  if "x64" in low or "x86_64" in low or "intel" in low:
+                      return ["macos-x64"], "dmg"
+                  return ["macos-arm64", "macos-x64"], "dmg"
+              if low.endswith(".exe"):
+                  kind = "installer" if ("setup" in low or "installer" in low) else "portable"
+                  if "arm64" in low:
+                      return ["windows-arm64"], kind
+                  return ["windows-x64"], kind
+              return [], ""
+
+          assets_map = {}
+          downloads_map = {}
+          assets_dir = "release_assets"
+          for fname in sorted(os.listdir(assets_dir)):
+              fpath = os.path.join(assets_dir, fname)
+              if not os.path.isfile(fpath) or fname in ("SHA256SUMS.txt", "version.json"):
+                  continue
+              keys, kind = classify_asset(fname)
+              if not keys:
+                  continue
+              entry = {
+                  "filename": fname,
+                  "url": f"{release_base}/{fname}",
+                  "sha256": sha256_file(fpath),
+                  "kind": kind,
+              }
+              for k in keys:
+                  assets_map[k] = entry
+                  downloads_map[k] = entry["url"]
+
+          # Обратная совместимость для старых версий (< 2.9), читающих downloads.darwin / downloads.win32
+          if "macos-arm64" in assets_map:
+              downloads_map["darwin"] = assets_map["macos-arm64"]["url"]
+          elif "macos-x64" in assets_map:
+              downloads_map["darwin"] = assets_map["macos-x64"]["url"]
+          if "windows-x64" in assets_map:
+              downloads_map["win32"] = assets_map["windows-x64"]["url"]
+          elif "windows-arm64" in assets_map:
+              downloads_map["win32"] = assets_map["windows-arm64"]["url"]
+
+          def extract_changelog_summary(ver):
+              minor = ".".join(ver.split(".")[:2])
+              candidates = [f"RELEASE_NOTES_v{ver}.md", f"RELEASE_NOTES_v{minor}.md"]
+              text = ""
+              for cand in candidates:
+                  if os.path.isfile(cand):
+                      with open(cand, "r", encoding="utf-8") as fh:
+                          text = fh.read()
+                      break
+              ru_summary = f"Релиз v{ver} (сборка {build})."
+              en_summary = f"Release v{ver} (build {build})."
+              if text:
+                  m_ru = re.search(r"##\s+Русская версия.*?\n\n\*\*([^\n]+)\*\*", text, re.S)
+                  if m_ru:
+                      ru_summary = m_ru.group(1).strip()
+                  m_en = re.search(r"##\s+English Version.*?\n\n\*\*([^\n]+)\*\*", text, re.S)
+                  if m_en:
+                      en_summary = m_en.group(1).strip()
+              return {"ru": ru_summary, "en": en_summary}
+
+          manifest = {
+              "version": version,
+              "build": build,
+              "release_base_url": release_base,
+              "assets": assets_map,
+              "downloads": downloads_map,
+              "changelog": extract_changelog_summary(version),
+          }
+          out_path = os.path.join(assets_dir, "version.json")
+          with open(out_path, "w", encoding="utf-8") as fh:
+              json.dump(manifest, fh, ensure_ascii=False, indent=2)
+              fh.write("\n")
+          print("Generated version.json:")
+          print(json.dumps(manifest, ensure_ascii=False, indent=2))
+          EOF
 
       - name: Create Draft GitHub Release
         env:

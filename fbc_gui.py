@@ -19,8 +19,8 @@ from PyQt6.QtWidgets import (
 
 # --- Метаинформация и версия программы ---
 __app_name__ = "FBC GUI"
-__version__ = "2.8.3"
-__build__ = 67
+__version__ = "2.9"
+__build__ = 69
 __author__ = "Paul Dykoun"
 __email__ = "me@pashka.eu"
 __url__ = "www.pashka.eu/fbc_gui"
@@ -172,7 +172,14 @@ from core.i18n import (
     LEGACY_ALIGN_MAP, LEGACY_STYLE_MAP, LEGACY_NOTE_BG_MAP, LEGACY_NOTE_BORDER_MAP,
     get_theme_choices
 )
-from core.updater import UpdateCheckWorker, UPDATE_CHECK_INTERVAL_SEC, is_safe_http_url
+from core.updater import (
+    UpdateCheckWorker,
+    UpdateDownloadWorker,
+    UPDATE_CHECK_INTERVAL_SEC,
+    DEFAULT_MANIFEST_URL,
+    DEFAULT_RELEASES_URL,
+    is_safe_http_url,
+)
 from core.workers import (
     FileImportWorker,
     ConversionWorker,
@@ -185,7 +192,8 @@ from ui.theme import (
     build_theme_qss, build_qpalette_from_qss, start_window_crossfade,
     refresh_widget_halos,
     ThemeToggleWidget, show_themed_message, show_conversion_summary_dialog, show_update_dialog,
-    ConversionProgressDialog, ImportProgressDialog, FbcSetupDialog, BookEditDialog, BatchEditDialog
+    ConversionProgressDialog, ImportProgressDialog, FbcSetupDialog, UpdateDownloadDialog,
+    BookEditDialog, BatchEditDialog
 )
 from ui.pages.converter_page import build_converter_page
 from ui.pages.css_page import build_visual_css_page
@@ -250,6 +258,8 @@ class MainWindow(QMainWindow):
         self._loading_css = False
         self._applying_theme = False
         self._update_worker = None
+        self._update_dl_worker = None
+        self._update_dl_dlg = None
         self._fbc_worker = None
         self._import_worker = None
         self._test_email_worker = None
@@ -296,7 +306,7 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self.refresh_preview()
         QTimer.singleShot(150, self._ensure_fbc_on_startup)
-        QTimer.singleShot(1500, self._schedule_startup_update_check)
+        QTimer.singleShot(2500, self._schedule_startup_update_check)
 
     def _setup_shortcuts(self):
         self._sc_open = QShortcut(QKeySequence.StandardKey.Open, self)
@@ -314,6 +324,7 @@ class MainWindow(QMainWindow):
             "_import_worker",
             "_fbc_worker",
             "_update_worker",
+            "_update_dl_worker",
             "_test_email_worker",
         )
         active = []
@@ -351,7 +362,7 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
 
-        for dlg_attr in ("_import_progress_dlg", "_fbc_setup_dlg"):
+        for dlg_attr in ("_import_progress_dlg", "_fbc_setup_dlg", "_update_dl_dlg"):
             dlg = getattr(self, dlg_attr, None)
             if dlg is not None:
                 try:
@@ -499,6 +510,9 @@ class MainWindow(QMainWindow):
             act_redo.setShortcuts(QKeySequence.StandardKey.Redo)
             edit_menu.addAction(act_redo)
         help_menu = menubar.addMenu(tr("menu.help"))
+        act_check_updates = help_menu.addAction(tr("menu.check_updates"))
+        act_check_updates.triggered.connect(lambda: self.check_for_updates(manual=True))
+        help_menu.addSeparator()
         act_about = help_menu.addAction(tr("menu.about", app=APP_NAME))
         act_about.triggered.connect(lambda: self.switch_page(4))
 
@@ -1497,21 +1511,19 @@ class MainWindow(QMainWindow):
     def check_for_updates(self, manual=False):
         if self._update_worker is not None and self._update_worker.isRunning():
             return
+        if self._update_dl_worker is not None and self._update_dl_worker.isRunning():
+            return
         if manual and hasattr(self, "btn_check_updates"):
             self.btn_check_updates.setEnabled(False)
             self.btn_check_updates.setText(tr("about.updates_checking"))
 
-        clean_url = APP_URL.replace("https://", "").replace("http://", "").rstrip("/")
-        base_url = f"https://{clean_url}"
-        manifest_url = f"{base_url}/version.json"
-
         self._update_worker = UpdateCheckWorker(
             APP_VERSION,
             BUILD_NUMBER,
-            manifest_url=manifest_url,
+            manifest_url=DEFAULT_MANIFEST_URL,
             manual=manual,
             lang=LOCALE.lang_code,
-            fallback_url=base_url,
+            fallback_url=DEFAULT_RELEASES_URL,
             parent=self,
         )
         self._update_worker.checked.connect(self._on_update_check_finished)
@@ -1548,23 +1560,102 @@ class MainWindow(QMainWindow):
                 cur_build=BUILD_NUMBER,
                 notes=notes,
             )
+            can_in_app = bool(result.get("sha256") and is_safe_http_url(result.get("download_url"), allow_relative=False))
+            if can_in_app:
+                action_label = tr("about.btn_open_dmg_update") if sys.platform == "darwin" else tr("about.btn_install_update")
+            else:
+                action_label = tr("about.btn_download_update")
+
             if show_update_dialog(
                 self,
                 tr("about.update_avail_title"),
                 msg,
-                tr("about.btn_download_update"),
+                action_label,
                 tr("about.btn_later"),
             ):
-                dl_url = result.get("download_url") or f"https://{APP_URL}"
-                if not is_safe_http_url(dl_url, allow_relative=False):
-                    logger.warning("Отклонён небезопасный URL обновления: %s", dl_url)
-                    dl_url = f"https://{APP_URL}"
-                webbrowser.open(dl_url)
+                if can_in_app:
+                    self._start_update_download(result)
+                else:
+                    dl_url = result.get("download_url") or DEFAULT_RELEASES_URL
+                    if not is_safe_http_url(dl_url, allow_relative=False):
+                        logger.warning("Отклонён небезопасный URL обновления: %s", dl_url)
+                        dl_url = DEFAULT_RELEASES_URL
+                    webbrowser.open(dl_url)
         elif manual:
             show_themed_message(
                 self,
                 tr("common.info"),
                 tr("about.updates_none", ver=APP_VERSION, build=BUILD_NUMBER),
+                "info",
+            )
+
+    def _start_update_download(self, update_info):
+        if self._update_dl_worker is not None and self._update_dl_worker.isRunning():
+            return
+        ver = update_info.get("version") or ""
+        self._update_dl_dlg = UpdateDownloadDialog(
+            self,
+            version_str=ver,
+            initial_status=tr("about.update_dl_preparing", ver=ver),
+        )
+        self._update_dl_worker = UpdateDownloadWorker(
+            download_url=update_info["download_url"],
+            expected_sha256=update_info["sha256"],
+            filename=update_info.get("filename", ""),
+            kind=update_info.get("kind", "auto"),
+            app_version=APP_VERSION,
+            parent=self,
+        )
+        self._update_dl_dlg.cancel_requested.connect(self._update_dl_worker.cancel)
+        self._update_dl_worker.status_changed.connect(self._on_update_dl_status)
+        self._update_dl_worker.progress_changed.connect(self._on_update_dl_progress)
+        self._update_dl_worker.finished_download.connect(self._on_update_dl_finished)
+        self._update_dl_dlg.open()
+        self._update_dl_worker.start()
+
+    def _on_update_dl_status(self, status_code):
+        dlg = getattr(self, "_update_dl_dlg", None)
+        if dlg is None:
+            return
+        if status_code == "verifying":
+            dlg.set_status_text(tr("about.update_dl_verifying"), indeterminate=True)
+        elif status_code == "installing":
+            dlg.set_status_text(tr("about.update_dl_installing"), indeterminate=True)
+
+    def _on_update_dl_progress(self, downloaded, total, asset_name):
+        dlg = getattr(self, "_update_dl_dlg", None)
+        if dlg is not None:
+            dlg.update_download_progress(downloaded, total, asset_name)
+
+    def _on_update_dl_finished(self, result):
+        if getattr(self, "_closing", False):
+            return
+        dlg = self._update_dl_dlg
+        self._update_dl_dlg = None
+        if dlg is not None:
+            try:
+                dlg.finish_and_close()
+            except RuntimeError:
+                pass
+
+        if result.get("cancelled"):
+            return
+
+        if not result.get("ok"):
+            err_key = "about.update_sha256_err" if result.get("hash_mismatch") else "about.update_dl_err"
+            show_themed_message(self, tr("common.error"), tr(err_key, e=result.get("error", "")), "error")
+            return
+
+        if result.get("should_quit"):
+            app_inst = QApplication.instance()
+            if app_inst is not None:
+                QTimer.singleShot(150, app_inst.quit)
+        elif result.get("action") == "dmg_mounted":
+            name = os.path.basename(result.get("path", "")) or "FBC GUI.dmg"
+            show_themed_message(
+                self,
+                tr("common.done"),
+                tr("about.update_dmg_opened", name=name, app=APP_NAME),
                 "info",
             )
 
