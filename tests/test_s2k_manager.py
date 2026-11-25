@@ -191,7 +191,7 @@ class TestS2kManager(unittest.TestCase):
         import urllib.parse
         import zipfile
         from unittest.mock import patch
-        from core.s2k_manager import download_and_install_s2k
+        from core.s2k_manager import _s2k_exe_name, download_and_install_s2k
 
         class _DummyResp:
             def __init__(self, payload, headers=None):
@@ -209,11 +209,12 @@ class TestS2kManager(unittest.TestCase):
 
         asset_url = urllib.parse.urlunsplit(("https", "downloads.example.org", "/s2k-darwin-arm64.zip", "", ""))
         cs_url = urllib.parse.urlunsplit(("https", "downloads.example.org", "/checksums.txt", "", ""))
+        exe_name = _s2k_exe_name()
 
         with tempfile.TemporaryDirectory() as td:
             zip_buf = io.BytesIO()
             with zipfile.ZipFile(zip_buf, "w") as zf:
-                zf.writestr("s2k", b"#!/bin/sh\necho 1.2.3\n")
+                zf.writestr(exe_name, b"#!/bin/sh\necho 1.2.3\n")
             zip_bytes = zip_buf.getvalue()
             sha = hashlib.sha256(zip_bytes).hexdigest()
 
@@ -243,7 +244,7 @@ class TestS2kManager(unittest.TestCase):
                     "browser_download_url": asset_url,
                 }),
                 patch("core.s2k_manager.safe_urlopen", side_effect=_fake_urlopen),
-                patch("core.s2k_manager.probe_s2k_binary", return_value={"path": os.path.join(td, "s2k"), "version": "1.2.3"}),
+                patch("core.s2k_manager.probe_s2k_binary", return_value={"path": os.path.join(td, exe_name), "version": "1.2.3"}),
             ):
                 info = download_and_install_s2k(
                     td,
