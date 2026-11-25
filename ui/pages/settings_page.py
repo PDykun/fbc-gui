@@ -2,29 +2,17 @@ import os
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QComboBox, QScrollArea, QLineEdit
+    QLabel, QComboBox, QScrollArea, QLineEdit, QCheckBox
 )
 
 from core.i18n import LOCALE, tr, get_theme_choices
 from core.config import DEFAULT_OUTPUT_FORMAT, is_secure_password_storage_available
 from core.fb2_processor import FORMAT_EXT_MAP
+from core.metadata_lookup import DEFAULT_ENABLED_PROVIDERS, DEFAULT_PROVIDER_ORDER, PROVIDER_LABELS
 from ui.theme import PillSelector, FormatComboBox, FilenameTemplateBuilder, create_section_card, add_setting_row
 
 
-def build_settings_page(win, parent):
-    layout = QVBoxLayout(parent)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(12)
-
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll_content = QWidget()
-    scroll_content.setObjectName("ScrollContent")
-    scroll_content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-    s_layout = QVBoxLayout(scroll_content)
-    s_layout.setContentsMargins(0, 0, 8, 0)
-    s_layout.setSpacing(16)
-
+def _build_presets_section(win, s_layout):
     card_presets, l_presets = create_section_card(tr("settings.sec_presets"))
     preset_ctrl = QWidget()
     preset_ctrl_layout = QHBoxLayout(preset_ctrl)
@@ -81,6 +69,7 @@ def build_settings_page(win, parent):
     if hasattr(win, "refresh_user_presets_combo"):
         win.refresh_user_presets_combo()
 
+def _build_format_section(win, s_layout):
     card_fmt, l_fmt = create_section_card(tr("settings.sec_format"))
 
     win.device_profile_combo = FormatComboBox()
@@ -187,6 +176,7 @@ def build_settings_page(win, parent):
     l_fmt.addWidget(win.filename_builder)
     s_layout.addWidget(card_fmt)
 
+def _build_text_layout_section(win, s_layout):
     card_text, l_text = create_section_card(tr("settings.sec_text_layout"))
 
     win.footnotes_mode_selector = PillSelector(
@@ -269,6 +259,7 @@ def build_settings_page(win, parent):
         win.title_mode_selector
     )
 
+    sample_meta = next(iter(win.files_data.values()))["meta"] if getattr(win, "files_data", None) else None
     win.title_template_builder = FilenameTemplateBuilder(
         initial_tokens=win.app_settings.get("title_template_tokens"),
         output_format=win.app_settings.get("output_format", DEFAULT_OUTPUT_FORMAT),
@@ -327,6 +318,34 @@ def build_settings_page(win, parent):
         win.annotation_enable_selector
     )
 
+    win.annotation_in_toc_selector = PillSelector(
+        [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+        default=str(win.app_settings.get("annotation_in_toc", "false")),
+        callback=lambda v: win.on_fbc_bool_setting_changed("annotation_in_toc", v)
+    )
+    add_setting_row(
+        l_text,
+        tr("settings.lbl_annotation_in_toc"),
+        tr("settings.desc_annotation_in_toc"),
+        win.annotation_in_toc_selector
+    )
+
+    win.toc_type_selector = PillSelector(
+        [
+            (tr("settings.opt_toc_type_normal"), "normal"),
+            (tr("settings.opt_toc_type_old_kindle"), "old_kindle"),
+            (tr("settings.opt_toc_type_flat"), "flat"),
+        ],
+        default=str(win.app_settings.get("toc_type", "normal")),
+        callback=win.on_toc_type_changed
+    )
+    add_setting_row(
+        l_text,
+        tr("settings.lbl_toc_type"),
+        tr("settings.desc_toc_type"),
+        win.toc_type_selector
+    )
+
     win.toc_placement_selector = PillSelector(
         [
             (tr("settings.opt_toc_none"), "none"),
@@ -343,6 +362,48 @@ def build_settings_page(win, parent):
         win.toc_placement_selector
     )
 
+    win.toc_untitled_selector = PillSelector(
+        [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+        default=str(win.app_settings.get("toc_include_untitled", "false")),
+        callback=lambda v: win.on_fbc_bool_setting_changed("toc_include_untitled", v)
+    )
+    add_setting_row(
+        l_text,
+        tr("settings.lbl_toc_untitled"),
+        tr("settings.desc_toc_untitled"),
+        win.toc_untitled_selector
+    )
+
+    pm_widget = QWidget()
+    pm_layout = QHBoxLayout(pm_widget)
+    pm_layout.setContentsMargins(0, 0, 0, 0)
+    pm_layout.setSpacing(8)
+    win.page_map_enable_selector = PillSelector(
+        [(tr("settings.opt_on"), "true"), (tr("settings.opt_off"), "false")],
+        default=str(win.app_settings.get("page_map_enable", "true")),
+        callback=lambda v: win.on_fbc_bool_setting_changed("page_map_enable", v)
+    )
+    pm_layout.addWidget(win.page_map_enable_selector)
+    pm_layout.addWidget(QLabel(tr("settings.lbl_page_map_size")))
+    win.page_map_size_edit = QLineEdit(str(win.app_settings.get("page_map_size", "2300")))
+    win.page_map_size_edit.setFixedWidth(64)
+    win.page_map_size_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    win.page_map_size_edit.textEdited.connect(lambda v: win.on_page_map_size_changed(v))
+    pm_layout.addWidget(win.page_map_size_edit)
+    pm_layout.addWidget(QLabel("Adobe DE:"))
+    win.page_map_adobe_selector = PillSelector(
+        [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+        default=str(win.app_settings.get("page_map_adobe_de", "false")),
+        callback=lambda v: win.on_fbc_bool_setting_changed("page_map_adobe_de", v)
+    )
+    pm_layout.addWidget(win.page_map_adobe_selector)
+    add_setting_row(
+        l_text,
+        tr("settings.lbl_page_map"),
+        tr("settings.desc_page_map"),
+        pm_widget
+    )
+
     win.open_from_cover_selector = PillSelector(
         [(tr("settings.opt_on"), "true"), (tr("settings.opt_off"), "false")],
         default=str(win.app_settings.get("open_from_cover", "true")),
@@ -356,6 +417,7 @@ def build_settings_page(win, parent):
     )
     s_layout.addWidget(card_text)
 
+def _build_adv_convert_section(win, s_layout):
     card_adv, l_adv = create_section_card(tr("settings.sec_adv_convert"))
     win.azw3_comp_selector = PillSelector(
         [
@@ -436,8 +498,21 @@ def build_settings_page(win, parent):
         tr("settings.desc_workers"),
         win.workers_selector
     )
+
+    win.fix_zip_selector = PillSelector(
+        [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+        default=str(win.app_settings.get("fix_zip", "false")),
+        callback=lambda v: win.on_fbc_bool_setting_changed("fix_zip", v)
+    )
+    add_setting_row(
+        l_adv,
+        tr("settings.lbl_fix_zip"),
+        tr("settings.desc_fix_zip"),
+        win.fix_zip_selector
+    )
     s_layout.addWidget(card_adv)
 
+def _build_images_section(win, s_layout):
     card_img, l_img = create_section_card(tr("settings.sec_images"))
     win.raster_fmt_selector = PillSelector(
         [(tr("settings.opt_auto"), "auto"), ("JPEG", "jpeg"), ("PNG", "png")],
@@ -501,6 +576,17 @@ def build_settings_page(win, parent):
         opt_widget
     )
 
+    win.image_scale_cb = QComboBox()
+    win.image_scale_cb.addItems(["0.5", "0.75", "1.0", "1.25", "1.5", "2.0"])
+    win.image_scale_cb.setCurrentText(str(win.app_settings.get("image_scale_factor", "1.0")))
+    win.image_scale_cb.currentTextChanged.connect(win.on_image_scale_changed)
+    add_setting_row(
+        l_img,
+        tr("settings.lbl_image_scale"),
+        tr("settings.desc_image_scale"),
+        win.image_scale_cb
+    )
+
     win.baseline_jpeg_selector = PillSelector(
         [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
         default=win.app_settings.get("baseline_jpeg", "false"),
@@ -537,6 +623,7 @@ def build_settings_page(win, parent):
     )
     s_layout.addWidget(card_img)
 
+def _build_save_section(win, s_layout):
     card_save, l_save = create_section_card(tr("settings.sec_save"))
     save_options = [
         (tr("settings.opt_save_source"), "source"),
@@ -576,6 +663,7 @@ def build_settings_page(win, parent):
     )
     s_layout.addWidget(card_save)
 
+def _build_appearance_section(win, s_layout):
     card_theme, l_theme = create_section_card(tr("settings.sec_appearance"))
     win.theme_selector = PillSelector(
         get_theme_choices(),
@@ -602,6 +690,7 @@ def build_settings_page(win, parent):
     )
     s_layout.addWidget(card_theme)
 
+def _build_email_section(win, s_layout):
     card_email, l_email = create_section_card(tr("settings.sec_email"))
 
     win.email_auto_selector = PillSelector(
@@ -718,6 +807,199 @@ def build_settings_page(win, parent):
     )
 
     s_layout.addWidget(card_email)
+
+def _build_device_sync_section(win, s_layout):
+    card_sync, l_sync = create_section_card(tr("settings.sec_device_sync"))
+
+    sync_mode = str(win.app_settings.get("device_sync_mode", "mtp"))
+    win.device_sync_mode_selector = PillSelector(
+        [
+            (tr("settings.opt_sync_mtp"), "mtp"),
+            (tr("settings.opt_sync_usb"), "usb"),
+            (tr("settings.opt_sync_folder"), "folder"),
+        ],
+        default=sync_mode,
+        callback=win.on_device_sync_mode_changed,
+    )
+    add_setting_row(
+        l_sync,
+        tr("settings.lbl_sync_mode"),
+        tr("settings.desc_sync_mode"),
+        win.device_sync_mode_selector,
+    )
+
+    sync_tgt_widget = QWidget()
+    sync_tgt_layout = QHBoxLayout(sync_tgt_widget)
+    sync_tgt_layout.setContentsMargins(0, 0, 0, 0)
+    sync_tgt_layout.setSpacing(8)
+    win.device_sync_target_edit = QLineEdit(str(win.app_settings.get("device_sync_target", "documents/books")))
+    win.device_sync_target_edit.setMinimumWidth(220)
+    win.device_sync_target_edit.textChanged.connect(win.on_device_sync_target_changed)
+    sync_tgt_layout.addWidget(win.device_sync_target_edit)
+
+    win.btn_choose_sync_target = QPushButton(tr("settings.btn_choose_dir"))
+    win.btn_choose_sync_target.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_choose_sync_target.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+    win.btn_choose_sync_target.setEnabled(sync_mode == "folder")
+    win.btn_choose_sync_target.setToolTip(
+        tr("settings.dlg_choose_sync_dir") if sync_mode == "folder" else tr("settings.tip_choose_sync_dir_mtp")
+    )
+    win.btn_choose_sync_target.clicked.connect(win.choose_device_sync_target_dir)
+    sync_tgt_layout.addWidget(win.btn_choose_sync_target)
+
+    add_setting_row(
+        l_sync,
+        tr("settings.lbl_sync_target"),
+        tr("settings.desc_sync_target"),
+        sync_tgt_widget,
+    )
+
+    win.device_sync_ignore_del_selector = PillSelector(
+        [(tr("settings.opt_on"), "true"), (tr("settings.opt_off"), "false")],
+        default=str(win.app_settings.get("device_sync_ignore_removals", "true")),
+        callback=win.on_device_sync_ignore_removals_changed,
+    )
+    add_setting_row(
+        l_sync,
+        tr("settings.lbl_sync_ignore_del"),
+        tr("settings.desc_sync_ignore_del"),
+        win.device_sync_ignore_del_selector,
+    )
+
+    sync_act_widget = QWidget()
+    sync_act_layout = QHBoxLayout(sync_act_widget)
+    sync_act_layout.setContentsMargins(0, 0, 0, 0)
+    sync_act_layout.setSpacing(8)
+
+    win.btn_sync_dry_run = QPushButton(tr("settings.btn_sync_dry_run"))
+    win.btn_sync_dry_run.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_sync_dry_run.clicked.connect(lambda: win.run_device_sync(dry_run=True))
+    sync_act_layout.addWidget(win.btn_sync_dry_run)
+
+    win.btn_sync_now = QPushButton(tr("settings.btn_sync_now"))
+    win.btn_sync_now.setObjectName("SecondaryButton")
+    win.btn_sync_now.setProperty("variant", "secondary")
+    win.btn_sync_now.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_sync_now.clicked.connect(lambda: win.run_device_sync(dry_run=False))
+    sync_act_layout.addWidget(win.btn_sync_now)
+
+    add_setting_row(
+        l_sync,
+        tr("settings.lbl_sync_action"),
+        tr("settings.desc_sync_action"),
+        sync_act_widget,
+    )
+
+    s_layout.addWidget(card_sync)
+
+def _build_metadata_lookup_section(win, s_layout):
+    card_lookup, l_lookup = create_section_card(tr("settings.sec_metadata_lookup"))
+
+    prov_widget = QWidget()
+    prov_layout = QHBoxLayout(prov_widget)
+    prov_layout.setContentsMargins(0, 0, 0, 0)
+    prov_layout.setSpacing(12)
+    active_provs = set(win.app_settings.get("metadata_providers") or DEFAULT_ENABLED_PROVIDERS)
+    win.lookup_provider_checks = {}
+    for pid in DEFAULT_PROVIDER_ORDER:
+        label = PROVIDER_LABELS.get(pid, pid)
+        chk = QCheckBox(label)
+        chk.setChecked(pid in active_provs)
+        chk.setCursor(Qt.CursorShape.PointingHandCursor)
+        chk.toggled.connect(lambda checked, p=pid: win.on_metadata_provider_toggled(p, checked))
+        prov_layout.addWidget(chk)
+        win.lookup_provider_checks[pid] = chk
+
+    add_setting_row(
+        l_lookup,
+        tr("settings.lbl_lookup_providers"),
+        tr("settings.desc_lookup_providers"),
+        prov_widget,
+    )
+
+    win.google_books_key_edit = QLineEdit(str(win.app_settings.get("google_books_api_key", "")))
+    win.google_books_key_edit.setPlaceholderText(tr("settings.ph_google_books_key"))
+    win.google_books_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+    win.google_books_key_edit.setMinimumWidth(260)
+    win.google_books_key_edit.textChanged.connect(win.on_google_books_key_changed)
+    add_setting_row(
+        l_lookup,
+        tr("settings.lbl_google_books_key"),
+        tr("settings.desc_google_books_key"),
+        win.google_books_key_edit,
+    )
+
+    win.opds_url_edit = QLineEdit(str(win.app_settings.get("opds_url", "")))
+    win.opds_url_edit.setPlaceholderText(tr("settings.ph_opds_url"))
+    win.opds_url_edit.setMinimumWidth(280)
+    win.opds_url_edit.textChanged.connect(lambda v: win.on_opds_field_changed("opds_url", v))
+    add_setting_row(
+        l_lookup,
+        tr("settings.lbl_opds_url"),
+        tr("settings.desc_opds_url"),
+        win.opds_url_edit,
+    )
+
+    opds_auth_widget = QWidget()
+    opds_auth_layout = QHBoxLayout(opds_auth_widget)
+    opds_auth_layout.setContentsMargins(0, 0, 0, 0)
+    opds_auth_layout.setSpacing(8)
+
+    win.opds_user_edit = QLineEdit(str(win.app_settings.get("opds_username", "")))
+    win.opds_user_edit.setPlaceholderText(tr("settings.ph_opds_user"))
+    win.opds_user_edit.setFixedWidth(160)
+    win.opds_user_edit.textChanged.connect(lambda v: win.on_opds_field_changed("opds_username", v))
+    opds_auth_layout.addWidget(win.opds_user_edit)
+
+    win.opds_pass_edit = QLineEdit(str(win.app_settings.get("opds_password", "")))
+    win.opds_pass_edit.setPlaceholderText(tr("settings.ph_opds_pass"))
+    win.opds_pass_edit.setEchoMode(QLineEdit.EchoMode.Password)
+    win.opds_pass_edit.setFixedWidth(160)
+    win.opds_pass_edit.textChanged.connect(lambda v: win.on_opds_field_changed("opds_password", v))
+    opds_auth_layout.addWidget(win.opds_pass_edit)
+
+    add_setting_row(
+        l_lookup,
+        tr("settings.lbl_opds_auth"),
+        tr("settings.desc_opds_auth"),
+        opds_auth_widget,
+    )
+
+    if not is_secure_password_storage_available():
+        lbl_lookup_kr_warn = QLabel(tr("settings.lookup_keyring_warning"))
+        lbl_lookup_kr_warn.setObjectName("RowDesc")
+        lbl_lookup_kr_warn.setWordWrap(True)
+        lbl_lookup_kr_warn.setStyleSheet("color: #f59e0b;")
+        l_lookup.addWidget(lbl_lookup_kr_warn)
+
+    s_layout.addWidget(card_lookup)
+
+
+def build_settings_page(win, parent):
+    layout = QVBoxLayout(parent)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(12)
+
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll_content = QWidget()
+    scroll_content.setObjectName("ScrollContent")
+    scroll_content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    s_layout = QVBoxLayout(scroll_content)
+    s_layout.setContentsMargins(0, 0, 8, 0)
+    s_layout.setSpacing(16)
+
+    _build_presets_section(win, s_layout)
+    _build_format_section(win, s_layout)
+    _build_text_layout_section(win, s_layout)
+    _build_adv_convert_section(win, s_layout)
+    _build_images_section(win, s_layout)
+    _build_save_section(win, s_layout)
+    _build_appearance_section(win, s_layout)
+    _build_email_section(win, s_layout)
+    _build_device_sync_section(win, s_layout)
+    _build_metadata_lookup_section(win, s_layout)
+
     s_layout.addStretch()
     scroll.setWidget(scroll_content)
     layout.addWidget(scroll, 1)

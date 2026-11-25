@@ -30,8 +30,15 @@ FBC_BIN = os.path.join(PROJECT_ROOT, "fbc.exe" if os.name == "nt" else "fbc")
 
 class TestConfig(unittest.TestCase):
     def test_default_output_name_template_backslash_escaping(self):
-        self.assertIn('replace "\\\\" "\u2215" $title', DEFAULT_OUTPUT_NAME_TEMPLATE)
+        from core.config import DEFAULT_TITLE_META_TEMPLATE
+
+        self.assertIn('replace "\\\\" "\u2215" $out', DEFAULT_OUTPUT_NAME_TEMPLATE)
+        self.assertIn('replace "/" "\u2215" $out', DEFAULT_OUTPUT_NAME_TEMPLATE)
         self.assertNotIn('replace "\\" ', DEFAULT_OUTPUT_NAME_TEMPLATE)
+        self.assertIn("index .Series 0", DEFAULT_OUTPUT_NAME_TEMPLATE)
+        self.assertNotIn('join "/" $seriesPath', DEFAULT_OUTPUT_NAME_TEMPLATE)
+        self.assertIn("index .Series 0", DEFAULT_TITLE_META_TEMPLATE)
+        self.assertNotIn('join "/" $seriesPath', DEFAULT_TITLE_META_TEMPLATE)
 
     def test_device_profiles_complete(self):
         for key in (
@@ -266,6 +273,119 @@ class TestConfig(unittest.TestCase):
             settings_path = os.path.join(td, "settings.json")
             atomic_write_text(settings_path, '{"ok": true}')
             self.assertEqual(stat.S_IMODE(os.stat(settings_path).st_mode), 0o600)
+
+    def test_load_app_settings_preserves_custom_theme_family(self):
+        with tempfile.TemporaryDirectory() as td:
+            sp = os.path.join(td, "settings.json")
+            with open(sp, "w", encoding="utf-8") as f:
+                json.dump({"theme": "Sepia", "theme_family": "Sepia", "theme_mode": "dark", "language": "ru"}, f)
+
+            st = get_default_app_settings()
+            custom_choices = [("Modern", "Modern"), ("Golden", "Golden"), ("Sepia", "Sepia")]
+            with patch("core.config.get_theme_choices", return_value=custom_choices), patch(
+                "core.config._load_smtp_password_secure", return_value=""
+            ), patch("core.config._save_smtp_password_secure", return_value=True):
+                load_app_settings(sp, st)
+
+            self.assertEqual(st["theme"], "Sepia")
+            self.assertEqual(st["theme_family"], "Sepia")
+            self.assertEqual(st["theme_mode"], "dark")
+
+    def test_extended_fbc_config_v210_roundtrip(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = os.path.join(td, "config.yaml")
+            shutil.copy2(BASE_CONFIG_YAML, cfg)
+
+            st = get_default_app_settings()
+            st.update(
+                {
+                    "annotation_in_toc": "true",
+                    "toc_type": "flat",
+                    "toc_include_untitled": "true",
+                    "page_map_enable": "true",
+                    "page_map_size": "1800",
+                    "page_map_adobe_de": "true",
+                    "fix_zip": "true",
+                    "image_scale_factor": "0.75",
+                }
+            )
+            update_fbc_config_file(cfg, BASE_CSS_PATH, st)
+
+            loaded = get_default_app_settings()
+            sync_settings_from_fbc_config(cfg, loaded)
+
+            for key in (
+                "annotation_in_toc",
+                "toc_type",
+                "toc_include_untitled",
+                "page_map_enable",
+                "page_map_size",
+                "page_map_adobe_de",
+                "fix_zip",
+                "image_scale_factor",
+            ):
+                self.assertEqual(loaded[key], st[key], f"Mismatch for {key}")
+
+            if os.path.isfile(FBC_BIN):
+                out_cfg = os.path.join(td, "active.yaml")
+                res = subprocess.run(
+                    [FBC_BIN, "-c", cfg, "dumpconfig", out_cfg],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(res.returncode, 0, res.stderr or res.stdout)
+
+    def test_google_books_api_key_secure_storage_and_providers_roundtrip(self):
+        with tempfile.TemporaryDirectory() as td:
+            sp = os.path.join(td, "settings.json")
+            st = get_default_app_settings()
+            st["metadata_providers"] = ["fantlab", "openlibrary", "googlebooks"]
+            st["google_books_api_key"] = "AIzaTestKey123"
+
+            stored = {}
+
+            def _fake_save_gb(key):
+                stored["gb"] = key
+                return True
+
+            with patch("core.config._save_smtp_password_secure", return_value=True), \
+                 patch("core.config._save_google_books_key_secure", side_effect=_fake_save_gb):
+                save_app_settings(sp, st)
+
+            with open(sp, encoding="utf-8") as f:
+                raw_saved = json.load(f)
+            self.assertEqual(raw_saved["google_books_api_key"], "")
+            self.assertEqual(raw_saved["metadata_providers"], ["fantlab", "openlibrary", "googlebooks"])
+            self.assertEqual(stored["gb"], "AIzaTestKey123")
+
+            loaded = get_default_app_settings()
+            with patch("core.config._load_smtp_password_secure", return_value=""), \
+                 patch("core.config._save_smtp_password_secure", return_value=True), \
+                 patch("core.config._load_google_books_key_secure", return_value=stored["gb"]), \
+                 patch("core.config._save_google_books_key_secure", return_value=True):
+                load_app_settings(sp, loaded)
+
+            self.assertEqual(loaded["google_books_api_key"], "AIzaTestKey123")
+            self.assertEqual(loaded["metadata_providers"], ["fantlab", "openlibrary", "googlebooks"])
+
+
+    def test_keychain_account_validation_rejects_unsafe_names(self):
+        from core.config import _load_secret_secure, _save_secret_secure
+
+        self.assertFalse(_save_secret_secure('bad"account', "val"))
+        self.assertFalse(_save_secret_secure("bad\naccount", "val"))
+        self.assertIsNone(_load_secret_secure("../bad"))
+
+    def test_keychain_macos_subprocess_uses_timeout_and_handles_expiry(self):
+        from core.config import _load_secret_secure, _save_secret_secure
+
+        with patch("core.config.HAS_KEYRING", False), patch(
+            "core.config.sys.platform", "darwin"
+        ), patch("core.config.subprocess.run", side_effect=subprocess.TimeoutExpired(["security"], 5)) as mock_run:
+            self.assertFalse(_save_secret_secure("smtp_password", "secret"))
+            self.assertEqual(mock_run.call_args.kwargs.get("timeout"), 5)
+            self.assertIsNone(_load_secret_secure("smtp_password"))
+            self.assertEqual(mock_run.call_args.kwargs.get("timeout"), 5)
 
 
 if __name__ == "__main__":

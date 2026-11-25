@@ -369,7 +369,10 @@ class TestUpdater(unittest.TestCase):
                     fh,
                 )
 
-            update_manifest(manifest_path, td, "2.9.1", 75)
+            import contextlib
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                update_manifest(manifest_path, td, "2.9.1", 75)
             with open(manifest_path, encoding="utf-8") as fh:
                 updated = json.load(fh)
 
@@ -377,6 +380,47 @@ class TestUpdater(unittest.TestCase):
             self.assertEqual(updated["build"], 75)
             self.assertEqual(updated["assets"], {})
             self.assertEqual(updated["downloads"], {})
+
+
+    def test_safe_redirect_handler_blocks_downgrade_and_strips_headers_cross_origin(self):
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+        from core.updater import _SafeRedirectHandler
+
+        def _u(scheme, host, path):
+            return urllib.parse.urlunsplit((scheme, host, path, "", ""))
+
+        handler = _SafeRedirectHandler(require_https=True, max_redirects=2)
+        req = urllib.request.Request(
+            _u("https", "api.example.org", "/v1/books"),
+            headers={
+                "Authorization": "Bearer placeholder",
+                "X-Goog-Api-Key": "DEMO_KEY",
+                "Accept": "application/json",
+            },
+        )
+        with self.assertRaises(ValueError):
+            handler.redirect_request(req, None, 302, "Found", {}, _u("http", "api.example.org", "/v1/books"))
+        with self.assertRaises(ValueError):
+            handler.redirect_request(req, None, 302, "Found", {}, _u("ftp", "files.example.org", "/book.zip"))
+
+        new_req = handler.redirect_request(req, None, 302, "Found", {}, _u("https", "cdn.other.org", "/item"))
+        self.assertIsNotNone(new_req)
+        hdrs_low = {k.lower(): v for k, v in new_req.header_items()}
+        self.assertNotIn("authorization", hdrs_low)
+        self.assertNotIn("x-goog-api-key", hdrs_low)
+        self.assertEqual(hdrs_low.get("accept"), "application/json")
+
+        same_req = handler.redirect_request(req, None, 302, "Found", {}, _u("https", "api.example.org", "/v2/books"))
+        same_hdrs_low = {k.lower(): v for k, v in same_req.header_items()}
+        self.assertIn("authorization", same_hdrs_low)
+        self.assertIn("x-goog-api-key", same_hdrs_low)
+
+        req2 = handler.redirect_request(same_req, None, 302, "Found", {}, _u("https", "api.example.org", "/v3/books"))
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            handler.redirect_request(req2, None, 302, "Found", {}, _u("https", "api.example.org", "/v4/books"))
+        cm.exception.close()
 
 
 if __name__ == "__main__":

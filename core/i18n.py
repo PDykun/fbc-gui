@@ -154,8 +154,8 @@ def get_theme_choices():
         families = THEME_REGISTRY.discover_families()
         if families:
             return [(fam, fam) for fam in families]
-    except Exception:
-        pass
+    except Exception as e:
+        get_logger("i18n").debug("Не удалось получить список тем из реестра: %s", e)
     return [
         ("Golden", "Golden"),
         ("Modern", "Modern")

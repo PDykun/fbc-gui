@@ -20,6 +20,9 @@
 
 [Official Website](https://pashka.eu/fbc_gui/) •
 [Download Installers](https://github.com/PDykun/fbc-gui/releases) •
+[User Guide (EN)](docs/USER_GUIDE_EN.md) •
+[Руководство (RU)](docs/USER_GUIDE_RU.md) •
+[Release Notes](docs/README.md) •
 [Why FBC GUI?](#why-fbc-gui) •
 [Key Features](#key-features) •
 [How It Works](#how-it-works) •
@@ -67,14 +70,19 @@ Most FB2 conversion workflows force a trade-off: **Calibre** is heavy and uses a
 
 ### 🗂️ Batch Queue & Metadata Studio
 - **Non-blocking background import:** drag-and-drop folders, `.fb2`, or multi-book `.zip` archives with lazy on-demand XML loading to keep RAM usage low on large libraries.
-- **Inline table editing & batch dialogs:** edit Author (Last / First / Middle), Series, Series #, and Book Title directly in the table or across multiple selected books at once.
+- **Inline table editing & extended metadata studio:** edit Author (Last / First / Middle), Series, Series #, and Book Title directly in the table, or open the two-tab **Edit Book** / **Batch Edit** dialogs to manage **FB2 Genres** (searchable FictionBook 2.1 taxonomy + custom tags + Add/Replace/Remove batch modes), **Language**, **Translator** (preserving co-translators), **Publisher**, **ISBN** (with ISBN-10/13 validation), and **Annotation** (with rich-XML preservation when untouched).
+- **Online Cover & Metadata Lookup (`FantLab`, `LitRes`, `Open Library`, optional `Google Books` & custom `OPDS`):** fetch missing covers, series, genres, annotations, translators, publishers, and ISBNs directly from the cover panel (**Fetch Online**), context menu, or **Edit Book** dialog. Supports any standard **OPDS (Atom XML / OpenSearch)** catalog (Calibre-Web, Kavita, self-hosted archives, or public OPDS libraries) with optional Basic Auth, a **Current → Found** comparison table (**Empty Only / All Found / Cover Only**), a deduplicated cover gallery, and full Undo/Redo.
 - **Series auto-numbering & row ordering:** automatically number selected books (`1, 2, 3…`), sort by any column, or reorder rows via `Alt+↑` / `Alt+↓`.
-- **Full Undo / Redo (`QUndoStack`):** undo/redo every metadata edit, batch update, cover replacement, row reorder, removal, or list clear (`Cmd/Ctrl+Z`, `Shift+Cmd+Z` / `Ctrl+Y`).
-- **Real-time search & status filters:** instant filter (`Cmd/Ctrl+F`, `Esc` to reset) across filenames, authors, series, titles, and output names, paired with status pills (**All / Pending / Done / Errors**).
+- **Full Undo / Redo (`QUndoStack`):** undo/redo every metadata edit, online lookup, batch update, cover replacement, row reorder, removal, or list clear (`Cmd/Ctrl+Z`, `Shift+Cmd+Z` / `Ctrl+Y`).
+- **Pre-flight diagnostics, FB2 Structure Inspector & Auto-Repair:** lightweight import checks flag XML defects, missing covers, or empty metadata with a `⚠` badge and **⚠ Warnings** filter pill; open **FB2 Inspector...** from the context menu to inspect XML status, chapter TOC tree, footnote counts, and embedded images (`> 2 MB` / corrupted detection), run **Repair & Optimize FB2** (clean UTF-8 XML, strip broken binaries, downsize oversized images), or launch diagnostic report conversion in one click.
+- **Source FB2 Organizer (without conversion):** copy or move selected `.fb2` / `.fb2.zip` files into **Author / Series / File**, **Author / File**, or **Flat** folder layouts with a live **Before → After** preview table.
+- **Queue deduplication & skip existing:** automatically flags logical duplicates (by author, series, number, and title) with a one-click **Remove duplicates** action (Undo/Redo supported), and lets you toggle **Skip existing** to bypass already up-to-date output files (`↷ Skipped`).
+- **Real-time search & status filters:** instant filter (`Cmd/Ctrl+F`, `Esc` to reset) across filenames, authors, series, titles, genres, language, publisher, ISBN, and output names, paired with status pills (**All / Pending / Done / Errors / ⚠ Warnings**).
 - **Cover manager & save-back to source:** preview covers, replace with automatic `600×900 px` LANCZOS aspect-fit resizing, restore originals, and atomically write edited metadata & covers back into the original `.fb2` or `.zip` file.
 
 ### 🎨 Visual CSS & Live Book Preview
 - **Complete visual stylesheet builder (`ebook_styles.css`):** configure body/title/author/drop-cap fonts (or `None` to use e-reader system fonts), heading hierarchy (`H1–H5`), paragraph alignment & indents, drop caps, annotations, epigraphs, poems, footnotes (background & border), illustration widths, and PDF page frames.
+- **Built-in User Font Manager:** install custom `.ttf`, `.otf`, `.woff`, and `.woff2` fonts via the **+ Add Font...** button or direct Drag & Drop with magic-byte validation and instant picker/preview refresh.
 - **Two-page book-spread live preview:** renders your currently selected FB2 book as a realistic spread — full-bleed cover with spine shadow on the left page and title, annotation, epigraph, and opening chapter on the right — or a comprehensive style sample inside a native web view (**WKWebView** on macOS, **Edge WebView2** on Windows) or your system browser.
 - **E-Ink Grayscale preview:** toggle `Grayscale (Luma)` to inspect how illustrations and typography will look on monochrome e-ink screens.
 - **Automatic font embedding & weight isolation:** selected fonts from `fonts/` (including bundled open-source **PT Astra Serif** and **Pomorsky Unicode**) are automatically resolved with properly isolated Regular / Bold / Italic `@font-face` rules and embedded during conversion.
@@ -84,11 +92,12 @@ Most FB2 conversion workflows force a trade-off: **Calibre** is heavy and uses a
 - **Visual drag-and-drop template builders:** build Go templates visually using draggable metadata pills (`Last Name`, `First Name`, `Series`, `Series Abbr`, `Series #`, `Title`, `Format`) and custom separators for both:
   - **Output filenames** (`output_name_template`) with live preview (with & without series);
   - **E-reader library titles** (`metainformation.title_template`).
-- **Full `fb2cng` typography & image controls:** soft hyphenation, drop caps toggle, direct speech / dash / dialogue `text_transformations`, separate annotation page, visible TOC placement (`None / Before / After`), open-from-cover, auto-generated fallback covers, `--no-cover`, Baseline JPEG compatibility, SVG vector vs. raster toggle, transparency removal, grayscale, screen resolution & DPI.
+- **Full `fb2cng` typography, navigation & image controls:** soft hyphenation, drop caps toggle, direct speech / dash / dialogue `text_transformations`, separate annotation page & annotation-in-TOC, visible TOC placement (`None / Before / After`), TOC type (`Normal / Old Kindle / Flat`), untitled chapters in TOC, EPUB `page_map` (with Adobe DE mode), `fix_zip`, image `scale_factor` (`0.5–2.0`), open-from-cover, auto-generated fallback covers, `--no-cover`, Baseline JPEG compatibility, SVG vector vs. raster toggle, transparency removal, grayscale, screen resolution & DPI.
 
-### ✉️ Direct Send-to-Kindle & Email Delivery
+### ✉️ Direct Device Delivery (USB / MTP) & Send-to-Kindle (SMTP)
+- **USB / MTP & Mounted Folder Sync (`sync2kindle`):** deliver converted books straight to modern MTP Kindles (Scribe, PW12, Colorsoft), legacy USB Kindles via `sync2kindle` (`s2k`, auto-downloaded from GitHub with checksum verification), or mounted Kobo / PocketBook folders with **Dry Run** preview and local-file protection.
 - **Automatic SMTP delivery:** optionally email converted books straight to your Kindle / PocketBook / personal inbox right after conversion finishes, with automatic **20 MB batch splitting**, `certifi`-verified SSL / STARTTLS support, and a built-in **Send Test Email** check.
-- **Hardened OS-native secret storage:** SMTP passwords are stored securely in **macOS Keychain** (passed via `stdin`, never exposed in process arguments) or **Windows Credential Manager** via `keyring`, and are never exported in presets.
+- **Hardened OS-native secret storage:** SMTP passwords and optional Google Books API keys are stored securely in **macOS Keychain** (passed via `stdin`, never exposed in process arguments) or **Windows Credential Manager** via `keyring`, and are never exported in presets.
 
 ### 🖥️ Native Desktop Experience, Auto-Updates & Security
 - **Built-in GitHub Releases auto-updater (SHA-256 verified):** checks `releases/latest/download/version.json` via CDN (no API rate limits) automatically after launch or on demand via **Help → Check for Updates...** and the **About** page. Uses semantic versioning (`packaging.version`), detects your exact OS and CPU architecture (`macos-arm64`, `macos-x64`, `windows-x64`, `windows-arm64`), downloads in-app with MB progress and cancellation, verifies **SHA-256** checksums before launch, and applies updates natively (silent Inno Setup upgrade with auto-relaunch on Windows; auto-mounted `.dmg` in Finder on macOS).
@@ -164,13 +173,17 @@ flowchart LR
 
 ```text
 fbc-gui/
-├── fbc_gui.py              # Main window, menu actions, QFileOpenEvent & app orchestration
+├── fbc_gui.py              # Thin MainWindow coordinator, menu actions, QFileOpenEvent & app entry point
 ├── core/
+│   ├── fb2/                # Domain FB2 package (common, xml_io, templates, metadata, diagnostics, converter, organizer)
+│   ├── fb2_processor.py    # Backward-compatible facade re-exporting core/fb2/*
 │   ├── fbc_manager.py      # OS PATH discovery, --version & MD5/SHA256 check, GitHub auto-download
-│   ├── fb2_processor.py    # Resilient XXE-safe FB2/ZIP parser, cover autofit, Go-template generator
-│   ├── workers.py          # SingleInstanceManager, FileImportWorker, ConversionWorker, TestEmailWorker
+│   ├── s2k_manager.py      # sync2kindle (s2k) USB/MTP auto-manager & mounted-folder device sync
+│   ├── metadata_lookup.py  # Online cover & metadata lookup (FantLab, LitRes, Open Library, Google Books, OPDS)
+│   ├── fb2_genres.py       # Canonical FictionBook 2.1 genre groups, normalization & i18n lookup
+│   ├── workers.py          # Background workers (Import, Convert, TestEmail, DeviceSync, MetadataLookup, CoverFetch)
 │   ├── config.py           # Atomic settings.json/config.yaml sync, device profiles, Keychain/keyring
-│   ├── css_preview.py      # ebook_styles.css parser/generator & 2-page book-spread HTML preview
+│   ├── css_preview.py      # ebook_styles.css parser/generator & modular 2-page book-spread HTML preview
 │   ├── presets.py          # User & bundled *.fbcpreset.json manager (strips private credentials)
 │   ├── email_sender.py     # certifi-verified SMTP SSL/STARTTLS sender with 20 MB batching
 │   ├── undo_commands.py    # QUndoStack commands for metadata, covers, removals & reordering
@@ -178,15 +191,17 @@ fbc-gui/
 │   ├── i18n.py             # External JSON localization loader
 │   └── logger.py           # Application diagnostics logger
 ├── ui/
+│   ├── controllers/        # MainWindow controllers (settings, presets, preview, queue, conversion, updates)
+│   ├── dialogs/            # Modular themed dialogs (common, progress, book_edit, metadata_lookup, inspector, organizer, setup_update)
 │   ├── theme.py            # External QSS theme registry, PillSelector, ColorPicker, TemplateBuilder
-│   ├── dialogs.py          # Themed dialogs (Progress, FbcSetup, UpdateDownload, BookEdit, BatchEdit, Summary)
 │   ├── native_webview.py   # WKWebView (macOS) / Edge WebView2 (Windows) / fallback renderer
-│   └── pages/              # Converter, Styles, Preview, Settings, About views
+│   └── pages/              # Converter, Styles, Preview, Settings (sectioned), About views
 ├── themes/                 # modern_{dark,light}.qss & golden_{dark,light}.qss
 ├── locales/                # en.json & ru.json
 ├── presets_defaults/       # 8 built-in device presets
+├── docs/                   # Bilingual User Guides (EN/RU) & Release Notes
 ├── fonts/                  # PT Astra Serif & Pomorsky Unicode + OFL-1.1.txt
-└── tests/                  # 76 unit tests across core, UI, and worker modules
+└── tests/                  # 145 unit tests across core, controllers, UI, and worker modules
 ```
 
 </details>
@@ -217,10 +232,11 @@ Native prebuilt installers for all **4 supported platforms** are built automatic
 
 ### Prerequisites
 - **Python 3.11+** (tested on Python 3.12 on macOS and Windows)
+- **Optional:** `lxml` (`pip install lxml`) speeds up recovery of severely malformed FB2 files; without it, FBC GUI falls back cleanly to Python's built-in `xml.etree.ElementTree`.
 
 ### Setup & Launch
 ```bash
-git clone "[https://github.com/PDykun/fbc-gui.git](https://github.com/PDykun/fbc-gui.git)"
+git clone https://github.com/PDykun/fbc-gui.git
 cd fbc-gui
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate

@@ -27,6 +27,13 @@ def build_about_page(
     add_setting_row(c_layout, tr("about.lbl_name"), tr("about.desc_name"), QLabel(f"<b>{app_name}</b>"))
     add_setting_row(c_layout, tr("about.lbl_version"), tr("about.desc_version"), QLabel(f"<b>{app_version}</b>"))
 
+    win.btn_open_docs = QPushButton(tr("about.btn_open_docs"))
+    win.btn_open_docs.setObjectName("SecondaryButton")
+    win.btn_open_docs.setProperty("variant", "secondary")
+    win.btn_open_docs.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_open_docs.clicked.connect(win.open_user_guide)
+    add_setting_row(c_layout, tr("about.lbl_docs"), tr("about.desc_docs"), win.btn_open_docs)
+
     win.btn_check_updates = QPushButton(tr("about.btn_check_updates"))
     win.btn_check_updates.setCursor(Qt.CursorShape.PointingHandCursor)
     win.btn_check_updates.clicked.connect(lambda: win.check_for_updates(manual=True))

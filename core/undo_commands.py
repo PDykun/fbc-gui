@@ -1,10 +1,12 @@
 from PyQt6.QtGui import QUndoCommand
 
+from core.fb2_processor import copy_meta_dict
+
 
 def snapshot_book_state(data):
     """Создаёт снимок редактируемого состояния книги (метаданные + обложка)."""
     return {
-        "meta": dict(data.get("meta") or {}),
+        "meta": copy_meta_dict(data.get("meta") or {}),
         "cover_bytes": data.get("cover_bytes"),
         "cover_mime": data.get("cover_mime"),
         "cover_modified": bool(data.get("cover_modified", False)),
@@ -21,13 +23,13 @@ class UpdateBooksCommand(QUndoCommand):
             {
                 "item_id": ch["item_id"],
                 "before": {
-                    "meta": dict(ch["before"]["meta"]),
+                    "meta": copy_meta_dict(ch["before"]["meta"]),
                     "cover_bytes": ch["before"].get("cover_bytes"),
                     "cover_mime": ch["before"].get("cover_mime"),
                     "cover_modified": bool(ch["before"].get("cover_modified", False)),
                 },
                 "after": {
-                    "meta": dict(ch["after"]["meta"]),
+                    "meta": copy_meta_dict(ch["after"]["meta"]),
                     "cover_bytes": ch["after"].get("cover_bytes"),
                     "cover_mime": ch["after"].get("cover_mime"),
                     "cover_modified": bool(ch["after"].get("cover_modified", False)),
@@ -36,11 +38,20 @@ class UpdateBooksCommand(QUndoCommand):
             for ch in changes
         ]
 
+    @staticmethod
+    def _clone_snap(snap):
+        return {
+            "meta": copy_meta_dict(snap["meta"]),
+            "cover_bytes": snap.get("cover_bytes"),
+            "cover_mime": snap.get("cover_mime"),
+            "cover_modified": bool(snap.get("cover_modified", False)),
+        }
+
     def redo(self):
-        self._target._apply_book_snapshots([(ch["item_id"], ch["after"]) for ch in self._changes])
+        self._target._apply_book_snapshots([(ch["item_id"], self._clone_snap(ch["after"])) for ch in self._changes])
 
     def undo(self):
-        self._target._apply_book_snapshots([(ch["item_id"], ch["before"]) for ch in self._changes])
+        self._target._apply_book_snapshots([(ch["item_id"], self._clone_snap(ch["before"])) for ch in self._changes])
 
 
 class RemoveBooksCommand(QUndoCommand):

@@ -181,6 +181,77 @@ class TestWorkers(unittest.TestCase):
             self.assertFalse(mgr.try_send_to_running(["/tmp/a.fb2"]))
             self.assertFalse(mgr.start_server())
 
+    def test_conversion_worker_skips_existing_up_to_date_books(self):
+        import time
+
+        with tempfile.TemporaryDirectory() as td:
+            src_fb2 = os.path.join(td, "book.fb2")
+            out_dir = os.path.join(td, "out")
+            os.makedirs(out_dir, exist_ok=True)
+            with open(src_fb2, "wb") as fh:
+                fh.write(b"<FictionBook/>")
+
+            meta = {"last": "Толстой", "first": "Лев", "mid": "", "series": "", "num": "", "title": "Война и мир"}
+            target_file = os.path.join(out_dir, "Война и мир.epub")
+            with open(target_file, "wb") as fh:
+                fh.write(b"EPUB")
+            now = time.time()
+            os.utime(src_fb2, (now - 30, now - 30))
+            os.utime(target_file, (now, now))
+
+            item = {
+                "item_id": "row_1",
+                "path": src_fb2,
+                "display_name": "book.fb2",
+                "meta": dict(meta),
+                "orig_meta": dict(meta),
+                "cover_modified": False,
+            }
+            w = workers.ConversionWorker(
+                items=[item],
+                selected_format="epub3",
+                save_mode="custom",
+                custom_dir=out_dir,
+                title_style_params={},
+                compression=None,
+                email_enabled=False,
+                app_settings={"convert_workers": "1", "filename_mode": "default"},
+                skip_existing=True,
+            )
+            from PyQt6.QtCore import Qt
+            statuses = []
+            finished = []
+            w.item_status.connect(lambda iid, st, err: statuses.append((iid, st, err)), Qt.ConnectionType.DirectConnection)
+            w.finished_all.connect(lambda *args: finished.append(args), Qt.ConnectionType.DirectConnection)
+
+            with mock.patch.object(workers, "convert_book_file") as mock_conv:
+                w.run()
+
+            mock_conv.assert_not_called()
+            self.assertEqual(statuses, [("row_1", "skipped", "")])
+            self.assertEqual(w.skipped_count, 1)
+            self.assertEqual(finished, [(0, [], [], "", False, [])])
+
+
+    def test_single_instance_ipc_path_filtering(self):
+        from core.workers import SingleInstanceManager
+
+        with tempfile.TemporaryDirectory() as td:
+            fb2_p = os.path.join(td, "book.fb2")
+            zip_p = os.path.join(td, "book.zip")
+            ttf_p = os.path.join(td, "font.ttf")
+            txt_p = os.path.join(td, "note.txt")
+            for p in (fb2_p, zip_p, ttf_p, txt_p):
+                with open(p, "wb") as fh:
+                    fh.write(b"x")
+
+            self.assertTrue(SingleInstanceManager._is_allowed_ipc_path(td))
+            self.assertTrue(SingleInstanceManager._is_allowed_ipc_path(fb2_p))
+            self.assertTrue(SingleInstanceManager._is_allowed_ipc_path(zip_p))
+            self.assertTrue(SingleInstanceManager._is_allowed_ipc_path(ttf_p))
+            self.assertFalse(SingleInstanceManager._is_allowed_ipc_path(txt_p))
+            self.assertFalse(SingleInstanceManager._is_allowed_ipc_path(fb2_p + "\x00.txt"))
+
 
 if __name__ == "__main__":
     unittest.main()

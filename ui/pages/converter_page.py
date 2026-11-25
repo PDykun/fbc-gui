@@ -1,7 +1,7 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QTableWidget, QHeaderView, QFrame, QLineEdit
+    QTableWidget, QHeaderView, QFrame, QLineEdit, QCheckBox
 )
 
 from core.i18n import tr
@@ -84,6 +84,12 @@ def build_converter_page(win, parent):
     win.btn_convert.clicked.connect(win.convert_all)
     b_layout.addWidget(win.btn_convert)
 
+    win.btn_sync_device = QPushButton(tr("converter.btn_sync_device"))
+    win.btn_sync_device.setToolTip(tr("converter.btn_sync_device_tip"))
+    win.btn_sync_device.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_sync_device.clicked.connect(win.send_to_reader_clicked)
+    b_layout.addWidget(win.btn_sync_device)
+
     layout.addWidget(banner)
 
     content_card = QFrame()
@@ -114,6 +120,7 @@ def build_converter_page(win, parent):
             (tr("converter.filter_pending"), "pending"),
             (tr("converter.filter_ok"), "ok"),
             (tr("converter.filter_error"), "error"),
+            (tr("converter.filter_warnings"), "warnings"),
         ],
         default=getattr(win, "_table_status_filter", "all"),
         callback=win.on_status_filter_changed,
@@ -124,11 +131,28 @@ def build_converter_page(win, parent):
     win.lbl_filter_count.setObjectName("RowDesc")
     filter_bar.addWidget(win.lbl_filter_count)
 
+    win.chk_skip_existing = QCheckBox(tr("converter.chk_skip_existing"))
+    win.chk_skip_existing.setToolTip(tr("converter.chk_skip_existing_tip"))
+    win.chk_skip_existing.setChecked(str(win.app_settings.get("skip_existing", "false")).lower() == "true")
+    win.chk_skip_existing.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.chk_skip_existing.toggled.connect(win.on_skip_existing_toggled)
+    filter_bar.addWidget(win.chk_skip_existing)
+
+    win.btn_remove_duplicates = QPushButton(tr("converter.btn_remove_duplicates", count=0))
+    win.btn_remove_duplicates.setObjectName("SecondaryButton")
+    win.btn_remove_duplicates.setProperty("variant", "secondary")
+    win.btn_remove_duplicates.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_remove_duplicates.setVisible(False)
+    win.btn_remove_duplicates.clicked.connect(win.remove_duplicate_books)
+    filter_bar.addWidget(win.btn_remove_duplicates)
+
     win.btn_undo = QPushButton("↩")
     win.btn_undo.setObjectName("SecondaryButton")
     win.btn_undo.setProperty("variant", "secondary")
     win.btn_undo.setCursor(Qt.CursorShape.PointingHandCursor)
-    win.btn_undo.setFixedWidth(36)
+    win.btn_undo.setFixedSize(34, 30)
+    win.btn_undo.setStyleSheet("padding: 0px; font-size: 15px;")
+    win.btn_undo.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
     win.btn_undo.setToolTip(tr("converter.btn_undo"))
     win.btn_undo.setEnabled(False)
     win.btn_undo.clicked.connect(win.undo_last_action)
@@ -138,7 +162,9 @@ def build_converter_page(win, parent):
     win.btn_redo.setObjectName("SecondaryButton")
     win.btn_redo.setProperty("variant", "secondary")
     win.btn_redo.setCursor(Qt.CursorShape.PointingHandCursor)
-    win.btn_redo.setFixedWidth(36)
+    win.btn_redo.setFixedSize(34, 30)
+    win.btn_redo.setStyleSheet("padding: 0px; font-size: 15px;")
+    win.btn_redo.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
     win.btn_redo.setToolTip(tr("converter.btn_redo"))
     win.btn_redo.setEnabled(False)
     win.btn_redo.clicked.connect(win.redo_last_action)
@@ -216,6 +242,14 @@ def build_converter_page(win, parent):
     win.btn_reset_cover.setEnabled(False)
     win.btn_reset_cover.clicked.connect(win.reset_selected_cover)
     cover_box.addWidget(win.btn_reset_cover)
+
+    win.btn_lookup_online = QPushButton(tr("converter.btn_lookup_online"))
+    win.btn_lookup_online.setObjectName("SecondaryButton")
+    win.btn_lookup_online.setProperty("variant", "secondary")
+    win.btn_lookup_online.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_lookup_online.setEnabled(False)
+    win.btn_lookup_online.clicked.connect(win.lookup_selected_book_metadata)
+    cover_box.addWidget(win.btn_lookup_online)
 
     cover_box.addStretch()
 

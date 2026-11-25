@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-macos:
@@ -37,6 +37,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run unit tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          FBC_GUI_DISABLE_FILE_LOG: "1"
         run: python -m unittest discover -s tests -v
 
       - name: Build macOS app bundle and DMG (${{ matrix.arch }})
@@ -53,6 +56,7 @@ jobs:
             --clean \
             --windowed \
             --name "FBC GUI" \
+            --osx-bundle-identifier "eu.pashka.fbc-gui" \
             --icon "icon.icns" \
             --add-data "config.yaml:." \
             --add-data "ebook_styles.css:." \
@@ -180,6 +184,9 @@ jobs:
 
       - name: Run unit tests
         shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          FBC_GUI_DISABLE_FILE_LOG: "1"
         run: python -m unittest discover -s tests -v
 
       - name: Build FBC_GUI.exe with PyInstaller (${{ matrix.arch }})
@@ -356,6 +363,8 @@ jobs:
     needs: [build-macos, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -444,7 +453,12 @@ jobs:
 
           def extract_changelog_summary(ver):
               minor = ".".join(ver.split(".")[:2])
-              candidates = [f"RELEASE_NOTES_v{ver}.md", f"RELEASE_NOTES_v{minor}.md"]
+              candidates = [
+                  f"docs/RELEASE_NOTES_v{ver}.md",
+                  f"docs/RELEASE_NOTES_v{minor}.md",
+                  f"RELEASE_NOTES_v{ver}.md",
+                  f"RELEASE_NOTES_v{minor}.md",
+              ]
               text = ""
               for cand in candidates:
                   if os.path.isfile(cand):
@@ -485,7 +499,11 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VER_NO_V="${TAG#v}"
           MINOR_VER="${VER_NO_V%.*}"
-          if [ -f "RELEASE_NOTES_v${VER_NO_V}.md" ]; then
+          if [ -f "docs/RELEASE_NOTES_v${VER_NO_V}.md" ]; then
+            NOTES_FILE="docs/RELEASE_NOTES_v${VER_NO_V}.md"
+          elif [ -f "docs/RELEASE_NOTES_v${MINOR_VER}.md" ]; then
+            NOTES_FILE="docs/RELEASE_NOTES_v${MINOR_VER}.md"
+          elif [ -f "RELEASE_NOTES_v${VER_NO_V}.md" ]; then
             NOTES_FILE="RELEASE_NOTES_v${VER_NO_V}.md"
           else
             NOTES_FILE="RELEASE_NOTES_v${MINOR_VER}.md"
@@ -494,6 +512,10 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists, uploading/replacing assets..."
             gh release upload "$TAG" release_assets/* --clobber
+            if [ -f "$NOTES_FILE" ]; then
+              echo "Updating release notes from $NOTES_FILE..."
+              gh release edit "$TAG" --notes-file "$NOTES_FILE"
+            fi
           elif [ -f "$NOTES_FILE" ]; then
             gh release create "$TAG" release_assets/* \
               --draft \

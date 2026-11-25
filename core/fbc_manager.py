@@ -4,7 +4,6 @@ import os
 import platform
 import re
 import shutil
-import ssl
 import subprocess
 import sys
 import tarfile
@@ -17,11 +16,11 @@ import zipfile
 
 from core.config import atomic_write_text
 from core.logger import get_logger
-from core.updater import is_safe_http_url, parse_version_tuple
+from core.updater import _build_ssl_context, is_safe_http_url, parse_version_tuple, safe_urlopen
 
 MAX_HTTP_META_BYTES = 2 * 1024 * 1024
 MAX_ARCHIVE_BIN_BYTES = 256 * 1024 * 1024
-FBC_HTTP_USER_AGENT = "FBC-GUI/2.9"
+FBC_HTTP_USER_AGENT = "FBC-GUI/2.10"
 
 try:
     from PyQt6.QtCore import QThread, pyqtSignal
@@ -267,14 +266,6 @@ def inspect_fbc_binary(filepath, timeout=5):
         return result
 
 
-def _build_ssl_context():
-    try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        return ssl.create_default_context()
-
-
 def _http_get_bytes(url, timeout=10, headers=None, max_bytes=MAX_HTTP_META_BYTES):
     if not is_safe_http_url(url, allow_relative=False, require_https=True):
         raise ValueError(f"Unsupported URL scheme: {url}")
@@ -286,7 +277,7 @@ def _http_get_bytes(url, timeout=10, headers=None, max_bytes=MAX_HTTP_META_BYTES
         req_headers.update(headers)
     req = urllib.request.Request(url, headers=req_headers)
     ctx = _build_ssl_context()
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+    with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True) as resp:
         data = resp.read(max_bytes + 1)
     if len(data) > max_bytes:
         raise ValueError(f"Response from {url} exceeds size limit ({max_bytes} bytes)")
@@ -496,8 +487,8 @@ def verify_binary_against_github(info, user_data_dir=None, check_github=True, ti
         code = e.code
         try:
             e.close()
-        except Exception:
-            pass
+        except Exception as close_err:
+            logger.debug("Не удалось закрыть HTTP-ответ ошибки: %s", close_err)
         if code == 404:
             return {"verified": False, "source": "github", "reason": "unknown_release"}
         logger.warning("GitHub API недоступен при проверке fbc v%s (HTTP %s)", version, code)
@@ -603,8 +594,8 @@ def download_and_install_fbc(
         if code == 404 and target_version != "latest":
             try:
                 e.close()
-            except Exception:
-                pass
+            except Exception as close_err:
+                logger.debug("Не удалось закрыть HTTP-ответ 404: %s", close_err)
             release = fetch_github_release(version="latest", timeout=15)
         else:
             raise
@@ -632,7 +623,7 @@ def download_and_install_fbc(
         ctx = _build_ssl_context()
 
         downloaded = 0
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp, open(archive_path, "wb") as out_fh:
+        with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True) as resp, open(archive_path, "wb") as out_fh:
             try:
                 total = max(0, int(resp.headers.get("Content-Length") or expected_size or 0))
             except (TypeError, ValueError):

@@ -229,6 +229,69 @@ class TestCssPreview(unittest.TestCase):
             self.assertIn('<div class="page-num">2</div>', html_out)
             self.assertNotIn('<div class="page-num">1</div>', html_out)
 
+    def test_install_user_fonts_validates_and_copies(self):
+        from core.css_preview import install_user_fonts, is_valid_font_file
+
+        with tempfile.TemporaryDirectory() as td:
+            src_dir = os.path.join(td, "src")
+            dst_dir = os.path.join(td, "fonts")
+            os.makedirs(src_dir, exist_ok=True)
+
+            good_ttf = os.path.join(src_dir, "Good.ttf")
+            good_otf = os.path.join(src_dir, "Good.otf")
+            bad_magic = os.path.join(src_dir, "Corrupt.ttf")
+            bad_ext = os.path.join(src_dir, "Notes.txt")
+
+            with open(good_ttf, "wb") as fh:
+                fh.write(b"\x00\x01\x00\x00" + b"\x00" * 16)
+            with open(good_otf, "wb") as fh:
+                fh.write(b"OTTO" + b"\x00" * 16)
+            with open(bad_magic, "wb") as fh:
+                fh.write(b"NOTAFONT1234")
+            with open(bad_ext, "wb") as fh:
+                fh.write(b"\x00\x01\x00\x00" + b"\x00" * 16)
+
+            self.assertTrue(is_valid_font_file(good_ttf))
+            self.assertTrue(is_valid_font_file(good_otf))
+            self.assertFalse(is_valid_font_file(bad_magic))
+            self.assertFalse(is_valid_font_file(bad_ext))
+
+            installed, errors = install_user_fonts([good_ttf, good_otf, bad_magic, bad_ext], dst_dir)
+            self.assertEqual(installed, ["Good.ttf", "Good.otf"])
+            self.assertEqual([name for name, _ in errors], ["Corrupt.ttf", "Notes.txt"])
+            self.assertTrue(os.path.isfile(os.path.join(dst_dir, "Good.ttf")))
+            self.assertTrue(os.path.isfile(os.path.join(dst_dir, "Good.otf")))
+            self.assertFalse(os.path.exists(os.path.join(dst_dir, "Corrupt.ttf")))
+
+
+    def test_css_and_preview_sanitization_strips_unsafe_tokens(self):
+        from core.css_preview import DEFAULT_CSS_UI_STATE, build_full_preview_html, generate_css_content
+
+        unsafe_state = dict(DEFAULT_CSS_UI_STATE)
+        unsafe_state["h1_cl"] = "red; } <bad>"
+        unsafe_state["note_bg"] = "url(https://untrusted.example/bg.png)"
+        unsafe_state["font_para"] = "../parent/custom.ttf\"; }"
+
+        with tempfile.TemporaryDirectory() as td:
+            css = generate_css_content(unsafe_state, td)
+            self.assertNotIn("<bad>", css)
+            self.assertNotIn("untrusted.example", css)
+            self.assertNotIn("../", css)
+
+            html_doc = build_full_preview_html(
+                unsafe_state,
+                {"para": "Georgia", "title": "Georgia", "author": "Georgia", "drop": "Georgia"},
+                "SVG",
+                td,
+                "FBC GUI",
+                "2.10",
+                "justify",
+                "center",
+                for_browser=True,
+            )
+            self.assertNotIn("<bad>", html_doc)
+            self.assertNotIn("untrusted.example", html_doc)
+
 
 if __name__ == "__main__":
     unittest.main()

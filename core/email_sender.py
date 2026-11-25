@@ -1,9 +1,9 @@
 import os
-import ssl
 import smtplib
 from email.message import EmailMessage
 
 from core.i18n import tr
+from core.updater import _build_ssl_context
 
 
 MAX_EMAIL_ATTACHMENTS_BYTES = 20 * 1024 * 1024  # 20 МБ на одно письмо (запас под base64/MIME)
@@ -20,15 +20,6 @@ def _normalize_smtp_security(raw_value):
     if val in ("ssl", "starttls", "none"):
         return val
     raise ValueError(f"Unsupported smtp_security value: {raw_value!r}")
-
-
-def _build_ssl_context():
-    """Создаёт SSL-контекст с актуальным набором сертификатов certifi (при наличии)."""
-    try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        return ssl.create_default_context()
 
 
 def is_smtp_configured(app_settings):

@@ -80,6 +80,38 @@ class TestThemeRegistry(unittest.TestCase):
         finally:
             dlg.deleteLater()
 
+    def test_book_inspector_dialog_renders_tabs_and_debug_action(self):
+        from PyQt6.QtWidgets import QApplication
+        from ui.dialogs import BookInspectorDialog
+
+        app = QApplication.instance() or QApplication([])
+        self.assertIsNotNone(app)
+        report = {
+            "encoding": "utf-8",
+            "file_size_bytes": 4096,
+            "xml_valid_strict": False,
+            "xml_recovered": True,
+            "warnings": [{"code": "broken_xml", "severity": "warning", "count": 1}],
+            "toc": [{"title": "Глава 1", "children": [{"title": "Сцена 1.1", "children": []}]}],
+            "chapter_count": 2,
+            "paragraph_count": 12,
+            "footnotes_count": 3,
+            "images": [
+                {"id": "cover.jpg", "content_type": "image/jpeg", "size_bytes": 2048, "width": 600, "height": 900, "valid": True, "oversized": False, "is_cover": True},
+            ],
+            "total_images_bytes": 2048,
+        }
+        dlg = BookInspectorDialog(None, "sample.fb2", report)
+        try:
+            self.assertEqual(dlg.tabs.count(), 3)
+            self.assertEqual(dlg.toc_tree.topLevelItemCount(), 1)
+            self.assertEqual(dlg.media_table.rowCount(), 1)
+            self.assertFalse(dlg.debug_requested)
+            dlg._on_debug_clicked()
+            self.assertTrue(dlg.debug_requested)
+        finally:
+            dlg.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()

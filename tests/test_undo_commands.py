@@ -139,6 +139,28 @@ class TestUndoCommands(unittest.TestCase):
         stack.redo()
         self.assertEqual(target.order, ["2", "1", "3"])
 
+    def test_update_books_command_deep_copies_genres_list(self):
+        b_data = _make_book("Фэнтези")
+        b_data["meta"]["genres"] = ["sf_fantasy"]
+        target = _DummyQueueTarget([("1", b_data)])
+        stack = QUndoStack()
+
+        before = snapshot_book_state(target.files_data["1"])
+        after_meta = {**before["meta"], "genres": ["sf_fantasy", "litrpg"], "lang": "ru"}
+        after = {**before, "meta": after_meta}
+
+        stack.push(UpdateBooksCommand(target, [{"item_id": "1", "before": before, "after": after}], "Edit genres"))
+        # Мутация списка на месте не должна портить снимки Undo/Redo
+        target.files_data["1"]["meta"]["genres"].append("mutated_in_place")
+
+        stack.undo()
+        self.assertEqual(target.files_data["1"]["meta"]["genres"], ["sf_fantasy"])
+        self.assertNotIn("lang", target.files_data["1"]["meta"])
+
+        stack.redo()
+        self.assertEqual(target.files_data["1"]["meta"]["genres"], ["sf_fantasy", "litrpg"])
+        self.assertEqual(target.files_data["1"]["meta"]["lang"], "ru")
+
 
 if __name__ == "__main__":
     unittest.main()

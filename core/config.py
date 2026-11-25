@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import stat
 import sys
 import json
@@ -30,80 +31,63 @@ except ImportError:
 
 KEYRING_SERVICE = "FBC_GUI"
 KEYRING_SMTP_ACCOUNT = "smtp_password"
+KEYRING_GOOGLE_BOOKS_ACCOUNT = "google_books_api_key"
+KEYRING_OPDS_ACCOUNT = "opds_password"
+_KEYCHAIN_ACCOUNT_RE = re.compile(r"^[a-z0-9_]+$")
 
 from core.i18n import LOCALE, get_theme_choices
 from core.fb2_processor import (
     DEFAULT_FILENAME_TOKENS, DEFAULT_TITLE_TOKENS, build_fbc_output_name_template
 )
 from core.logger import get_logger
+from core.metadata_lookup import DEFAULT_ENABLED_PROVIDERS
 
 logger = get_logger("config")
 
 DEFAULT_OUTPUT_FORMAT = "epub3"
 
-DEFAULT_OUTPUT_NAME_TEMPLATE = """    {{- if gt (len .Series) 0 -}}
-    {{-   $seriesPath := list -}}
-    {{-   $seriesNumber := 0 -}}
-    {{-   $currentParent := -1 -}}
-    {{-   $hasNested := false -}}
-    {{-   range .Series -}}
-    {{-     if ge .Parent 0 -}}{{ $hasNested = true }}{{- end -}}
-    {{-   end -}}
-    {{-   range $index, $series := .Series -}}
-    {{-     if or (not $hasNested) (eq $index 0) (eq $series.Parent $currentParent) -}}
-    {{-       $seriesLetters := list -}}
-    {{-       range $word := splitList " " $series.Name -}}
-    {{-       $seriesLetters = append $seriesLetters (upper (first (splitList "" $word))) -}}
-    {{-       end -}}
-    {{-       if gt (len $seriesLetters) 0 -}}
-    {{-         $seriesPath = append $seriesPath (join "" $seriesLetters) -}}
-    {{-         $seriesNumber = $series.Number -}}
-    {{-         $currentParent = $index -}}
-    {{-       end -}}
+DEFAULT_OUTPUT_NAME_TEMPLATE = """    {{- $prefix := "" -}}
+    {{- if gt (len .Series) 0 -}}
+    {{-   $s := index .Series 0 -}}
+    {{-   $letters := list -}}
+    {{-   range $w := splitList " " $s.Name -}}
+    {{-     if $w -}}
+    {{-       $letters = append $letters (upper (first (splitList "" $w))) -}}
     {{-     end -}}
     {{-   end -}}
-    {{-   if gt (len $seriesPath) 0 -}}
-    {{-     "(" }}{{- join "/" $seriesPath -}}
-    {{-     if gt $seriesNumber 0 -}}
-    {{-       printf " - %02d" $seriesNumber -}}
+    {{-   $abbr := join "" $letters -}}
+    {{-   if $abbr -}}
+    {{-     if gt $s.Number 0 -}}
+    {{-       $prefix = printf "(%s - %02d) " $abbr $s.Number -}}
+    {{-     else -}}
+    {{-       $prefix = printf "(%s) " $abbr -}}
     {{-     end -}}
-    {{-     ") " -}}
     {{-   end -}}
     {{- end -}}
-    {{- $title := replace "/" "\u2215" .Title -}}
-    {{- $title = replace "\\\\" "\u2215" $title -}}
-    {{  $title -}}"""
+    {{- $out := printf "%s%s" $prefix .Title -}}
+    {{- $out = replace "/" "\u2215" $out -}}
+    {{- $out = replace "\\\\" "\u2215" $out -}}
+    {{  $out -}}"""
 
-DEFAULT_TITLE_META_TEMPLATE = """    {{- if gt (len .Series) 0 -}}
-    {{-   $seriesPath := list -}}
-    {{-   $seriesNumber := 0 -}}
-    {{-   $currentParent := -1 -}}
-    {{-   $hasNested := false -}}
-    {{-   range .Series -}}
-    {{-     if ge .Parent 0 -}}{{ $hasNested = true }}{{- end -}}
-    {{-   end -}}
-    {{-   range $index, $series := .Series -}}
-    {{-     if or (not $hasNested) (eq $index 0) (eq $series.Parent $currentParent) -}}
-    {{-       $seriesLetters := list -}}
-    {{-       range $word := splitList " " $series.Name -}}
-    {{-       $seriesLetters = append $seriesLetters (upper (first (splitList "" $word))) -}}
-    {{-       end -}}
-    {{-       if gt (len $seriesLetters) 0 -}}
-    {{-         $seriesPath = append $seriesPath (join "" $seriesLetters) -}}
-    {{-         $seriesNumber = $series.Number -}}
-    {{-         $currentParent = $index -}}
-    {{-       end -}}
+DEFAULT_TITLE_META_TEMPLATE = """    {{- $prefix := "" -}}
+    {{- if gt (len .Series) 0 -}}
+    {{-   $s := index .Series 0 -}}
+    {{-   $letters := list -}}
+    {{-   range $w := splitList " " $s.Name -}}
+    {{-     if $w -}}
+    {{-       $letters = append $letters (upper (first (splitList "" $w))) -}}
     {{-     end -}}
     {{-   end -}}
-    {{-   if gt (len $seriesPath) 0 -}}
-    {{-     "(" }}{{- join "/" $seriesPath -}}
-    {{-     if gt $seriesNumber 0 -}}
-    {{-       printf " - %02d" $seriesNumber -}}
+    {{-   $abbr := join "" $letters -}}
+    {{-   if $abbr -}}
+    {{-     if gt $s.Number 0 -}}
+    {{-       $prefix = printf "(%s - %02d) " $abbr $s.Number -}}
+    {{-     else -}}
+    {{-       $prefix = printf "(%s) " $abbr -}}
     {{-     end -}}
-    {{-     ") " -}}
     {{-   end -}}
     {{- end -}}
-    {{  .Title -}}"""
+    {{  printf "%s%s" $prefix .Title -}}"""
 
 LEGACY_THEME_MAP = {
     "Tuck Midnight": "Golden",
@@ -253,10 +237,18 @@ def get_default_app_settings():
         "text_transform_dashes": "false",
         "text_transform_dialogue": "false",
         "annotation_enable": "true",
+        "annotation_in_toc": "false",
+        "toc_type": "normal",
         "toc_page_placement": "after",
+        "toc_include_untitled": "false",
+        "page_map_enable": "true",
+        "page_map_size": "2300",
+        "page_map_adobe_de": "false",
+        "fix_zip": "false",
         "open_from_cover": "true",
         "cover_generate": "false",
         "no_cover": "false",
+        "skip_existing": "false",
         "filename_mode": "default",
         "filename_tokens": [dict(t) for t in DEFAULT_FILENAME_TOKENS],
         "title_template_mode": "default",
@@ -271,6 +263,7 @@ def get_default_app_settings():
         "raster_format": "auto",
         "rasterize_svg": "false",
         "remove_transparency": "false",
+        "image_scale_factor": "1.0",
         "optimize_images": "true",
         "jpeg_quality_level": "95",
         "baseline_jpeg": "false",
@@ -285,6 +278,14 @@ def get_default_app_settings():
         "smtp_password": "",
         "email_from": "",
         "email_to": "",
+        "device_sync_mode": "mtp",
+        "device_sync_target": "documents/books",
+        "device_sync_ignore_removals": "true",
+        "metadata_providers": list(DEFAULT_ENABLED_PROVIDERS),
+        "google_books_api_key": "",
+        "opds_url": "",
+        "opds_username": "",
+        "opds_password": "",
         "last_update_check": 0
     }
 
@@ -468,28 +469,31 @@ def migrate_fbc_config_211(cfg_path, css_path):
 migrate_fbc_config_192 = migrate_fbc_config_211
 
 
-def _save_smtp_password_secure(password):
-    """Сохраняет SMTP-пароль в keyring или системной связке ключей macOS (без передачи пароля в argv)."""
+def _save_secret_secure(account, secret):
+    """Сохраняет секрет в keyring или системной связке ключей macOS (без передачи значения в argv)."""
+    if not isinstance(account, str) or not _KEYCHAIN_ACCOUNT_RE.fullmatch(account):
+        logger.warning("Отклонён некорректный идентификатор аккаунта секрета: %r", account)
+        return False
     if HAS_KEYRING:
         try:
-            if password:
-                keyring.set_password(KEYRING_SERVICE, KEYRING_SMTP_ACCOUNT, password)
+            if secret:
+                keyring.set_password(KEYRING_SERVICE, account, secret)
             else:
                 try:
-                    keyring.delete_password(KEYRING_SERVICE, KEYRING_SMTP_ACCOUNT)
-                except Exception:
-                    pass
+                    keyring.delete_password(KEYRING_SERVICE, account)
+                except Exception as e:
+                    logger.debug("Не удалось удалить пароль из keyring для %s: %s", account, e)
             return True
         except Exception as e:
-            logger.warning("Ошибка сохранения пароля в keyring: %s", e)
+            logger.warning("Ошибка сохранения секрета (%s) в keyring: %s", account, e)
             return False
     if sys.platform == "darwin":
         try:
-            if password:
-                pwd_hex = str(password).encode("utf-8").hex()
+            if secret:
+                sec_hex = str(secret).encode("utf-8").hex()
                 cmd_line = (
-                    f'add-generic-password -U -a "{KEYRING_SMTP_ACCOUNT}" '
-                    f'-s "{KEYRING_SERVICE}" -X {pwd_hex}\n'
+                    f'add-generic-password -U -a "{account}" '
+                    f'-s "{KEYRING_SERVICE}" -X {sec_hex}\n'
                 )
                 res = subprocess.run(
                     ["security", "-i"],
@@ -497,53 +501,94 @@ def _save_smtp_password_secure(password):
                     text=True,
                     capture_output=True,
                     check=True,
+                    timeout=5,
                 )
                 stderr_txt = (res.stderr or "").strip()
                 if stderr_txt and "error" in stderr_txt.lower():
-                    logger.warning("security -i вернул ошибку при сохранении пароля: %s", stderr_txt)
+                    logger.warning("security -i вернул ошибку при сохранении секрета (%s): %s", account, stderr_txt)
                     return False
             else:
                 subprocess.run(
-                    ["security", "delete-generic-password", "-a", KEYRING_SMTP_ACCOUNT, "-s", KEYRING_SERVICE],
-                    capture_output=True
+                    ["security", "delete-generic-password", "-a", account, "-s", KEYRING_SERVICE],
+                    capture_output=True,
+                    timeout=5,
                 )
             return True
+        except subprocess.TimeoutExpired:
+            logger.warning("Таймаут сохранения секрета (%s) в Keychain macOS", account)
+            return False
         except Exception as e:
-            logger.warning("Ошибка сохранения пароля в Keychain macOS: %s", e)
+            logger.warning("Ошибка сохранения секрета (%s) в Keychain macOS: %s", account, e)
             return False
     return False
 
 
-def _load_smtp_password_secure():
-    """Загружает SMTP-пароль из keyring или системной связке ключей macOS."""
+def _load_secret_secure(account):
+    """Загружает секрет из keyring или системной связке ключей macOS."""
+    if not isinstance(account, str) or not _KEYCHAIN_ACCOUNT_RE.fullmatch(account):
+        return None
     if HAS_KEYRING:
         try:
-            return keyring.get_password(KEYRING_SERVICE, KEYRING_SMTP_ACCOUNT) or ""
+            return keyring.get_password(KEYRING_SERVICE, account) or ""
         except Exception:
             return None
     if sys.platform == "darwin":
         try:
             res = subprocess.run(
-                ["security", "find-generic-password", "-a", KEYRING_SMTP_ACCOUNT, "-s", KEYRING_SERVICE, "-w"],
-                capture_output=True, text=True
+                ["security", "find-generic-password", "-a", account, "-s", KEYRING_SERVICE, "-w"],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if res.returncode == 0:
                 return res.stdout.rstrip("\r\n")
-        except Exception:
-            pass
+        except subprocess.TimeoutExpired:
+            logger.warning("Таймаут чтения секрета (%s) из Keychain macOS", account)
+        except Exception as e:
+            logger.debug("Ошибка чтения секрета из macOS Keychain для %s: %s", account, e)
     return None
 
 
+def _save_smtp_password_secure(password):
+    """Сохраняет SMTP-пароль в keyring или системной связке ключей macOS (без передачи пароля в argv)."""
+    return _save_secret_secure(KEYRING_SMTP_ACCOUNT, password)
+
+
+def _load_smtp_password_secure():
+    """Загружает SMTP-пароль из keyring или системной связке ключей macOS."""
+    return _load_secret_secure(KEYRING_SMTP_ACCOUNT)
+
+
+def _save_google_books_key_secure(api_key):
+    """Сохраняет API-ключ Google Books в keyring или системной связке ключей macOS."""
+    return _save_secret_secure(KEYRING_GOOGLE_BOOKS_ACCOUNT, api_key)
+
+
+def _load_google_books_key_secure():
+    """Загружает API-ключ Google Books из keyring или системной связке ключей macOS."""
+    return _load_secret_secure(KEYRING_GOOGLE_BOOKS_ACCOUNT)
+
+
+def _save_opds_password_secure(password):
+    """Сохраняет пароль OPDS в keyring или системной связке ключей macOS."""
+    return _save_secret_secure(KEYRING_OPDS_ACCOUNT, password)
+
+
+def _load_opds_password_secure():
+    """Загружает пароль OPDS из keyring или системной связке ключей macOS."""
+    return _load_secret_secure(KEYRING_OPDS_ACCOUNT)
+
+
 def is_secure_password_storage_available():
-    """Проверяет, доступно ли системное защищённое хранилище для SMTP-пароля (keyring или Keychain macOS)."""
+    """Проверяет, доступно ли системное защищённое хранилище для секретов (keyring или Keychain macOS)."""
     if HAS_KEYRING and keyring is not None:
         try:
             kr = keyring.get_keyring()
             kr_name = type(kr).__name__.lower()
             if "fail" not in kr_name and "null" not in kr_name:
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Проверка доступности keyring завершилась ошибкой: %s", e)
     if sys.platform == "darwin":
         return True
     return False
@@ -556,6 +601,16 @@ def save_app_settings(settings_path, app_settings):
         data_to_save["smtp_password"] = ""
     elif pwd:
         logger.warning("Защищённое хранилище паролей (keyring) недоступно; SMTP-пароль сохранён в settings.json")
+    gb_key = data_to_save.get("google_books_api_key", "")
+    if _save_google_books_key_secure(gb_key):
+        data_to_save["google_books_api_key"] = ""
+    elif gb_key:
+        logger.warning("Защищённое хранилище (keyring) недоступно; API-ключ Google Books сохранён в settings.json")
+    opds_pwd = data_to_save.get("opds_password", "")
+    if _save_opds_password_secure(opds_pwd):
+        data_to_save["opds_password"] = ""
+    elif opds_pwd:
+        logger.warning("Защищённое хранилище (keyring) недоступно; пароль OPDS сохранён в settings.json")
     try:
         payload = json.dumps(data_to_save, ensure_ascii=False, indent=2)
         atomic_write_text(settings_path, payload)
@@ -588,6 +643,26 @@ def load_app_settings(settings_path, app_settings):
             sec_pwd = _load_smtp_password_secure()
             if sec_pwd:
                 app_settings["smtp_password"] = sec_pwd
+        legacy_gb = app_settings.get("google_books_api_key", "")
+        if legacy_gb:
+            if _save_google_books_key_secure(legacy_gb):
+                changed = True
+        else:
+            sec_gb = _load_google_books_key_secure()
+            if sec_gb:
+                app_settings["google_books_api_key"] = sec_gb
+        legacy_opds = app_settings.get("opds_password", "")
+        if legacy_opds:
+            if _save_opds_password_secure(legacy_opds):
+                changed = True
+        else:
+            sec_opds = _load_opds_password_secure()
+            if sec_opds:
+                app_settings["opds_password"] = sec_opds
+        raw_provs = app_settings.get("metadata_providers")
+        if not isinstance(raw_provs, list):
+            app_settings["metadata_providers"] = list(DEFAULT_ENABLED_PROVIDERS)
+            changed = True
         valid_keys = {val for _, val in get_theme_choices()}
         raw_theme = app_settings.get("theme", "Modern")
         if raw_theme in ("Auto", "Авто"):
@@ -657,6 +732,7 @@ def sync_settings_from_fbc_config(fbc_config_path, app_settings):
             ("raster_format", "raster_format"),
             ("rasterize_svg", "rasterize_svg"),
             ("remove_transparency", "remove_transparency"),
+            ("scale_factor", "image_scale_factor"),
             ("optimize", "optimize_images"),
             ("jpeg_quality_level", "jpeg_quality_level"),
             ("fit_to_screen", "fit_to_screen"),
@@ -684,6 +760,8 @@ def sync_settings_from_fbc_config(fbc_config_path, app_settings):
             ("insert_soft_hyphen", "insert_soft_hyphen"),
             ("file_name_transliterate", "file_name_transliterate"),
             ("open_from_cover", "open_from_cover"),
+            ("fix_zip", "fix_zip"),
+            ("toc_type", "toc_type"),
         ):
             if doc_key in doc and doc[doc_key] is not None:
                 app_settings[app_key] = _yaml_val_to_str(doc[doc_key])
@@ -697,7 +775,12 @@ def sync_settings_from_fbc_config(fbc_config_path, app_settings):
             ("dropcaps", "enable", "dropcaps_enable"),
             ("metainformation", "transliterate", "meta_transliterate"),
             ("annotation", "enable", "annotation_enable"),
+            ("annotation", "in_toc", "annotation_in_toc"),
             ("toc_page", "placement", "toc_page_placement"),
+            ("toc_page", "include_chapters_without_title", "toc_include_untitled"),
+            ("page_map", "enable", "page_map_enable"),
+            ("page_map", "size", "page_map_size"),
+            ("page_map", "adobe_de", "page_map_adobe_de"),
         ]:
             blk = doc.get(block_name)
             if isinstance(blk, dict) and blk.get(key) is not None:
@@ -737,6 +820,11 @@ def update_fbc_config_file(fbc_config_path, css_path, app_settings):
         _insert_key_after(images, "remove_transparency", _to_bool(app_settings.get("remove_transparency", "false")), "use_broken")
         _insert_key_after(images, "rasterize_svg", _to_bool(app_settings.get("rasterize_svg", "false")), "remove_transparency")
         _insert_key_after(images, "raster_format", str(app_settings.get("raster_format", "auto")), "rasterize_svg")
+        try:
+            sf_val = max(0.25, min(4.0, float(app_settings.get("image_scale_factor", "1.0"))))
+        except (TypeError, ValueError):
+            sf_val = 1.0
+        _insert_key_after(images, "scale_factor", sf_val, "raster_format")
         _insert_key_after(images, "fit_to_screen", _to_bool(app_settings.get("fit_to_screen", "false")), "scale_factor")
         _insert_key_after(images, "baseline_jpeg", _to_bool(app_settings.get("baseline_jpeg", "false")), "fit_to_screen")
         _insert_key_after(images, "grayscale", str(app_settings.get("grayscale", "none")), "baseline_jpeg")
@@ -769,11 +857,18 @@ def update_fbc_config_file(fbc_config_path, css_path, app_settings):
 
         annotation = _ensure_subblock(doc, "annotation", [("enable", True)], before_keys=("toc_page", "dropcaps"))
         annotation["enable"] = _to_bool(app_settings.get("annotation_enable", "true"), True)
+        annotation["in_toc"] = _to_bool(app_settings.get("annotation_in_toc", "false"), False)
 
         toc_page = _ensure_subblock(doc, "toc_page", [("placement", "after")], before_keys=("dropcaps",))
         toc_place = str(app_settings.get("toc_page_placement", "after"))
         if toc_place in ("none", "before", "after"):
             toc_page["placement"] = toc_place
+        toc_page["include_chapters_without_title"] = _to_bool(app_settings.get("toc_include_untitled", "false"), False)
+
+        page_map = _ensure_subblock(doc, "page_map", [("enable", True), ("size", 2300), ("adobe_de", False)], before_keys=("images",))
+        page_map["enable"] = _to_bool(app_settings.get("page_map_enable", "true"), True)
+        page_map["size"] = max(500, min(20000, _to_int(app_settings.get("page_map_size", "2300"), 2300)))
+        page_map["adobe_de"] = _to_bool(app_settings.get("page_map_adobe_de", "false"), False)
 
         dropcaps = _ensure_subblock(doc, "dropcaps", [("enable", True)], before_keys=("text_transformations",))
         dropcaps["enable"] = _to_bool(app_settings.get("dropcaps_enable", "true"), True)
@@ -798,7 +893,11 @@ def update_fbc_config_file(fbc_config_path, css_path, app_settings):
         metainfo["title_template"] = LiteralScalarString(title_tpl_body.rstrip("\n") + "\n")
         metainfo["transliterate"] = _to_bool(app_settings.get("meta_transliterate", "false"), False)
 
+        doc["fix_zip"] = _to_bool(app_settings.get("fix_zip", "false"), False)
         _insert_key_after(doc, "open_from_cover", _to_bool(app_settings.get("open_from_cover", "true"), True), "fix_zip")
+        toc_t = str(app_settings.get("toc_type", "normal"))
+        if toc_t in ("normal", "old_kindle", "flat"):
+            _insert_key_after(doc, "toc_type", toc_t, "open_from_cover")
         _insert_key_after(doc, "file_name_transliterate", _to_bool(app_settings.get("file_name_transliterate", "false"), False), "output_name_template")
         _insert_key_after(doc, "insert_soft_hyphen", _to_bool(app_settings.get("insert_soft_hyphen", "false"), False), "file_name_transliterate")
 

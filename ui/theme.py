@@ -154,8 +154,8 @@ class ExternalThemeRegistry:
                         fam_key = stem
                     if fam_key:
                         found[fam_key] = fam_key.capitalize()
-            except Exception:
-                pass
+            except Exception as e:
+                get_logger("theme").debug("Ошибка сканирования каталога тем %s: %s", d, e)
         ordered = []
         for std in ("golden", "modern"):
             if std in found:
@@ -213,8 +213,8 @@ def detect_system_dark_mode():
                 capture_output=True, text=True, timeout=1
             )
             return res.returncode == 0 and "dark" in res.stdout.strip().lower()
-        except Exception:
-            pass
+        except Exception as e:
+            get_logger("theme").debug("Не удалось определить AppleInterfaceStyle: %s", e)
     try:
         hints = QGuiApplication.styleHints()
         if hints and hasattr(hints, "colorScheme"):
@@ -223,8 +223,8 @@ def detect_system_dark_mode():
                 return True
             if scheme == Qt.ColorScheme.Light:
                 return False
-    except Exception:
-        pass
+    except Exception as e:
+        get_logger("theme").debug("Не удалось определить системную схему Qt: %s", e)
     return True
 
 
@@ -529,8 +529,8 @@ def start_window_crossfade(window):
 
         window._fade_overlay = overlay
         window._fade_anim = anim
-    except Exception:
-        pass
+    except Exception as e:
+        get_logger("theme").debug("Анимация смены темы пропущена: %s", e)
 
 
 class ThemeModeButton(QPushButton):

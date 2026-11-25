@@ -52,14 +52,14 @@ class MacOSWKWebViewWidget(QWidget):
         cfg = WKWebViewConfiguration.alloc().init()
         try:
             cfg.setWebsiteDataStore_(WKWebsiteDataStore.nonPersistentDataStore())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Не удалось задать nonPersistentDataStore для WKWebView: %s", e)
         try:
             prefs = cfg.defaultWebpagePreferences()
             if prefs is not None and hasattr(prefs, "setAllowsContentJavaScript_"):
                 prefs.setAllowsContentJavaScript_(False)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Не удалось отключить JS в WKWebView: %s", e)
 
         self._wk_view = WKWebView.alloc().initWithFrame_configuration_(
             NSMakeRect(0, 0, max(100, self.width()), max(100, self.height())),
@@ -91,8 +91,8 @@ class MacOSWKWebViewWidget(QWidget):
         if getattr(self, "_attached", False):
             try:
                 self._wk_view.removeFromSuperview()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Ошибка отсоединения WKWebView от superview: %s", e)
             self._attached = False
         render_path = getattr(self, "_render_path", None)
         if render_path and os.path.isfile(render_path):
@@ -128,8 +128,8 @@ class MacOSWKWebViewWidget(QWidget):
             host_view = self._get_host_nsview()
             if host_view is not None:
                 self._wk_view.setFrame_(host_view.bounds())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Ошибка синхронизации размеров WKWebView: %s", e)
 
     def set_preview_html(self, html_text, base_dir=""):
         if not self._attached:
@@ -184,8 +184,8 @@ class WindowsWebView2Widget(QWidget):
             try:
                 if hasattr(wv, "close"):
                     wv.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Ошибка закрытия встроенного webview: %s", e)
         render_path = getattr(self, "_render_path", None)
         if render_path and os.path.isfile(render_path):
             try:
@@ -290,7 +290,7 @@ def create_preview_widget(parent=None):
 
     try:
         return QtWebEnginePreviewWidget(parent), "webengine"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("QtWebEngine предпросмотр недоступен, используем fallback: %s", e)
 
     return FallbackTextPreviewWidget(parent), "fallback"

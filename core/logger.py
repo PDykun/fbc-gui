@@ -26,21 +26,24 @@ def init_logging(base_dir, log_filename="fbc_gui.log", max_bytes=2 * 1024 * 1024
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    try:
-        file_handler = RotatingFileHandler(
-            log_path,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding="utf-8",
-        )
-        file_handler.setLevel(logging.INFO)
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
-    except Exception as e:
+    disable_file_log = os.environ.get("FBC_GUI_DISABLE_FILE_LOG", "").strip().lower() in ("1", "true", "yes")
+    if not disable_file_log:
         try:
-            sys.stderr.write(f"fbc_gui: failed to initialize file logger at {log_path}: {e}\n")
-        except Exception:
-            pass
+            file_handler = RotatingFileHandler(
+                log_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
+            )
+            file_handler.setLevel(logging.INFO)
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+        except Exception as e:
+            try:
+                sys.stderr.write(f"fbc_gui: failed to initialize file logger at {log_path}: {e}\n")
+            except Exception:
+                # stderr недоступен при отказе инициализации самого логгера
+                pass
 
     if not getattr(sys, "frozen", False):
         console_handler = logging.StreamHandler(sys.stderr)

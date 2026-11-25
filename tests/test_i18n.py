@@ -83,6 +83,34 @@ class TestLocaleManager(unittest.TestCase):
             elif isinstance(ru_val, list):
                 self.assertEqual(len(ru_val), len(en_val), f"List length mismatch for {key}")
 
+    def test_all_fb2_genre_codes_and_groups_localized(self):
+        from core.fb2_genres import FB2_GENRE_GROUPS
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for fname in ("ru.json", "en.json"):
+            with open(os.path.join(project_root, "locales", fname), encoding="utf-8") as fh:
+                data = json.load(fh)
+            groups = data.get("genre_groups") or {}
+            genres = data.get("genres") or {}
+            for grp_id, codes in FB2_GENRE_GROUPS:
+                self.assertTrue(groups.get(grp_id, "").strip(), f"Missing group {grp_id} in {fname}")
+                for code in codes:
+                    self.assertTrue(genres.get(code, "").strip(), f"Missing genre {code} in {fname}")
+
+    def test_user_guide_url_resolution_and_https_safety(self):
+        import fbc_gui
+        from core.updater import is_safe_http_url
+
+        ru_url = fbc_gui.get_user_guide_url("ru")
+        en_url = fbc_gui.get_user_guide_url("en")
+        fallback_url = fbc_gui.get_user_guide_url("de")
+
+        self.assertTrue(ru_url.endswith("/blob/main/docs/USER_GUIDE_RU.md"))
+        self.assertTrue(en_url.endswith("/blob/main/docs/USER_GUIDE_EN.md"))
+        self.assertEqual(fallback_url, en_url)
+        self.assertTrue(is_safe_http_url(ru_url, allow_relative=False, require_https=True))
+        self.assertTrue(is_safe_http_url(en_url, allow_relative=False, require_https=True))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -239,5 +239,39 @@ class TestPresets(unittest.TestCase):
             self.assertEqual(target.get("css_ui_state"), {"h1_cl": "red"})
 
 
+    def test_preset_setting_keys_include_v210_settings(self):
+        src = {
+            "annotation_in_toc": "true",
+            "toc_type": "flat",
+            "toc_include_untitled": "true",
+            "page_map_enable": "false",
+            "page_map_size": "3000",
+            "page_map_adobe_de": "true",
+            "fix_zip": "true",
+            "image_scale_factor": "1.5",
+            "smtp_password": "PRIVATE_VALUE",
+            "opds_password": "PRIVATE_VALUE",
+        }
+        extracted = extract_preset_settings(src)
+        for key in (
+            "annotation_in_toc",
+            "toc_type",
+            "toc_include_untitled",
+            "page_map_enable",
+            "page_map_size",
+            "page_map_adobe_de",
+            "fix_zip",
+            "image_scale_factor",
+        ):
+            self.assertEqual(extracted.get(key), src[key])
+        self.assertNotIn("smtp_password", extracted)
+        self.assertNotIn("opds_password", extracted)
+
+        target = {}
+        apply_preset_to_settings(target, {"settings": extracted})
+        self.assertEqual(target["toc_type"], "flat")
+        self.assertEqual(target["image_scale_factor"], "1.5")
+
+
 if __name__ == "__main__":
     unittest.main()

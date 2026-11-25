@@ -122,6 +122,33 @@ QFrame#SubCard, QFrame#CoverPanel, QLabel#CoverPanel {
     color: #9a9cb8;
 }
 
+QFrame#FontDropZone {
+    background-color: #16172b;
+    border: 1.5px dashed #4b5278;
+    border-radius: 12px;
+}
+
+QFrame#FontDropZone:hover {
+    background-color: #20223d;
+    border-color: #fbce58;
+}
+
+QFrame#FontDropZone[dragActive="true"] {
+    background-color: #2c2842;
+    border: 1.5px dashed #fbce58;
+}
+
+QLabel#FontDropTitle {
+    color: #f2f3f8;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#FontDropHint {
+    color: #9a9cb8;
+    font-size: 11px;
+}
+
 /* Навигационный контейнер и кнопки */
 QFrame#NavContainer {
     background-color: #1c1d34;

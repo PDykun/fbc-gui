@@ -24,9 +24,12 @@ from core.fb2_processor import (
     ConversionCancelledError,
     collect_book_paths,
     convert_book_file,
+    copy_meta_dict,
     extract_cover_from_fb2,
     iter_fb2_from_file,
     parse_metadata,
+    quick_check_fb2,
+    should_skip_existing_conversion,
     simulate_fbc_target,
 )
 from core.i18n import tr
@@ -68,17 +71,20 @@ class FileImportWorker(QThread):
 
                 meta = parse_metadata(xml_bytes)
                 cover_bytes, cover_mime = extract_cover_from_fb2(xml_bytes)
+                warnings = quick_check_fb2(xml_bytes, meta=meta, cover_bytes=cover_bytes)
                 imported.append({
                     'path': path,
                     'archive_entry': archive_entry,
                     'source_key': source_key,
                     'display_name': display_name,
                     'meta': meta,
+                    'orig_meta': copy_meta_dict(meta),
                     'orig_cover_bytes': cover_bytes,
                     'orig_cover_mime': cover_mime,
                     'cover_bytes': cover_bytes,
                     'cover_mime': cover_mime,
                     'cover_modified': False,
+                    'warnings': warnings,
                 })
             if cancelled:
                 break
@@ -106,6 +112,7 @@ class ConversionWorker(QThread):
         app_settings,
         debug=False,
         no_cover=False,
+        skip_existing=False,
         fbc_cmd="",
         fbc_config="",
         base_dir="",
@@ -124,6 +131,8 @@ class ConversionWorker(QThread):
         self.app_settings = app_settings
         self.debug = bool(debug)
         self.no_cover = bool(no_cover)
+        self.skip_existing = bool(skip_existing)
+        self.skipped_count = 0
         self.fbc_cmd = fbc_cmd
         self.fbc_config = fbc_config
         self.base_dir = base_dir
@@ -159,6 +168,12 @@ class ConversionWorker(QThread):
         else:
             dest_dir = os.path.dirname(original_path)
 
+        if self.skip_existing and not self.debug and should_skip_existing_conversion(data, dest_dir, display_name):
+            logger.info("Конвертация ПРОПУЩЕНА (актуальный файл уже существует): %s", source_label)
+            if item_id:
+                self.item_status.emit(item_id, "skipped", "")
+            return idx, display_name, source_label, [], None, False, True
+
         if item_id:
             self.item_status.emit(item_id, "running", "")
 
@@ -187,19 +202,19 @@ class ConversionWorker(QThread):
             )
             if item_id:
                 self.item_status.emit(item_id, "ok", "")
-            return idx, display_name, source_label, created, None, False
+            return idx, display_name, source_label, created, None, False, False
         except ConversionCancelledError:
             elapsed = time.monotonic() - t0
             logger.info("Конвертация ОТМЕНЕНА [%.2fs]: %s", elapsed, source_label)
             if item_id:
                 self.item_status.emit(item_id, "cancelled", "")
-            return idx, display_name, source_label, [], None, True
+            return idx, display_name, source_label, [], None, True, False
         except Exception as e:
             elapsed = time.monotonic() - t0
             logger.error("Конвертация ОШИБКА [%.2fs]: %s: %s", elapsed, source_label, e)
             if item_id:
                 self.item_status.emit(item_id, "error", str(e))
-            return idx, display_name, source_label, [], str(e), False
+            return idx, display_name, source_label, [], str(e), False, False
 
     def run(self):
         total = len(self.items)
@@ -250,12 +265,14 @@ class ConversionWorker(QThread):
             while pending:
                 done, pending = wait(pending, timeout=0.15, return_when=FIRST_COMPLETED)
                 for fut in done:
-                    idx, display_name, source_label, created, err_msg, was_cancelled = fut.result()
+                    idx, display_name, source_label, created, err_msg, was_cancelled, was_skipped = fut.result()
                     if was_cancelled:
                         cancelled = True
                         continue
                     completed += 1
-                    if err_msg:
+                    if was_skipped:
+                        self.skipped_count += 1
+                    elif err_msg:
                         errors_by_idx[idx] = (source_label, err_msg)
                     else:
                         results_by_idx[idx] = created
@@ -354,7 +371,16 @@ class SingleInstanceManager(QObject):
     """Обеспечивает единый экземпляр приложения на Windows/macOS через QLocalServer/QLocalSocket."""
 
     MAX_IPC_PAYLOAD_BYTES = 1024 * 1024
+    _ALLOWED_IPC_EXTENSIONS = (".fb2", ".zip", ".ttf", ".otf", ".woff", ".woff2")
     activation_requested = pyqtSignal(list)
+
+    @classmethod
+    def _is_allowed_ipc_path(cls, path):
+        if not isinstance(path, str) or not path or "\x00" in path:
+            return False
+        if os.path.isdir(path):
+            return True
+        return os.path.isfile(path) and path.lower().endswith(cls._ALLOWED_IPC_EXTENSIONS)
 
     def __init__(self, server_name=None, parent=None):
         super().__init__(parent)
@@ -434,7 +460,7 @@ class SingleInstanceManager(QObject):
                 try:
                     data = json.loads(raw.decode("utf-8", errors="replace"))
                     if isinstance(data, dict) and isinstance(data.get("paths"), list):
-                        paths = [p for p in data["paths"] if isinstance(p, str) and os.path.exists(p)]
+                        paths = [p for p in data["paths"] if self._is_allowed_ipc_path(p)]
                 except Exception as e:
                     logger.warning("Некорректный JSON в IPC-сообщении: %s", e)
             self.activation_requested.emit(paths)
@@ -444,3 +470,361 @@ class SingleInstanceManager(QObject):
             self._server.close()
             QLocalServer.removeServer(self.server_name)
             self._server = None
+
+
+class DeviceSyncWorker(QThread):
+    """Фоновый поток доставки книг на ридер через sync2kindle (MTP/USBMS) или смонтированную папку."""
+
+    status_changed = pyqtSignal(str)
+    download_progress = pyqtSignal(object, object, str)
+    sync_progress = pyqtSignal(int, str)
+    finished_sync = pyqtSignal(bool, str, bool)
+
+    def __init__(
+        self,
+        mode,
+        source_dir,
+        target_dir,
+        user_data_dir,
+        dry_run=False,
+        ignore_device_removals=True,
+        explicit_files=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.mode = str(mode or "mtp").strip().lower()
+        self.source_dir = source_dir
+        self.target_dir = target_dir
+        self.user_data_dir = user_data_dir
+        self.dry_run = bool(dry_run)
+        self.ignore_device_removals = bool(ignore_device_removals)
+        self.explicit_files = list(explicit_files or [])
+        self.sent_count = 0
+        self.skipped_count = 0
+        self.last_error_code = ""
+        self.last_error_path = ""
+        self._cancel_event = threading.Event()
+
+    def cancel(self):
+        self._cancel_event.set()
+        self.requestInterruption()
+
+    def run(self):
+        import inspect
+        import shutil
+        import subprocess
+        import tempfile
+        from core.fb2_processor import _run_cancellable_process
+        from core.s2k_manager import (
+            S2kMissingLibraryError,
+            S2kPermissionError,
+            build_s2k_sync_command,
+            download_and_install_s2k,
+            is_missing_libmtp_stderr,
+            is_no_books_in_source_stderr,
+            parse_s2k_copy_action,
+            resolve_local_s2k,
+            stage_books_for_s2k,
+            summarize_s2k_output,
+            sync_folder_to_mounted_device,
+            write_s2k_sync_config,
+        )
+
+        tmp_cfg_path = None
+        staging_dir = None
+        try:
+            if self.mode == "folder":
+                self.status_changed.emit(tr("settings.sync_status_copying"))
+                self.sync_progress.emit(5, tr("settings.sync_status_copying"))
+
+                def _on_folder_prog(cur, total, fname):
+                    pct = 5 + int(90 * cur / max(1, total))
+                    self.sync_progress.emit(
+                        pct,
+                        tr("converter.progress_sync_file", cur=cur, total=total, name=fname),
+                    )
+
+                res = sync_folder_to_mounted_device(
+                    self.source_dir,
+                    self.target_dir,
+                    dry_run=self.dry_run,
+                    explicit_files=self.explicit_files,
+                    progress_callback=_on_folder_prog,
+                )
+                self.sent_count = len(res["copied"])
+                self.skipped_count = len(res["skipped"])
+                self.sync_progress.emit(100, tr("converter.progress_sync_done", count=self.sent_count))
+                lines = []
+                if res["copied"]:
+                    prefix = tr("settings.sync_dry_would_copy") if self.dry_run else tr("settings.sync_copied")
+                    lines.append(f"{prefix} ({len(res['copied'])}):")
+                    lines.extend(f"  • {name}" for name in res["copied"])
+                if res["skipped"]:
+                    lines.append(f"{tr('settings.sync_skipped')} ({len(res['skipped'])})")
+                if not lines:
+                    lines.append(tr("settings.sync_nothing"))
+                self.finished_sync.emit(True, "\n".join(lines), self.dry_run)
+                return
+
+            self.status_changed.emit(tr("settings.sync_status_checking_s2k"))
+            self.sync_progress.emit(5, tr("settings.sync_status_checking_s2k"))
+            info = resolve_local_s2k(self.user_data_dir, raise_on_missing_lib=True)
+            if not info:
+                self.status_changed.emit("downloading")
+                self.sync_progress.emit(-1, tr("settings.sync_status_downloading_s2k"))
+
+                def _on_dl_prog(dl, tot, name):
+                    self.download_progress.emit(dl, tot, name)
+                    if tot and tot > 0:
+                        pct = max(0, min(100, int(dl * 100 / tot)))
+                        self.sync_progress.emit(pct, tr("settings.sync_status_downloading_s2k"))
+
+                def _on_dl_status(st):
+                    self.status_changed.emit(st)
+                    if st == "verifying":
+                        self.sync_progress.emit(-1, tr("settings.sync_status_verifying_s2k"))
+
+                info = download_and_install_s2k(
+                    self.user_data_dir,
+                    cancel_event=self._cancel_event,
+                    progress_callback=_on_dl_prog,
+                    status_callback=_on_dl_status,
+                )
+
+            work_dir = self.user_data_dir
+            if not work_dir or not os.path.isdir(work_dir):
+                work_dir = os.path.dirname(os.path.abspath(info["path"]))
+
+            staging_dir = tempfile.mkdtemp(prefix="s2k_stage_", dir=work_dir)
+            staged_books = stage_books_for_s2k(
+                self.source_dir,
+                staging_dir,
+                explicit_files=self.explicit_files,
+            )
+            if not staged_books:
+                logger.warning("В папке-источнике не найдено готовых книг для Kindle: %s", self.source_dir)
+                self.finished_sync.emit(
+                    False,
+                    tr("settings.sync_err_no_books_in_source", source=os.path.abspath(self.source_dir)),
+                    self.dry_run,
+                )
+                return
+            total_staged = len(staged_books)
+            logger.info("Подготовлено книг для sync2kindle: %d (из %s)", total_staged, self.source_dir)
+            self.sync_progress.emit(10, tr("converter.progress_sync_prep", total=total_staged))
+
+            fd, tmp_cfg_path = tempfile.mkstemp(prefix="s2k_sync_", suffix=".yaml", dir=work_dir)
+            os.close(fd)
+            write_s2k_sync_config(tmp_cfg_path, staging_dir, self.target_dir)
+
+            cmd = build_s2k_sync_command(
+                info["path"],
+                self.mode,
+                staging_dir,
+                self.target_dir,
+                dry_run=self.dry_run,
+                ignore_device_removals=self.ignore_device_removals,
+                config_path=tmp_cfg_path,
+            )
+            self.status_changed.emit("syncing")
+            self.sync_progress.emit(15, tr("converter.progress_sync_connect"))
+
+            live_copied = [0]
+
+            def _on_s2k_line(line):
+                fname = parse_s2k_copy_action(line)
+                if fname:
+                    live_copied[0] += 1
+                    cur = min(live_copied[0], total_staged)
+                    pct = 15 + int(80 * cur / max(1, total_staged))
+                    self.sync_progress.emit(
+                        pct,
+                        tr("converter.progress_sync_file", cur=cur, total=total_staged, name=fname),
+                    )
+
+            try:
+                supports_streaming = "on_output_line" in inspect.signature(_run_cancellable_process).parameters
+            except (TypeError, ValueError):
+                supports_streaming = False
+
+            if supports_streaming:
+                stdout, stderr = _run_cancellable_process(
+                    cmd,
+                    cwd=work_dir,
+                    cancel_event=self._cancel_event,
+                    on_output_line=_on_s2k_line,
+                )
+            else:
+                stdout, stderr = _run_cancellable_process(
+                    cmd,
+                    cwd=work_dir,
+                    cancel_event=self._cancel_event,
+                )
+
+            raw_output = "\n".join(p for p in ((stdout or "").strip(), (stderr or "").strip()) if p)
+            if raw_output:
+                logger.info("Вывод sync2kindle (dry_run=%s):\n%s", self.dry_run, raw_output)
+            summary = summarize_s2k_output(raw_output)
+            self.sent_count = summary["count"]
+            self.sync_progress.emit(100, tr("converter.progress_sync_done", count=self.sent_count))
+
+            if self.sent_count > 0:
+                summary_msg = (
+                    tr("converter.msg_sync_dry_count", count=self.sent_count)
+                    if self.dry_run
+                    else tr("converter.msg_sync_done_count", count=self.sent_count)
+                )
+            else:
+                summary_msg = tr("converter.msg_sync_done_none")
+            self.finished_sync.emit(True, summary_msg, self.dry_run)
+        except ConversionCancelledError:
+            self.finished_sync.emit(False, tr("settings.sync_cancelled"), self.dry_run)
+        except S2kMissingLibraryError as e:
+            logger.error("sync2kindle не может запуститься: отсутствует libmtp (%s)", e)
+            self.finished_sync.emit(False, tr("settings.sync_err_macos_libmtp"), self.dry_run)
+        except S2kPermissionError as e:
+            err_path = str(e).strip() if os.path.isabs(str(e).strip()) else os.path.abspath(self.source_dir)
+            self.last_error_code = "permission"
+            self.last_error_path = err_path
+            logger.error("Нет прав доступа macOS к папке %s: %s", err_path, e)
+            self.finished_sync.emit(
+                False,
+                tr("settings.sync_err_permission", source=err_path),
+                self.dry_run,
+            )
+        except subprocess.CalledProcessError as e:
+            if self._cancel_event.is_set():
+                self.finished_sync.emit(False, tr("settings.sync_cancelled"), self.dry_run)
+                return
+            details = "\n".join(
+                p for p in ((getattr(e, "stderr", "") or "").strip(), (getattr(e, "output", "") or "").strip()) if p
+            )
+            if is_missing_libmtp_stderr(details):
+                logger.error("sync2kindle завершился с ошибкой отсутствия libmtp: %s", details)
+                self.finished_sync.emit(False, tr("settings.sync_err_macos_libmtp"), self.dry_run)
+                return
+            if is_no_books_in_source_stderr(details):
+                logger.warning("sync2kindle не нашёл готовых книг в %s: %s", self.source_dir, details)
+                self.finished_sync.emit(
+                    False,
+                    tr("settings.sync_err_no_books_in_source", source=os.path.abspath(self.source_dir)),
+                    self.dry_run,
+                )
+                return
+            err_msg = details or str(e)
+            logger.error("Ошибка синхронизации с ридером: %s", err_msg)
+            self.finished_sync.emit(False, err_msg, self.dry_run)
+        except Exception as e:
+            if self._cancel_event.is_set():
+                self.finished_sync.emit(False, tr("settings.sync_cancelled"), self.dry_run)
+                return
+            logger.error("Ошибка синхронизации с ридером: %s", e)
+            self.finished_sync.emit(False, str(e), self.dry_run)
+        finally:
+            if tmp_cfg_path and os.path.exists(tmp_cfg_path):
+                try:
+                    os.remove(tmp_cfg_path)
+                except OSError:
+                    pass
+            if staging_dir and os.path.isdir(staging_dir):
+                shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+class MetadataLookupWorker(QThread):
+    """Фоновый поток Фазы 1: онлайн-поиск кандидатов метаданных по провайдерам."""
+
+    finished_lookup = pyqtSignal(object)
+
+    def __init__(
+        self,
+        title="",
+        author="",
+        isbn="",
+        enabled_providers=None,
+        google_books_api_key="",
+        opds_url="",
+        opds_username="",
+        opds_password="",
+        limit_per_provider=4,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.title = str(title or "")
+        self.author = str(author or "")
+        self.isbn = str(isbn or "")
+        self.enabled_providers = list(enabled_providers) if enabled_providers is not None else None
+        self.google_books_api_key = str(google_books_api_key or "")
+        self.opds_url = str(opds_url or "")
+        self.opds_username = str(opds_username or "")
+        self.opds_password = str(opds_password or "")
+        self.limit_per_provider = int(limit_per_provider or 4)
+        self._cancel_event = threading.Event()
+
+    def cancel(self):
+        self._cancel_event.set()
+        self.requestInterruption()
+
+    def run(self):
+        from core.metadata_lookup import LookupResult, search_book_metadata
+
+        try:
+            res = search_book_metadata(
+                title=self.title,
+                author=self.author,
+                isbn=self.isbn,
+                enabled_providers=self.enabled_providers,
+                google_books_api_key=self.google_books_api_key,
+                opds_url=self.opds_url,
+                opds_username=self.opds_username,
+                opds_password=self.opds_password,
+                limit_per_provider=self.limit_per_provider,
+                cancel_event=self._cancel_event,
+            )
+            self.finished_lookup.emit(res)
+        except Exception as e:
+            logger.error("Ошибка фонового поиска метаданных: %s", e)
+            self.finished_lookup.emit(LookupResult(candidates=[], errors={"lookup": str(e)}))
+
+
+class CoverFetchWorker(QThread):
+    """Фоновый поток Фазы 2: скачивание и дедупликация обложек найденных кандидатов."""
+
+    finished_covers = pyqtSignal(list)
+
+    def __init__(
+        self,
+        candidates,
+        max_covers=8,
+        opds_url="",
+        opds_username="",
+        opds_password="",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.candidates = list(candidates or [])
+        self.max_covers = int(max_covers or 8)
+        self.opds_url = str(opds_url or "")
+        self.opds_username = str(opds_username or "")
+        self.opds_password = str(opds_password or "")
+        self._cancel_event = threading.Event()
+
+    def cancel(self):
+        self._cancel_event.set()
+        self.requestInterruption()
+
+    def run(self):
+        from core.metadata_lookup import fetch_candidate_covers
+
+        try:
+            covers = fetch_candidate_covers(
+                self.candidates,
+                max_covers=self.max_covers,
+                opds_url=self.opds_url,
+                opds_username=self.opds_username,
+                opds_password=self.opds_password,
+                cancel_event=self._cancel_event,
+            )
+            self.finished_covers.emit(covers)
+        except Exception as e:
+            logger.error("Ошибка фоновой загрузки обложек: %s", e)
+            self.finished_covers.emit([])

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -271,12 +272,62 @@ def select_download_url(manifest, platform=None, fallback_url="", machine=None):
     return asset.get("url") or fallback_url
 
 
+MAX_HTTP_REDIRECTS = 5
+_SENSITIVE_REDIRECT_HEADERS = frozenset({"authorization", "x-goog-api-key"})
+_ORIG_URLOPEN = urllib.request.urlopen
+
+
 def _build_ssl_context():
     try:
         import certifi
         return ssl.create_default_context(cafile=certifi.where())
     except Exception:
         return ssl.create_default_context()
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Контролирует HTTP-редиректы: проверяет схему URL, лимит переходов и снимает секретные заголовки на чужой origin."""
+
+    def __init__(self, require_https=True, max_redirects=MAX_HTTP_REDIRECTS):
+        super().__init__()
+        self._require_https = bool(require_https)
+        self._max_redirects = max(0, int(max_redirects))
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        count = int(getattr(req, "_fbc_redirect_count", 0))
+        if count >= self._max_redirects:
+            raise urllib.error.HTTPError(
+                newurl, code, f"Too many redirects (>{self._max_redirects})", headers, fp
+            )
+        resolved = urllib.parse.urljoin(req.full_url, str(newurl or "").strip())
+        if not is_safe_http_url(resolved, allow_relative=False, require_https=self._require_https):
+            raise ValueError(f"Blocked unsafe redirect URL: {resolved}")
+        new_req = super().redirect_request(req, fp, code, msg, headers, resolved)
+        if new_req is None:
+            return None
+        new_req._fbc_redirect_count = count + 1
+        old_p = urllib.parse.urlsplit(req.full_url)
+        new_p = urllib.parse.urlsplit(resolved)
+        if (old_p.scheme.lower(), old_p.netloc.lower()) != (new_p.scheme.lower(), new_p.netloc.lower()):
+            for hdr_dict in (new_req.headers, new_req.unredirected_hdrs):
+                for k in list(hdr_dict.keys()):
+                    if k.lower() in _SENSITIVE_REDIRECT_HEADERS:
+                        del hdr_dict[k]
+        return new_req
+
+
+def safe_urlopen(req, timeout=15, context=None, require_https=True, max_redirects=MAX_HTTP_REDIRECTS):
+    """Безопасная обёртка над urllib.request с проверкой URL, редиректов и TLS-контекста."""
+    url = req.full_url if isinstance(req, urllib.request.Request) else str(req)
+    if not is_safe_http_url(url, allow_relative=False, require_https=require_https):
+        raise ValueError(f"Unsupported URL scheme: {url}")
+    if urllib.request.urlopen is not _ORIG_URLOPEN:
+        return urllib.request.urlopen(req, timeout=timeout, context=context)
+    handlers = [_SafeRedirectHandler(require_https=require_https, max_redirects=max_redirects)]
+    if context is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=context))
+    opener = urllib.request.build_opener(*handlers)
+    return opener.open(req, timeout=timeout)
 
 
 def fetch_update_info(
@@ -310,7 +361,7 @@ def fetch_update_info(
             headers={"User-Agent": f"FBC-GUI/{local_ver}"},
         )
         ctx = _build_ssl_context()
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True) as resp:
             raw_bytes = resp.read(MAX_MANIFEST_BYTES + 1)
         if len(raw_bytes) > MAX_MANIFEST_BYTES:
             raise ValueError("Update manifest exceeds size limit")
@@ -401,7 +452,7 @@ def download_and_verify_update(
     downloaded = 0
 
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp, open(target_path, "wb") as out_fh:
+        with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True) as resp, open(target_path, "wb") as out_fh:
             try:
                 total = max(0, int(resp.headers.get("Content-Length") or 0))
             except (TypeError, ValueError):

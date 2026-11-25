@@ -90,6 +90,56 @@ def get_monochrome_css_ui_state():
     return dict(MONOCHROME_CSS_UI_STATE)
 
 
+VALID_FONT_EXTENSIONS = (".ttf", ".otf", ".woff", ".woff2")
+_FONT_MAGIC_HEADERS = (
+    b"\x00\x01\x00\x00",  # TrueType
+    b"OTTO",              # OpenType CFF
+    b"true",              # Apple TrueType
+    b"typ1",              # PostScript Type 1 sfnt
+    b"ttcf",              # TrueType Collection
+    b"wOFF",              # WOFF
+    b"wOF2",              # WOFF2
+)
+
+
+def is_valid_font_file(filepath):
+    """Проверяет расширение и заголовок файла шрифта (.ttf/.otf/.woff/.woff2)."""
+    if not filepath or not os.path.isfile(filepath):
+        return False
+    if not filepath.lower().endswith(VALID_FONT_EXTENSIONS):
+        return False
+    try:
+        with open(filepath, "rb") as fh:
+            hdr = fh.read(4)
+        return hdr in _FONT_MAGIC_HEADERS
+    except OSError:
+        return False
+
+
+def install_user_fonts(filepaths, fonts_dir):
+    """Валидирует и копирует выбранные пользовательские шрифты в fonts_dir."""
+    import shutil
+
+    os.makedirs(fonts_dir, exist_ok=True)
+    installed = []
+    errors = []
+    for raw_path in (filepaths or []):
+        if not raw_path:
+            continue
+        bname = os.path.basename(raw_path)
+        if not is_valid_font_file(raw_path):
+            errors.append((bname or str(raw_path), "invalid_font"))
+            continue
+        dst = os.path.join(fonts_dir, bname)
+        try:
+            if os.path.abspath(raw_path) != os.path.abspath(dst):
+                shutil.copy2(raw_path, dst)
+            installed.append(bname)
+        except OSError as e:
+            errors.append((bname, str(e)))
+    return installed, errors
+
+
 def parse_ttf_names(font_path):
     """Извлекает метаданные имён (family, full, postscript) из таблицы name TTF/OTF-шрифта."""
     names = {}
@@ -228,8 +278,44 @@ def parse_css_file_to_state(css_path):
     return st
 
 
+_CSS_UNSAFE_RE = re.compile(r'[<>{};"\'\\\r\n\x00-\x1f]')
+_CSS_FORBIDDEN_TOKEN_RE = re.compile(r'(?:url\s*\(|expression\s*\(|@import|javascript\s*:)', re.IGNORECASE)
+
+
+def _sanitize_css_value(val, fallback=""):
+    """Очищает значение CSS-свойства от инъекций (<, >, {, }, ;, кавычек, управляющих символов)."""
+    s = _CSS_UNSAFE_RE.sub("", str(val if val is not None else "")).strip()
+    if not s or _CSS_FORBIDDEN_TOKEN_RE.search(s):
+        return fallback
+    return s
+
+
+def _sanitize_font_filename(val, fallback="__none__"):
+    """Очищает имя файла шрифта, запрещая path traversal и CSS-инъекции."""
+    if val in ("__none__", "Нет", "None", "", None):
+        return "__none__"
+    base = os.path.basename(str(val).replace("\\", "/"))
+    clean = _CSS_UNSAFE_RE.sub("", base).strip()
+    if not clean or clean in (".", "..") or ".." in clean or "(" in clean or ")" in clean:
+        return fallback
+    return clean
+
+
+def _sanitize_css_state(st):
+    """Возвращает санитизированную копию css_ui_state с безопасными значениями по умолчанию."""
+    clean = {}
+    for key, default_val in DEFAULT_CSS_UI_STATE.items():
+        raw = st.get(key, default_val) if isinstance(st, dict) else default_val
+        if key.startswith("font_"):
+            clean[key] = _sanitize_font_filename(raw, default_val)
+        else:
+            clean[key] = _sanitize_css_value(raw, default_val)
+    return clean
+
+
 def generate_css_content(st, fonts_dir):
     """Генерирует содержимое ebook_styles.css на основе словаря стилей."""
+    st = _sanitize_css_state(st)
     h1_sz, h1_cl, h1_al = st["h1_sz"], st["h1_cl"], st["h1_al"]
     auth_sz, auth_cl, auth_al, auth_style = st["auth_sz"], st["auth_cl"], st["auth_al"], st["auth_style"]
     h2_sz, h2_cl, h2_al = st["h2_sz"], st["h2_cl"], st["h2_al"]
@@ -246,9 +332,7 @@ def generate_css_content(st, fonts_dir):
     img_cap_sz, img_cap_cl, img_cap_st = st["img_cap_sz"], st["img_cap_cl"], st["img_cap_st"]
 
     def _norm_font(val, default):
-        if val in ("__none__", "Нет", "None"):
-            return "__none__"
-        return val or default
+        return _sanitize_font_filename(val, default)
 
     para_font = _norm_font(st.get("font_para"), "PT-Astra-Serif_Regular.ttf")
     title_font = _norm_font(st.get("font_title"), "PT-Astra-Serif_Regular.ttf")
@@ -504,45 +588,34 @@ def _build_preview_font_faces(fonts_dir, para_file, title_file, author_file, dro
     }
 
 
-def build_full_preview_html(
-    st,
-    font_families,
-    svg_mode,
-    fonts_dir,
-    app_name,
-    app_version,
-    p_al_lbl,
-    img_al_lbl,
-    for_browser=False,
-    grayscale=False,
-    book_preview=None,
-    dropcaps_enable=True,
-    use_web_engine=False,
-):
-    """Собирает HTML-страницу для встроенного превью (WKWebView / WebView2 / QWebEngineView / QTextEdit) или браузера."""
+def _render_preview_cover_placeholder(author_text, title_text, ctx, series_text=""):
+    """Рендерит типографскую заглушку обложки для предпросмотра."""
     import html as _html
 
-    h1_sz, h1_cl, h1_al = st["h1_sz"], st["h1_cl"], st["h1_al"]
-    auth_sz, auth_cl, auth_al, auth_style = st["auth_sz"], st["auth_cl"], st["auth_al"], st["auth_style"]
-    h2_sz, h2_cl, h2_al = st["h2_sz"], st["h2_cl"], st["h2_al"]
-    h3_sz, h3_cl, h3_al = st["h3_sz"], st["h3_cl"], st["h3_al"]
-    h4_sz, h4_cl, h4_al = st["h4_sz"], st["h4_cl"], st["h4_al"]
-    h5_sz, h5_cl, h5_al = st["h5_sz"], st["h5_cl"], st["h5_al"]
-    p_al, sub_al, indent_val = st["p_align"], st["sub_align"], st["text_indent"]
-    drop_cl, drop_sz = st["drop_color"], st["drop_size"]
-    anno_sz, anno_cl, anno_al, anno_style = st["anno_size"], st["anno_color"], st["anno_align"], st["anno_style"]
-    epi_sz, epi_cl, epi_al, epi_style = st["epi_size"], st["epi_color"], st["epi_align"], st["epi_style"]
-    poem_sz, poem_cl, poem_al, poem_style = st["poem_size"], st["poem_color"], st["poem_align"], st["poem_style"]
-    note_sz, note_cl, note_bg, note_border, note_style = st["note_size"], st["note_color"], st["note_bg"], st["note_border"], st["note_style"]
-    img_al, img_w = st["img_align"], st["img_width"]
-    img_cap_sz, img_cap_cl, img_cap_st = st["img_cap_sz"], st["img_cap_cl"], st["img_cap_st"]
+    a_esc = _html.escape(author_text or "")
+    t_esc = _html.escape(title_text or "")
+    s_esc = _html.escape(series_text or "")
+    s_html = f'<div class="cover-ph-series">{s_esc}</div>' if s_esc else ""
+    return (
+        f'<div class="cover-placeholder" style="{ctx["gray_css"]}">'
+        f'  <div class="cover-ph-inner">'
+        f'    <div class="cover-ph-author" style="font-family: {ctx["author_stack"]}; font-style: {ctx["auth_style"]};">{a_esc}</div>'
+        f'    <div class="cover-ph-ornament">&#10086;</div>'
+        f'    <div class="cover-ph-title" style="font-family: {ctx["title_stack"]};">{t_esc}</div>'
+        f'    {s_html}'
+        f'  </div>'
+        f'</div>'
+    )
 
+
+def _prepare_preview_style_context(st, font_families, fonts_dir, rich_html, grayscale):
+    """Готовит санитизированный контекст стилей и @font-face для предпросмотра."""
+    st = _sanitize_css_state(st)
     para_file = st.get("font_para") or "PT-Astra-Serif_Regular.ttf"
     title_file = st.get("font_title") or "PT-Astra-Serif_Regular.ttf"
     author_file = st.get("font_author") or "PT-Astra-Serif_Regular.ttf"
     drop_file = st.get("font_drop") or "PomorskyUnicode.otf"
 
-    rich_html = bool(for_browser or use_web_engine)
     if rich_html:
         font_faces, stacks = _build_preview_font_faces(
             fonts_dir, para_file, title_file, author_file, drop_file
@@ -561,246 +634,245 @@ def build_full_preview_html(
     def _disp_font(fname):
         return tr("styles.font_none") if fname in ("__none__", "Нет", "None", "") else fname
 
-    para_disp = _disp_font(para_file)
-    title_disp = _disp_font(title_file)
-    author_disp = _disp_font(author_file)
-    drop_disp = _disp_font(drop_file)
-
-    note_bg_css = note_bg if note_bg != "transparent" else "#FDFBF7"
     pf_val = st.get("pdf_frame", "0")
-    page_outline_css = f"outline: {pf_val} solid #EBE8E0;" if pf_val != "0" else ""
-    gray_css = "filter: grayscale(100%);" if grayscale else ""
+    note_bg = st["note_bg"]
+    return {
+        **st,
+        "font_faces": font_faces,
+        "para_stack": para_stack,
+        "title_stack": title_stack,
+        "author_stack": author_stack,
+        "drop_stack": drop_stack,
+        "para_disp": _disp_font(para_file),
+        "title_disp": _disp_font(title_file),
+        "author_disp": _disp_font(author_file),
+        "drop_disp": _disp_font(drop_file),
+        "note_bg_css": note_bg if note_bg != "transparent" else "#FDFBF7",
+        "page_outline_css": f"outline: {pf_val} solid #EBE8E0;" if pf_val != "0" else "",
+        "gray_css": "filter: grayscale(100%);" if grayscale else "",
+    }
 
-    def _render_cover_placeholder(author_text, title_text, series_text=""):
-        a_esc = _html.escape(author_text or "")
-        t_esc = _html.escape(title_text or "")
-        s_esc = _html.escape(series_text or "")
-        s_html = f'<div class="cover-ph-series">{s_esc}</div>' if s_esc else ""
-        return (
-            f'<div class="cover-placeholder" style="{gray_css}">'
-            f'  <div class="cover-ph-inner">'
-            f'    <div class="cover-ph-author" style="font-family: {author_stack}; font-style: {auth_style};">{a_esc}</div>'
-            f'    <div class="cover-ph-ornament">&#10086;</div>'
-            f'    <div class="cover-ph-title" style="font-family: {title_stack};">{t_esc}</div>'
-            f'    {s_html}'
-            f'  </div>'
-            f'</div>'
+
+def _build_book_mode_preview_parts(book_preview, ctx, dropcaps_enable):
+    """Формирует HTML-блоки реальной книги для разворотов предпросмотра."""
+    import html as _html
+
+    running_title = book_preview.get("title") or ""
+    if book_preview.get("series"):
+        running_title = f'{book_preview["series"]} — {running_title}' if running_title else book_preview["series"]
+
+    if book_preview.get("cover_data_uri"):
+        safe_cover_uri = _html.escape(book_preview["cover_data_uri"], quote=True)
+        cover_html = (
+            f'<img class="book-cover-img" src="{safe_cover_uri}" '
+            f'style="{ctx["gray_css"]}">'
         )
-
-    is_book_mode = bool(book_preview and (book_preview.get("title") or book_preview.get("blocks")))
-
-    if is_book_mode:
-        running_title = book_preview.get("title") or ""
-        if book_preview.get("series"):
-            running_title = f'{book_preview["series"]} — {running_title}' if running_title else book_preview["series"]
-
-        if book_preview.get("cover_data_uri"):
-            safe_cover_uri = _html.escape(book_preview["cover_data_uri"], quote=True)
-            cover_html = (
-                f'<img class="book-cover-img" src="{safe_cover_uri}" '
-                f'style="{gray_css}">'
-            )
-        else:
-            cover_html = _render_cover_placeholder(
-                book_preview.get("author", ""),
-                book_preview.get("title", ""),
-                book_preview.get("series", ""),
-            )
-
-        right_parts = []
-        if book_preview.get("author"):
-            right_parts.append(
-                f'<div class="book-author" style="font-family: {author_stack}; font-size: {auth_sz}; color: {auth_cl}; '
-                f'text-align: {auth_al}; font-style: {auth_style}; font-weight: bold; margin: 4px 0 6px 0;">'
-                f'{_html.escape(book_preview["author"])}</div>'
-            )
-        if book_preview.get("title"):
-            right_parts.append(
-                f'<div class="book-title" style="font-family: {title_stack}; font-size: {h1_sz}; color: {h1_cl}; '
-                f'text-align: {h1_al}; font-weight: bold; font-style: normal; margin: 4px 0 8px 0;">'
-                f'{_html.escape(book_preview["title"])}</div>'
-            )
-        if book_preview.get("series"):
-            right_parts.append(
-                f'<div style="font-family: {para_stack}; text-align: {sub_al}; font-style: italic; font-weight: bold; '
-                f'color: #555555; margin-bottom: 14px;">{_html.escape(book_preview["series"])}</div>'
-            )
-        if book_preview.get("annotation"):
-            anno_html = "<br>".join(book_preview["annotation"])
-            right_parts.append(
-                f'<div style="font-family: {para_stack}; font-size: {anno_sz}; color: {anno_cl}; text-align: {anno_al}; '
-                f'font-style: {anno_style}; font-weight: normal; margin: 14px 12px;">{anno_html}</div>'
-            )
-        if book_preview.get("epigraph_lines"):
-            epi_html = "<br>".join(book_preview["epigraph_lines"])
-            right_parts.append(
-                f'<div style="font-family: {para_stack}; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; '
-                f'font-style: {epi_style}; margin-left: 22%; margin-top: 14px; margin-bottom: 4px;">{epi_html}</div>'
-            )
-            if book_preview.get("epigraph_author"):
-                right_parts.append(
-                    f'<div style="font-family: {para_stack}; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; '
-                    f'font-weight: bold; font-style: normal; margin-left: 22%; margin-bottom: 10px;">'
-                    f'{book_preview["epigraph_author"]}</div>'
-                )
-
-        body_parts = []
-        if book_preview.get("chapter_title"):
-            body_parts.append(
-                f'<div class="chapter-heading" style="font-family: {para_stack}; font-size: {h2_sz}; color: {h2_cl}; '
-                f'text-align: {h2_al}; font-weight: bold; font-style: normal; margin: 0 0 12px 0;">'
-                f'{book_preview["chapter_title"]}</div>'
-            )
-
-        dropcap_used = False
-        for btype, bcontent in book_preview.get("blocks", []):
-            if btype == "p":
-                if dropcaps_enable and not dropcap_used:
-                    m_lead = re.match(r'^([^A-Za-zА-Яа-яЁё<]*)([A-Za-zА-Яа-яЁё])([\s\S]*)$', bcontent)
-                    if m_lead:
-                        lead_punct, first_ch, rest = m_lead.group(1), m_lead.group(2), m_lead.group(3)
-                        dropcap_used = True
-                        body_parts.append(
-                            f'<p class="has-dropcap" style="font-family: {para_stack}; font-weight: normal; font-style: normal; '
-                            f'text-indent: 0; text-align: {p_al}; margin: 0;">'
-                            f'{lead_punct}<span class="dropcap" style="font-family: {drop_stack}; font-size: {drop_sz}; '
-                            f'color: {drop_cl}; font-weight: bold; font-style: normal; float: left; line-height: 0.82; '
-                            f'margin: 2px 6px 0 0;">{first_ch}</span>{rest}</p>'
-                        )
-                        continue
-                body_parts.append(
-                    f'<p style="font-family: {para_stack}; font-weight: normal; font-style: normal; '
-                    f'text-indent: {indent_val}; text-align: {p_al}; margin: 0;">{bcontent}</p>'
-                )
-            elif btype == "subtitle":
-                body_parts.append(
-                    f'<div style="font-family: {para_stack}; text-align: {sub_al}; font-style: italic; font-weight: bold; '
-                    f'color: #555555; margin: 10px 0; break-after: avoid;">{bcontent}</div>'
-                )
-            elif btype == "empty":
-                body_parts.append('<div style="height: 0.8em;"></div>')
-            elif btype == "poem":
-                body_parts.append(
-                    f'<div style="font-family: {para_stack}; font-size: {poem_sz}; color: {poem_cl}; text-align: {poem_al}; '
-                    f'font-style: {poem_style}; margin: 10px 1.8em; break-inside: avoid;">{bcontent}</div>'
-                )
-            elif btype == "cite":
-                body_parts.append(
-                    f'<div style="font-family: {para_stack}; font-size: {epi_sz}; color: {epi_cl}; font-style: italic; '
-                    f'margin: 10px 1.2em; padding-left: 10px; border-left: 2px solid #cbd5e1; break-inside: avoid;">{bcontent}</div>'
-                )
-
-        if book_preview.get("footnote_paras"):
-            fn_hdr = f'<div style="font-weight: bold; margin-bottom: 4px;">[{book_preview["footnote_title"]}]</div>' if book_preview.get("footnote_title") else ""
-            fn_body = "<br>".join(book_preview["footnote_paras"])
-            body_parts.append(
-                f'<div style="font-family: {para_stack}; font-size: {note_sz}; color: {note_cl}; '
-                f'background-color: {note_bg_css}; border: {note_border}; font-style: {note_style}; '
-                f'padding: 8px 12px; border-radius: 4px; margin: 12px 0; break-inside: avoid;">'
-                f'{fn_hdr}{fn_body}</div>'
-            )
-
-        # Заполняем правую страницу первого разворота (стр. 2) началом главы, чтобы она была заполнена полностью наравне с обложкой
-        def _plain_len(html_chunk):
-            return len(re.sub(r'<[^>]+>', '', html_chunk or '').strip())
-
-        front_chars = sum(_plain_len(p) for p in right_parts)
-        target_right_chars = 1650
-        if body_parts:
-            right_parts.append('<hr class="divider">')
-            taken = 0
-            acc_chars = front_chars
-            min_take = 4 if front_chars < 900 else 3
-            while taken < len(body_parts):
-                chunk = body_parts[taken]
-                chunk_len = _plain_len(chunk)
-                if taken == 0 and 'class="chapter-heading"' in chunk:
-                    right_parts.append(chunk)
-                    acc_chars += chunk_len + 120
-                    taken += 1
-                    continue
-                if taken >= min_take and acc_chars + chunk_len > target_right_chars:
-                    break
-                right_parts.append(chunk)
-                acc_chars += max(chunk_len, 80)
-                taken += 1
-                if acc_chars >= target_right_chars and taken >= min_take:
-                    break
-            body_parts = body_parts[taken:]
-
-        extra_table_html = ""
     else:
-        running_title = tr("preview.sample_title")
-        cover_html = _render_cover_placeholder(
-            tr("preview.sample_author"),
-            tr("preview.sample_title"),
+        cover_html = _render_preview_cover_placeholder(
+            book_preview.get("author", ""),
+            book_preview.get("title", ""),
+            ctx,
+            book_preview.get("series", ""),
         )
-        right_parts = [
-            f'<div class="book-author" style="font-family: {author_stack}; font-size: {auth_sz}; color: {auth_cl}; '
-            f'text-align: {auth_al}; font-style: {auth_style}; font-weight: bold; margin: 4px 0 6px 0;">'
-            f'{tr("preview.sample_author")}</div>',
-            f'<div class="book-title" style="font-family: {title_stack}; font-size: {h1_sz}; color: {h1_cl}; '
-            f'text-align: {h1_al}; font-weight: bold; font-style: normal; margin: 4px 0 10px 0;">'
-            f'{tr("preview.sample_title")}</div>',
-            f'<div style="font-family: {para_stack}; text-align: {sub_al}; font-style: italic; font-weight: bold; '
-            f'color: #555555; margin-bottom: 14px;">{tr("preview.sample_subtitle")}</div>',
-            f'<div style="font-family: {para_stack}; font-size: {anno_sz}; color: {anno_cl}; text-align: {anno_al}; '
-            f'font-style: {anno_style}; font-weight: normal; margin: 14px 12px;">'
-            f'<b>{tr("preview.sample_anno_lbl")}</b> {tr("preview.sample_anno_txt")}</div>',
-            f'<div style="font-family: {para_stack}; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; '
-            f'font-style: {epi_style}; margin-left: 22%; margin-top: 14px; margin-bottom: 4px;">'
-            f'{tr("preview.sample_epi_txt")}</div>',
-            f'<div style="font-family: {para_stack}; font-size: {epi_sz}; color: {epi_cl}; text-align: {epi_al}; '
-            f'font-weight: bold; font-style: normal; margin-left: 22%; margin-bottom: 10px;">'
-            f'{tr("preview.sample_epi_auth")}</div>',
-            '<hr class="divider">',
-            f'<div class="chapter-heading" style="font-family: {para_stack}; font-size: {h2_sz}; color: {h2_cl}; '
-            f'text-align: {h2_al}; font-weight: bold; font-style: normal; margin: 0 0 10px 0;">'
-            f'{tr("preview.sample_h2")}</div>',
-            f'<p class="has-dropcap" style="font-family: {para_stack}; font-weight: normal; font-style: normal; '
-            f'text-indent: 0; text-align: {p_al}; margin: 0;">'
-            f'<span class="dropcap" style="font-family: {drop_stack}; font-size: {drop_sz}; color: {drop_cl}; '
-            f'font-weight: bold; font-style: normal; float: left; line-height: 0.82; margin: 2px 6px 0 0;">'
-            f'{tr("preview.sample_drop_letter")}</span>{tr("preview.sample_p1")}</p>',
-            f'<p style="font-family: {para_stack}; font-weight: normal; font-style: normal; '
-            f'text-indent: {indent_val}; text-align: {p_al}; margin: 0;">'
-            f'{tr("preview.sample_p2", indent=indent_val)}</p>',
-        ]
-        body_parts = [
-            f'<div style="text-align: {img_al}; margin: 12px 0; break-inside: avoid;">'
-            f'  <div style="display: inline-block; width: {img_w}; max-width: 100%; box-sizing: border-box; border: 1px solid #d5cfc2; '
-            f'border-radius: 6px; padding: 8px 10px; background-color: #FAF7F0;">'
-            f'    <svg width="160" height="32" viewBox="0 0 180 36" xmlns="http://www.w3.org/2000/svg" style="{gray_css}">'
-            f'      <line x1="10" y1="18" x2="68" y2="18" stroke="{h2_cl}" stroke-width="1.5"/>'
-            f'      <polygon points="90,6 98,18 90,30 82,18" fill="{h1_cl}"/>'
-            f'      <line x1="112" y1="18" x2="170" y2="18" stroke="{h2_cl}" stroke-width="1.5"/>'
-            f'    </svg>'
-            f'    <div style="font-family: {para_stack}; font-size: {img_cap_sz}; color: {img_cap_cl}; '
-            f'font-style: {img_cap_st}; margin-top: 4px;">'
-            f'{tr("preview.sample_img_cap", w=img_w, svg_mode=svg_mode)}</div>'
-            f'  </div>'
-            f'</div>',
-            f'<div style="font-family: {para_stack}; text-align: {sub_al}; font-style: italic; font-weight: bold; '
-            f'color: #555555; margin: 10px 0; break-after: avoid;">{tr("preview.sample_scene_sub")}</div>',
-            f'<div style="font-family: {para_stack}; font-size: {h3_sz}; color: {h3_cl}; text-align: {h3_al}; '
-            f'font-weight: bold; font-style: normal; margin: 12px 0 6px 0; break-after: avoid;">{tr("preview.sample_h3")}</div>',
-            f'<p style="font-family: {para_stack}; font-weight: normal; font-style: normal; '
-            f'text-indent: {indent_val}; text-align: {p_al}; margin: 0;">{tr("preview.sample_p3")}</p>',
-            f'<div style="font-family: {para_stack}; font-size: {poem_sz}; color: {poem_cl}; text-align: {poem_al}; '
-            f'font-style: {poem_style}; margin: 10px 1.8em; break-inside: avoid;">{tr("preview.sample_poem")}</div>',
-            f'<div style="font-family: {para_stack}; font-size: {h4_sz}; color: {h4_cl}; text-align: {h4_al}; '
-            f'font-weight: bold; font-style: normal; margin: 12px 0 6px 0; break-after: avoid;">{tr("preview.sample_h4")}</div>',
-            f'<div style="font-family: {para_stack}; font-size: {note_sz}; color: {note_cl}; '
-            f'background-color: {note_bg_css}; border: {note_border}; font-style: {note_style}; '
-            f'padding: 8px 12px; border-radius: 4px; margin: 10px 0; break-inside: avoid;">'
-            f'<div style="font-weight: bold; margin-bottom: 4px;">{tr("preview.sample_note_hdr")}</div>'
-            f'{tr("preview.sample_note_txt", sz=note_sz, cl=note_cl, bg=note_bg, brd=note_border)}</div>',
-            f'<div style="font-family: {para_stack}; font-size: {h5_sz}; color: {h5_cl}; text-align: {h5_al}; '
-            f'font-weight: bold; font-style: normal; margin: 12px 0 6px 0; break-after: avoid;">{tr("preview.sample_h5")}</div>',
-        ]
-        extra_table_html = f"""
+
+    right_parts = []
+    if book_preview.get("author"):
+        right_parts.append(
+            f'<div class="book-author" style="font-family: {ctx["author_stack"]}; font-size: {ctx["auth_sz"]}; color: {ctx["auth_cl"]}; '
+            f'text-align: {ctx["auth_al"]}; font-style: {ctx["auth_style"]}; font-weight: bold; margin: 4px 0 6px 0;">'
+            f'{_html.escape(book_preview["author"])}</div>'
+        )
+    if book_preview.get("title"):
+        right_parts.append(
+            f'<div class="book-title" style="font-family: {ctx["title_stack"]}; font-size: {ctx["h1_sz"]}; color: {ctx["h1_cl"]}; '
+            f'text-align: {ctx["h1_al"]}; font-weight: bold; font-style: normal; margin: 4px 0 8px 0;">'
+            f'{_html.escape(book_preview["title"])}</div>'
+        )
+    if book_preview.get("series"):
+        right_parts.append(
+            f'<div style="font-family: {ctx["para_stack"]}; text-align: {ctx["sub_align"]}; font-style: italic; font-weight: bold; '
+            f'color: #555555; margin-bottom: 14px;">{_html.escape(book_preview["series"])}</div>'
+        )
+    if book_preview.get("annotation"):
+        anno_html = "<br>".join(book_preview["annotation"])
+        right_parts.append(
+            f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["anno_size"]}; color: {ctx["anno_color"]}; text-align: {ctx["anno_align"]}; '
+            f'font-style: {ctx["anno_style"]}; font-weight: normal; margin: 14px 12px;">{anno_html}</div>'
+        )
+    if book_preview.get("epigraph_lines"):
+        epi_html = "<br>".join(book_preview["epigraph_lines"])
+        right_parts.append(
+            f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["epi_size"]}; color: {ctx["epi_color"]}; text-align: {ctx["epi_align"]}; '
+            f'font-style: {ctx["epi_style"]}; margin-left: 22%; margin-top: 14px; margin-bottom: 4px;">{epi_html}</div>'
+        )
+        if book_preview.get("epigraph_author"):
+            right_parts.append(
+                f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["epi_size"]}; color: {ctx["epi_color"]}; text-align: {ctx["epi_align"]}; '
+                f'font-weight: bold; font-style: normal; margin-left: 22%; margin-bottom: 10px;">'
+                f'{book_preview["epigraph_author"]}</div>'
+            )
+
+    body_parts = []
+    if book_preview.get("chapter_title"):
+        body_parts.append(
+            f'<div class="chapter-heading" style="font-family: {ctx["para_stack"]}; font-size: {ctx["h2_sz"]}; color: {ctx["h2_cl"]}; '
+            f'text-align: {ctx["h2_al"]}; font-weight: bold; font-style: normal; margin: 0 0 12px 0;">'
+            f'{book_preview["chapter_title"]}</div>'
+        )
+
+    dropcap_used = False
+    for btype, bcontent in book_preview.get("blocks", []):
+        if btype == "p":
+            if dropcaps_enable and not dropcap_used:
+                m_lead = re.match(r'^([^A-Za-zА-Яа-яЁё<]*)([A-Za-zА-Яа-яЁё])([\s\S]*)$', bcontent)
+                if m_lead:
+                    lead_punct, first_ch, rest = m_lead.group(1), m_lead.group(2), m_lead.group(3)
+                    dropcap_used = True
+                    body_parts.append(
+                        f'<p class="has-dropcap" style="font-family: {ctx["para_stack"]}; font-weight: normal; font-style: normal; '
+                        f'text-indent: 0; text-align: {ctx["p_align"]}; margin: 0;">'
+                        f'{lead_punct}<span class="dropcap" style="font-family: {ctx["drop_stack"]}; font-size: {ctx["drop_size"]}; '
+                        f'color: {ctx["drop_color"]}; font-weight: bold; font-style: normal; float: left; line-height: 0.82; '
+                        f'margin: 2px 6px 0 0;">{first_ch}</span>{rest}</p>'
+                    )
+                    continue
+            body_parts.append(
+                f'<p style="font-family: {ctx["para_stack"]}; font-weight: normal; font-style: normal; '
+                f'text-indent: {ctx["text_indent"]}; text-align: {ctx["p_align"]}; margin: 0;">{bcontent}</p>'
+            )
+        elif btype == "subtitle":
+            body_parts.append(
+                f'<div style="font-family: {ctx["para_stack"]}; text-align: {ctx["sub_align"]}; font-style: italic; font-weight: bold; '
+                f'color: #555555; margin: 10px 0; break-after: avoid;">{bcontent}</div>'
+            )
+        elif btype == "empty":
+            body_parts.append('<div style="height: 0.8em;"></div>')
+        elif btype == "poem":
+            body_parts.append(
+                f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["poem_size"]}; color: {ctx["poem_color"]}; text-align: {ctx["poem_align"]}; '
+                f'font-style: {ctx["poem_style"]}; margin: 10px 1.8em; break-inside: avoid;">{bcontent}</div>'
+            )
+        elif btype == "cite":
+            body_parts.append(
+                f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["epi_size"]}; color: {ctx["epi_color"]}; font-style: italic; '
+                f'margin: 10px 1.2em; padding-left: 10px; border-left: 2px solid #cbd5e1; break-inside: avoid;">{bcontent}</div>'
+            )
+
+    if book_preview.get("footnote_paras"):
+        fn_hdr = f'<div style="font-weight: bold; margin-bottom: 4px;">[{book_preview["footnote_title"]}]</div>' if book_preview.get("footnote_title") else ""
+        fn_body = "<br>".join(book_preview["footnote_paras"])
+        body_parts.append(
+            f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["note_size"]}; color: {ctx["note_color"]}; '
+            f'background-color: {ctx["note_bg_css"]}; border: {ctx["note_border"]}; font-style: {ctx["note_style"]}; '
+            f'padding: 8px 12px; border-radius: 4px; margin: 12px 0; break-inside: avoid;">'
+            f'{fn_hdr}{fn_body}</div>'
+        )
+
+    # Заполняем правую страницу первого разворота (стр. 2) началом главы
+    def _plain_len(html_chunk):
+        return len(re.sub(r'<[^>]+>', '', html_chunk or '').strip())
+
+    front_chars = sum(_plain_len(p) for p in right_parts)
+    target_right_chars = 1650
+    if body_parts:
+        right_parts.append('<hr class="divider">')
+        taken = 0
+        acc_chars = front_chars
+        min_take = 4 if front_chars < 900 else 3
+        while taken < len(body_parts):
+            chunk = body_parts[taken]
+            chunk_len = _plain_len(chunk)
+            if taken == 0 and 'class="chapter-heading"' in chunk:
+                right_parts.append(chunk)
+                acc_chars += chunk_len + 120
+                taken += 1
+                continue
+            if taken >= min_take and acc_chars + chunk_len > target_right_chars:
+                break
+            right_parts.append(chunk)
+            acc_chars += max(chunk_len, 80)
+            taken += 1
+            if acc_chars >= target_right_chars and taken >= min_take:
+                break
+        body_parts = body_parts[taken:]
+
+    return running_title, cover_html, right_parts, body_parts, ""
+
+
+def _build_sample_mode_preview_parts(ctx, svg_mode, p_al_lbl, img_al_lbl):
+    """Формирует HTML-блоки встроенного образца для предпросмотра стилей."""
+    running_title = tr("preview.sample_title")
+    cover_html = _render_preview_cover_placeholder(
+        tr("preview.sample_author"),
+        tr("preview.sample_title"),
+        ctx,
+    )
+    right_parts = [
+        f'<div class="book-author" style="font-family: {ctx["author_stack"]}; font-size: {ctx["auth_sz"]}; color: {ctx["auth_cl"]}; '
+        f'text-align: {ctx["auth_al"]}; font-style: {ctx["auth_style"]}; font-weight: bold; margin: 4px 0 6px 0;">'
+        f'{tr("preview.sample_author")}</div>',
+        f'<div class="book-title" style="font-family: {ctx["title_stack"]}; font-size: {ctx["h1_sz"]}; color: {ctx["h1_cl"]}; '
+        f'text-align: {ctx["h1_al"]}; font-weight: bold; font-style: normal; margin: 4px 0 10px 0;">'
+        f'{tr("preview.sample_title")}</div>',
+        f'<div style="font-family: {ctx["para_stack"]}; text-align: {ctx["sub_align"]}; font-style: italic; font-weight: bold; '
+        f'color: #555555; margin-bottom: 14px;">{tr("preview.sample_subtitle")}</div>',
+        f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["anno_size"]}; color: {ctx["anno_color"]}; text-align: {ctx["anno_align"]}; '
+        f'font-style: {ctx["anno_style"]}; font-weight: normal; margin: 14px 12px;">'
+        f'<b>{tr("preview.sample_anno_lbl")}</b> {tr("preview.sample_anno_txt")}</div>',
+        f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["epi_size"]}; color: {ctx["epi_color"]}; text-align: {ctx["epi_align"]}; '
+        f'font-style: {ctx["epi_style"]}; margin-left: 22%; margin-top: 14px; margin-bottom: 4px;">'
+        f'{tr("preview.sample_epi_txt")}</div>',
+        f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["epi_size"]}; color: {ctx["epi_color"]}; text-align: {ctx["epi_align"]}; '
+        f'font-weight: bold; font-style: normal; margin-left: 22%; margin-bottom: 10px;">'
+        f'{tr("preview.sample_epi_auth")}</div>',
+        '<hr class="divider">',
+        f'<div class="chapter-heading" style="font-family: {ctx["para_stack"]}; font-size: {ctx["h2_sz"]}; color: {ctx["h2_cl"]}; '
+        f'text-align: {ctx["h2_al"]}; font-weight: bold; font-style: normal; margin: 0 0 10px 0;">'
+        f'{tr("preview.sample_h2")}</div>',
+        f'<p class="has-dropcap" style="font-family: {ctx["para_stack"]}; font-weight: normal; font-style: normal; '
+        f'text-indent: 0; text-align: {ctx["p_align"]}; margin: 0;">'
+        f'<span class="dropcap" style="font-family: {ctx["drop_stack"]}; font-size: {ctx["drop_size"]}; color: {ctx["drop_color"]}; '
+        f'font-weight: bold; font-style: normal; float: left; line-height: 0.82; margin: 2px 6px 0 0;">'
+        f'{tr("preview.sample_drop_letter")}</span>{tr("preview.sample_p1")}</p>',
+        f'<p style="font-family: {ctx["para_stack"]}; font-weight: normal; font-style: normal; '
+        f'text-indent: {ctx["text_indent"]}; text-align: {ctx["p_align"]}; margin: 0;">'
+        f'{tr("preview.sample_p2", indent=ctx["text_indent"])}</p>',
+    ]
+    body_parts = [
+        f'<div style="text-align: {ctx["img_align"]}; margin: 12px 0; break-inside: avoid;">'
+        f'  <div style="display: inline-block; width: {ctx["img_width"]}; max-width: 100%; box-sizing: border-box; border: 1px solid #d5cfc2; '
+        f'border-radius: 6px; padding: 8px 10px; background-color: #FAF7F0;">'
+        f'    <svg width="160" height="32" viewBox="0 0 180 36" xmlns="http://www.w3.org/2000/svg" style="{ctx["gray_css"]}">'
+        f'      <line x1="10" y1="18" x2="68" y2="18" stroke="{ctx["h2_cl"]}" stroke-width="1.5"/>'
+        f'      <polygon points="90,6 98,18 90,30 82,18" fill="{ctx["h1_cl"]}"/>'
+        f'      <line x1="112" y1="18" x2="170" y2="18" stroke="{ctx["h2_cl"]}" stroke-width="1.5"/>'
+        f'    </svg>'
+        f'    <div style="font-family: {ctx["para_stack"]}; font-size: {ctx["img_cap_sz"]}; color: {ctx["img_cap_cl"]}; '
+        f'font-style: {ctx["img_cap_st"]}; margin-top: 4px;">'
+        f'{tr("preview.sample_img_cap", w=ctx["img_width"], svg_mode=svg_mode)}</div>'
+        f'  </div>'
+        f'</div>',
+        f'<div style="font-family: {ctx["para_stack"]}; text-align: {ctx["sub_align"]}; font-style: italic; font-weight: bold; '
+        f'color: #555555; margin: 10px 0; break-after: avoid;">{tr("preview.sample_scene_sub")}</div>',
+        f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["h3_sz"]}; color: {ctx["h3_cl"]}; text-align: {ctx["h3_al"]}; '
+        f'font-weight: bold; font-style: normal; margin: 12px 0 6px 0; break-after: avoid;">{tr("preview.sample_h3")}</div>',
+        f'<p style="font-family: {ctx["para_stack"]}; font-weight: normal; font-style: normal; '
+        f'text-indent: {ctx["text_indent"]}; text-align: {ctx["p_align"]}; margin: 0;">{tr("preview.sample_p3")}</p>',
+        f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["poem_size"]}; color: {ctx["poem_color"]}; text-align: {ctx["poem_align"]}; '
+        f'font-style: {ctx["poem_style"]}; margin: 10px 1.8em; break-inside: avoid;">{tr("preview.sample_poem")}</div>',
+        f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["h4_sz"]}; color: {ctx["h4_cl"]}; text-align: {ctx["h4_al"]}; '
+        f'font-weight: bold; font-style: normal; margin: 12px 0 6px 0; break-after: avoid;">{tr("preview.sample_h4")}</div>',
+        f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["note_size"]}; color: {ctx["note_color"]}; '
+        f'background-color: {ctx["note_bg_css"]}; border: {ctx["note_border"]}; font-style: {ctx["note_style"]}; '
+        f'padding: 8px 12px; border-radius: 4px; margin: 10px 0; break-inside: avoid;">'
+        f'<div style="font-weight: bold; margin-bottom: 4px;">{tr("preview.sample_note_hdr")}</div>'
+        f'{tr("preview.sample_note_txt", sz=ctx["note_size"], cl=ctx["note_color"], bg=ctx["note_bg"], brd=ctx["note_border"])}</div>',
+        f'<div style="font-family: {ctx["para_stack"]}; font-size: {ctx["h5_sz"]}; color: {ctx["h5_cl"]}; text-align: {ctx["h5_al"]}; '
+        f'font-weight: bold; font-style: normal; margin: 12px 0 6px 0; break-after: avoid;">{tr("preview.sample_h5")}</div>',
+    ]
+    extra_table_html = f"""
     <div class="book-meta-card">
-        <table style="width: 100%; border-collapse: collapse; font-family: {para_stack}; font-size: 90%; color: #222222;" border="1" bordercolor="#ccc5b8" cellpadding="6" cellspacing="0">
+        <table style="width: 100%; border-collapse: collapse; font-family: {ctx["para_stack"]}; font-size: 90%; color: #222222;" border="1" bordercolor="#ccc5b8" cellpadding="6" cellspacing="0">
             <tr style="background-color: #EAE6DC; font-weight: bold;">
                 <th align="left">{tr("preview.tbl_col_elem")}</th>
                 <th align="left">{tr("preview.tbl_col_font")}</th>
@@ -808,53 +880,50 @@ def build_full_preview_html(
             </tr>
             <tr>
                 <td>{tr("preview.tbl_row_author")}</td>
-                <td>{author_disp}</td>
-                <td>{auth_cl}, {auth_sz}, {auth_style}</td>
+                <td>{ctx["author_disp"]}</td>
+                <td>{ctx["auth_cl"]}, {ctx["auth_sz"]}, {ctx["auth_style"]}</td>
             </tr>
             <tr>
                 <td>{tr("preview.tbl_row_title")}</td>
-                <td>{title_disp}</td>
-                <td>{h1_cl}, {h1_sz}</td>
+                <td>{ctx["title_disp"]}</td>
+                <td>{ctx["h1_cl"]}, {ctx["h1_sz"]}</td>
             </tr>
             <tr>
                 <td>{tr("preview.tbl_row_body")}</td>
-                <td>{para_disp}</td>
-                <td>{tr("preview.tbl_row_body_val", indent=indent_val, align=p_al_lbl)}</td>
+                <td>{ctx["para_disp"]}</td>
+                <td>{tr("preview.tbl_row_body_val", indent=ctx["text_indent"], align=p_al_lbl)}</td>
             </tr>
             <tr>
                 <td>{tr("preview.tbl_row_drop")}</td>
-                <td>{drop_disp}</td>
-                <td>{drop_cl}, {drop_sz}</td>
+                <td>{ctx["drop_disp"]}</td>
+                <td>{ctx["drop_color"]}, {ctx["drop_size"]}</td>
             </tr>
             <tr>
                 <td>{tr("preview.tbl_row_img")}</td>
                 <td>{svg_mode}</td>
-                <td>{tr("preview.tbl_row_img_val", w=img_w, align=img_al_lbl)}</td>
+                <td>{tr("preview.tbl_row_img_val", w=ctx["img_width"], align=img_al_lbl)}</td>
             </tr>
         </table>
     </div>"""
+    return running_title, cover_html, right_parts, body_parts, extra_table_html
 
-    right_inner = "\n            ".join(right_parts)
-    body_inner = "\n            ".join(body_parts)
-    running_header_esc = _html.escape(running_title)
-    footer_note = tr("preview.sample_footer", app=app_name, ver=app_version)
 
-    # Для резервного QTextEdit (rich_html=False) отдаём двухколоночные развороты на таблицах HTML
-    if not rich_html:
-        fallback_spread2 = ""
-        if body_parts:
-            weights = [max(len(re.sub(r'<[^>]+>', '', p)), 60) for p in body_parts]
-            half = sum(weights) / 2.0
-            acc = 0
-            split_idx = max(1, len(body_parts) // 2)
-            for idx_p, w_p in enumerate(weights):
-                acc += w_p
-                if acc >= half:
-                    split_idx = idx_p + 1
-                    break
-            left_col_html = "\n".join(body_parts[:split_idx])
-            right_col_html = "\n".join(body_parts[split_idx:])
-            fallback_spread2 = f"""
+def _render_preview_fallback_html(ctx, app_name, running_header_esc, cover_html, right_inner, body_parts, extra_table_html, footer_note):
+    """Собирает упрощённый табличный HTML-документ для резервного QTextEdit."""
+    fallback_spread2 = ""
+    if body_parts:
+        weights = [max(len(re.sub(r'<[^>]+>', '', p)), 60) for p in body_parts]
+        half = sum(weights) / 2.0
+        acc = 0
+        split_idx = max(1, len(body_parts) // 2)
+        for idx_p, w_p in enumerate(weights):
+            acc += w_p
+            if acc >= half:
+                split_idx = idx_p + 1
+                break
+        left_col_html = "\n".join(body_parts[:split_idx])
+        right_col_html = "\n".join(body_parts[split_idx:])
+        fallback_spread2 = f"""
 <hr class="divider">
 <div style="text-align: center; font-size: 85%; color: #8A857C; margin-bottom: 10px;">{running_header_esc}</div>
 <table width="100%" cellpadding="14" cellspacing="0">
@@ -868,7 +937,7 @@ def build_full_preview_html(
     </tr>
 </table>"""
 
-        return f"""<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -877,7 +946,7 @@ def build_full_preview_html(
     body {{
         background-color: #FDFBF7;
         color: #222222;
-        font-family: {para_stack};
+        font-family: {ctx["para_stack"]};
         font-style: normal;
         font-weight: normal;
         margin: 0;
@@ -912,76 +981,57 @@ def build_full_preview_html(
 </body>
 </html>"""
 
-    text_spread_html = ""
-    if body_parts:
-        text_spread_html = f"""
-    <section class="book-spread text-spread">
-        <div class="spread-header">{running_header_esc}</div>
-        <div class="book-columns">
-            {body_inner}
-        </div>
-        <div class="spread-footer">
-            <span class="page-num">3</span>
-            <span class="page-num">4</span>
-        </div>
-    </section>"""
 
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>{tr("preview.html_title", app=app_name)}</title>
-<style>
-    {font_faces}
-    * {{
+_PREVIEW_RICH_CSS_TEMPLATE = """    __FONT_FACES__
+    * {
         box-sizing: border-box;
-    }}
-    body {{
+    }
+    body {
         background-color: #E5E1D8;
         color: #1E1E1E;
-        font-family: {para_stack};
+        font-family: __PARA_STACK__;
         font-weight: normal;
         font-style: normal;
         font-size: 15px;
         margin: 0;
         padding: 24px 20px 32px 20px;
         line-height: 1.48;
-    }}
-    .book-container {{
+    }
+    .book-container {
         max-width: 1120px;
         margin: 0 auto;
         display: flex;
         flex-direction: column;
         gap: 28px;
-    }}
-    .book-spread {{
+    }
+    .book-spread {
         position: relative;
         background-color: #FDFBF7;
         border-radius: 6px;
         box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14), 0 1px 4px rgba(0, 0, 0, 0.08);
-        {page_outline_css}
+        __PAGE_OUTLINE_CSS__
         overflow: hidden;
-    }}
-    .title-spread {{
+    }
+    .title-spread {
         display: grid;
         grid-template-columns: 1fr 1fr;
         min-height: 600px;
-    }}
-    .book-page {{
+    }
+    .book-page {
         position: relative;
         display: flex;
         flex-direction: column;
         min-width: 0;
-    }}
-    .cover-page {{
+    }
+    .cover-page {
         align-items: stretch;
         justify-content: stretch;
         padding: 0;
         background: #FDFBF7;
         border-right: 1px solid #E5DFD3;
         overflow: hidden;
-    }}
-    .cover-page::after {{
+    }
+    .cover-page::after {
         content: "";
         position: absolute;
         top: 0;
@@ -990,8 +1040,8 @@ def build_full_preview_html(
         width: 22px;
         background: linear-gradient(to right, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.14) 100%);
         pointer-events: none;
-    }}
-    .book-cover-img {{
+    }
+    .book-cover-img {
         display: block;
         width: 100%;
         height: 100%;
@@ -1000,8 +1050,8 @@ def build_full_preview_html(
         object-position: center;
         border-radius: 0;
         box-shadow: none;
-    }}
-    .cover-placeholder {{
+    }
+    .cover-placeholder {
         width: 100%;
         height: 100%;
         min-height: 600px;
@@ -1013,8 +1063,8 @@ def build_full_preview_html(
         display: flex;
         align-items: stretch;
         justify-content: center;
-    }}
-    .cover-ph-inner {{
+    }
+    .cover-ph-inner {
         flex: 1;
         border: 2px double #B8AA92;
         padding: 28px 20px;
@@ -1024,35 +1074,35 @@ def build_full_preview_html(
         justify-content: center;
         text-align: center;
         gap: 14px;
-    }}
-    .cover-ph-author {{
+    }
+    .cover-ph-author {
         font-size: 16px;
         color: #4A4338;
         letter-spacing: 0.03em;
-    }}
-    .cover-ph-ornament {{
+    }
+    .cover-ph-ornament {
         font-size: 20px;
         color: #9C8B70;
-    }}
-    .cover-ph-title {{
+    }
+    .cover-ph-title {
         font-size: 24px;
         font-weight: bold;
         color: #2B241B;
         line-height: 1.25;
-    }}
-    .cover-ph-series {{
+    }
+    .cover-ph-series {
         font-size: 13px;
         color: #6B6254;
         font-style: italic;
         margin-top: 6px;
-    }}
-    .title-page {{
+    }
+    .title-page {
         justify-content: space-between;
         padding: 22px 44px 18px 46px;
         background: linear-gradient(to left, #FDFBF7 94%, #F6F2EA 100%);
         box-shadow: inset 18px 0 24px -18px rgba(0, 0, 0, 0.14);
-    }}
-    .running-header, .spread-header {{
+    }
+    .running-header, .spread-header {
         text-align: center;
         font-size: 12px;
         font-style: normal;
@@ -1060,23 +1110,23 @@ def build_full_preview_html(
         color: #8A857C;
         letter-spacing: 0.01em;
         min-height: 18px;
-    }}
-    .title-page-body {{
+    }
+    .title-page-body {
         margin: auto 0;
         padding: 14px 0;
-    }}
-    .page-num {{
+    }
+    .page-num {
         display: block;
         text-align: center;
         font-size: 12px;
         font-style: normal;
         font-weight: normal;
         color: #8A857C;
-    }}
-    .text-spread {{
+    }
+    .text-spread {
         padding: 22px 44px 18px 44px;
-    }}
-    .text-spread::before {{
+    }
+    .text-spread::before {
         content: "";
         position: absolute;
         top: 0;
@@ -1093,83 +1143,120 @@ def build_full_preview_html(
             rgba(0, 0, 0, 0) 100%
         );
         pointer-events: none;
-    }}
-    .spread-header {{
+    }
+    .spread-header {
         margin-bottom: 16px;
-    }}
-    .book-columns {{
+    }
+    .book-columns {
         column-count: 2;
         column-gap: 72px;
         column-fill: balance;
         min-height: 520px;
         hyphens: auto;
         -webkit-hyphens: auto;
-    }}
-    .book-columns p {{
+    }
+    .book-columns p {
         font-style: normal;
         font-weight: normal;
         line-height: 1.45;
         margin: 0;
         orphans: 2;
         widows: 2;
-    }}
-    .chapter-heading {{
+    }
+    .chapter-heading {
         break-after: avoid;
         -webkit-column-break-after: avoid;
-    }}
-    .spread-footer {{
+    }
+    .spread-footer {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 72px;
         margin-top: 18px;
-    }}
-    .divider {{
+    }
+    .divider {
         border: none;
         border-top: 1px dashed #d5cfc2;
         margin: 14px 0;
-    }}
-    .book-meta-card {{
+    }
+    .book-meta-card {
         background-color: #FDFBF7;
         border-radius: 6px;
         padding: 18px 24px;
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10);
-    }}
-    .preview-footer {{
+    }
+    .preview-footer {
         text-align: center;
         font-size: 12px;
         font-style: italic;
         color: #777268;
         margin-top: 2px;
-    }}
-    @media (max-width: 760px) {{
-        .title-spread {{
+    }
+    @media (max-width: 760px) {
+        .title-spread {
             grid-template-columns: 1fr;
-        }}
-        .cover-page {{
+        }
+        .cover-page {
             border-right: none;
             border-bottom: 1px solid #E5DFD3;
             box-shadow: none;
-        }}
-        .cover-page::after {{
+        }
+        .cover-page::after {
             display: none;
-        }}
-        .book-cover-img {{
+        }
+        .book-cover-img {
             min-height: 0;
             max-height: 75vh;
-        }}
-        .title-page {{
+        }
+        .title-page {
             box-shadow: none;
-        }}
-        .text-spread::before {{
+        }
+        .text-spread::before {
             display: none;
-        }}
-        .book-columns {{
+        }
+        .book-columns {
             column-count: 1;
-        }}
-        .spread-footer {{
+        }
+        .spread-footer {
             grid-template-columns: 1fr;
-        }}
-    }}
+        }
+    }"""
+
+
+def _build_preview_stylesheet(ctx):
+    """Формирует CSS-стили двухстраничного предпросмотра из шаблона и контекста."""
+    return (
+        _PREVIEW_RICH_CSS_TEMPLATE
+        .replace("__FONT_FACES__", ctx["font_faces"])
+        .replace("__PARA_STACK__", ctx["para_stack"])
+        .replace("__PAGE_OUTLINE_CSS__", ctx["page_outline_css"])
+    )
+
+
+def _render_preview_rich_html(ctx, app_name, running_header_esc, cover_html, right_inner, body_parts, extra_table_html, footer_note):
+    """Собирает полноценный HTML-документ с двухстраничными разворотами для WebView/браузера."""
+    body_inner = "\n            ".join(body_parts)
+    text_spread_html = ""
+    if body_parts:
+        text_spread_html = f"""
+    <section class="book-spread text-spread">
+        <div class="spread-header">{running_header_esc}</div>
+        <div class="book-columns">
+            {body_inner}
+        </div>
+        <div class="spread-footer">
+            <span class="page-num">3</span>
+            <span class="page-num">4</span>
+        </div>
+    </section>"""
+
+    stylesheet = _build_preview_stylesheet(ctx)
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{tr("preview.html_title", app=app_name)}</title>
+<style>
+{stylesheet}
 </style>
 </head>
 <body>
@@ -1192,3 +1279,47 @@ def build_full_preview_html(
 </div>
 </body>
 </html>"""
+
+
+def build_full_preview_html(
+    st,
+    font_families,
+    svg_mode,
+    fonts_dir,
+    app_name,
+    app_version,
+    p_al_lbl,
+    img_al_lbl,
+    for_browser=False,
+    grayscale=False,
+    book_preview=None,
+    dropcaps_enable=True,
+    use_web_engine=False,
+):
+    """Собирает HTML-страницу для встроенного превью (WKWebView / WebView2 / QWebEngineView / QTextEdit) или браузера."""
+    import html as _html
+
+    rich_html = bool(for_browser or use_web_engine)
+    ctx = _prepare_preview_style_context(st, font_families, fonts_dir, rich_html, grayscale)
+    is_book_mode = bool(book_preview and (book_preview.get("title") or book_preview.get("blocks")))
+
+    if is_book_mode:
+        running_title, cover_html, right_parts, body_parts, extra_table_html = _build_book_mode_preview_parts(
+            book_preview, ctx, dropcaps_enable
+        )
+    else:
+        running_title, cover_html, right_parts, body_parts, extra_table_html = _build_sample_mode_preview_parts(
+            ctx, svg_mode, p_al_lbl, img_al_lbl
+        )
+
+    right_inner = "\n            ".join(right_parts)
+    running_header_esc = _html.escape(running_title)
+    footer_note = tr("preview.sample_footer", app=app_name, ver=app_version)
+
+    if not rich_html:
+        return _render_preview_fallback_html(
+            ctx, app_name, running_header_esc, cover_html, right_inner, body_parts, extra_table_html, footer_note
+        )
+    return _render_preview_rich_html(
+        ctx, app_name, running_header_esc, cover_html, right_inner, body_parts, extra_table_html, footer_note
+    )
