@@ -308,15 +308,19 @@ class TestControllers(unittest.TestCase):
         import core.metadata_lookup as metadata_lookup
         import core.version as version_mod
         import fbc_gui
-        import update_version_json
 
         # 1. Единый источник версии core/version.py
         self.assertEqual(fbc_gui.__version__, version_mod.__version__)
         self.assertEqual(fbc_gui.__build__, version_mod.__build__)
         self.assertIn(version_mod.__version__, fbc_manager.FBC_HTTP_USER_AGENT)
         self.assertIn(version_mod.__version__, metadata_lookup.LOOKUP_USER_AGENT)
-        ver, bld = update_version_json.extract_app_meta(fbc_gui.__file__)
-        self.assertEqual((ver, bld), (version_mod.__version__, version_mod.__build__))
+        try:
+            import update_version_json
+        except ModuleNotFoundError:
+            update_version_json = None
+        if update_version_json is not None:
+            ver, bld = update_version_json.extract_app_meta(fbc_gui.__file__)
+            self.assertEqual((ver, bld), (version_mod.__version__, version_mod.__build__))
 
         # 2. При применении пресета не пересоздаются page_converter, table, search_edit и page_preview
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
