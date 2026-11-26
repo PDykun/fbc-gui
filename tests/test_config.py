@@ -498,6 +498,29 @@ class TestConfig(unittest.TestCase):
                 load_app_settings(sp, loaded)
             self.assertEqual(loaded["title_template_mode"], "filename")
 
+    def test_cleanup_stale_temp_dirs_removes_old_and_keeps_fresh(self):
+        import time
+        from core.config import cleanup_stale_temp_dirs
+
+        with tempfile.TemporaryDirectory() as td:
+            old_prev = os.path.join(td, "fbc_preview_old")
+            old_upd = os.path.join(td, "fbc_gui_update_old")
+            fresh_prev = os.path.join(td, "fbc_preview_fresh")
+            other_dir = os.path.join(td, "unrelated_dir")
+            for d in (old_prev, old_upd, fresh_prev, other_dir):
+                os.makedirs(d, exist_ok=True)
+            old_ts = time.time() - 90000
+            os.utime(old_prev, (old_ts, old_ts))
+            os.utime(old_upd, (old_ts, old_ts))
+            os.utime(other_dir, (old_ts, old_ts))
+
+            removed = cleanup_stale_temp_dirs(max_age_sec=86400, temp_root=td)
+            self.assertEqual(removed, 2)
+            self.assertFalse(os.path.exists(old_prev))
+            self.assertFalse(os.path.exists(old_upd))
+            self.assertTrue(os.path.isdir(fresh_prev))
+            self.assertTrue(os.path.isdir(other_dir))
+
 
 if __name__ == "__main__":
     unittest.main()

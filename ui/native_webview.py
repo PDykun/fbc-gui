@@ -1,3 +1,4 @@
+import atexit
 import os
 import shutil
 import sys
@@ -12,6 +13,26 @@ from core.css_preview import VALID_FONT_EXTENSIONS
 from core.logger import get_logger
 
 logger = get_logger("native_webview")
+_ACTIVE_PREVIEW_TEMP_DIRS = set()
+
+
+def _register_preview_temp_dir(path):
+    if path:
+        _ACTIVE_PREVIEW_TEMP_DIRS.add(path)
+
+
+def _cleanup_preview_temp_dir(path):
+    if not path:
+        return
+    _ACTIVE_PREVIEW_TEMP_DIRS.discard(path)
+    if os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
+
+
+@atexit.register
+def _cleanup_all_preview_temp_dirs():
+    for path in list(_ACTIVE_PREVIEW_TEMP_DIRS):
+        _cleanup_preview_temp_dir(path)
 
 
 def _stage_isolated_preview(temp_dir, html_text, base_dir=""):
@@ -131,9 +152,7 @@ class MacOSWKWebViewWidget(QWidget):
                 logger.debug("Ошибка отсоединения WKWebView от superview: %s", e)
             self._attached = False
         self._render_path = None
-        temp_dir = getattr(self, "_preview_temp_dir", None)
-        if temp_dir and os.path.isdir(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        _cleanup_preview_temp_dir(getattr(self, "_preview_temp_dir", None))
         self._preview_temp_dir = None
 
     def showEvent(self, event):
@@ -175,6 +194,7 @@ class MacOSWKWebViewWidget(QWidget):
         try:
             if not self._preview_temp_dir or not os.path.isdir(self._preview_temp_dir):
                 self._preview_temp_dir = tempfile.mkdtemp(prefix="fbc_preview_")
+                _register_preview_temp_dir(self._preview_temp_dir)
             render_path, read_root = _stage_isolated_preview(self._preview_temp_dir, html_text, base_dir)
             self._render_path = render_path
             file_url = self._NSURL.fileURLWithPath_(os.path.abspath(render_path))
@@ -220,9 +240,7 @@ class WindowsWebView2Widget(QWidget):
             except Exception as e:
                 logger.debug("Ошибка закрытия встроенного webview: %s", e)
         self._render_path = None
-        temp_dir = getattr(self, "_preview_temp_dir", None)
-        if temp_dir and os.path.isdir(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        _cleanup_preview_temp_dir(getattr(self, "_preview_temp_dir", None))
         self._preview_temp_dir = None
 
     def closeEvent(self, event):
@@ -254,6 +272,7 @@ class WindowsWebView2Widget(QWidget):
         try:
             if not self._preview_temp_dir or not os.path.isdir(self._preview_temp_dir):
                 self._preview_temp_dir = tempfile.mkdtemp(prefix="fbc_preview_")
+                _register_preview_temp_dir(self._preview_temp_dir)
             render_path, _read_root = _stage_isolated_preview(self._preview_temp_dir, html_text, base_dir)
             self._render_path = render_path
             file_url = QUrl.fromLocalFile(os.path.abspath(render_path)).toString()

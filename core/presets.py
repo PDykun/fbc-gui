@@ -78,6 +78,7 @@ PRESET_SETTING_KEYS = (
     "image_color_profile_custom",
     "cover_resize",
     "css_ui_state",
+    "cover_studio_spec",
 )
 
 
@@ -87,6 +88,15 @@ def slugify_preset_name(name):
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", raw)
     cleaned = re.sub(r"\s+", "_", cleaned).strip("._ ")
     return cleaned[:80] or "preset"
+
+
+def _sanitize_cover_studio_spec(val):
+    """Валидирует и нормализует словарь настроек Cover Studio через CoverSpec."""
+    if not isinstance(val, dict) or not val:
+        return None
+    from core.cover_studio import CoverSpec
+
+    return CoverSpec.from_dict(val).to_dict()
 
 
 def extract_preset_settings(app_settings):
@@ -109,6 +119,12 @@ def extract_preset_settings(app_settings):
         if key == "image_color_profile_custom":
             if not isinstance(val, dict) or not val:
                 continue
+        if key == "cover_studio_spec":
+            sanitized = _sanitize_cover_studio_spec(val)
+            if sanitized is None:
+                continue
+            result[key] = sanitized
+            continue
         if key in ("filename_tokens", "title_template_tokens") and not isinstance(val, list):
             continue
         result[key] = copy.deepcopy(val)

@@ -17,12 +17,14 @@ from core.fb2.xml_io import (
     _XML_ENCODING_RE,
     _find_title_info,
     _get_root_ns_uri,
+    _has_disallowed_xml_declarations,
     _local_tag,
     _parse_fb2_root,
     _qtag,
     extract_cover_from_fb2,
     get_book_xml,
 )
+from core.image_optimizer import open_raster_image_safely
 from core.fb2.metadata import _empty_meta, parse_metadata
 
 OVERSIZED_IMAGE_BYTES = 2 * 1024 * 1024
@@ -46,7 +48,7 @@ def _detect_declared_encoding(xml_bytes):
 
 
 def _is_strict_xml_valid(xml_bytes):
-    if not xml_bytes:
+    if not xml_bytes or _has_disallowed_xml_declarations(xml_bytes):
         return False
     try:
         ET.fromstring(xml_bytes)
@@ -215,8 +217,12 @@ def inspect_fb2(xml_bytes, meta=None, cover_bytes=_UNSET):
                         valid = True
                         if get_facade_attr("HAS_PIL", HAS_PIL) and Image is not None and ctype.lower().startswith("image/"):
                             try:
-                                with Image.open(io.BytesIO(raw)) as im:
-                                    width, height = im.size
+                                im = open_raster_image_safely(raw, load=False)
+                                if im is not None:
+                                    try:
+                                        width, height = im.size
+                                    finally:
+                                        im.close()
                             except Exception:
                                 valid = False
                 except Exception:
@@ -476,20 +482,23 @@ def repair_and_optimize_fb2(xml_bytes, max_image_bytes=OVERSIZED_IMAGE_BYTES, ma
         ctype = (bin_el.attrib.get("content-type") or "").strip().lower()
         if get_facade_attr("HAS_PIL", HAS_PIL) and Image is not None and ctype.startswith("image/"):
             try:
-                with Image.open(io.BytesIO(raw)) as im:
-                    im.load()
-                    if len(raw) > max_image_bytes:
-                        w, h = im.size
-                        work = im.convert("RGB")
-                        if max(w, h) > max_dim:
-                            work.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
-                        out_buf = io.BytesIO()
-                        work.save(out_buf, format="JPEG", quality=jpeg_quality, optimize=True)
-                        new_raw = out_buf.getvalue()
-                        if len(new_raw) < len(raw):
-                            bin_el.set("content-type", "image/jpeg")
-                            bin_el.text = base64.encodebytes(new_raw).decode("ascii")
-                            optimized_images += 1
+                im = open_raster_image_safely(raw, load=True)
+                if im is not None:
+                    try:
+                        if len(raw) > max_image_bytes:
+                            w, h = im.size
+                            work = im.convert("RGB")
+                            if max(w, h) > max_dim:
+                                work.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+                            out_buf = io.BytesIO()
+                            work.save(out_buf, format="JPEG", quality=jpeg_quality, optimize=True)
+                            new_raw = out_buf.getvalue()
+                            if len(new_raw) < len(raw):
+                                bin_el.set("content-type", "image/jpeg")
+                                bin_el.text = base64.encodebytes(new_raw).decode("ascii")
+                                optimized_images += 1
+                    finally:
+                        im.close()
             except Exception:
                 root.remove(bin_el)
                 removed_binaries += 1

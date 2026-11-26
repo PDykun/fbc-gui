@@ -497,6 +497,25 @@ class TestUpdater(unittest.TestCase):
             self.assertEqual(updated["assets"], {})
             self.assertEqual(updated["downloads"], {})
 
+    def test_safe_redirect_handler_blocks_untrusted_host(self):
+        import urllib.request
+        from core.updater import _SafeRedirectHandler
+
+        handler = _SafeRedirectHandler(require_https=True, allowed_hosts=("allowed.example",))
+        req = urllib.request.Request("https://allowed.example/release/pkg")
+
+        ok_req = handler.redirect_request(
+            req, None, 302, "Found", {},
+            "https://cdn.allowed.example/asset/pkg",
+        )
+        self.assertIsNotNone(ok_req)
+
+        with self.assertRaises(ValueError):
+            handler.redirect_request(
+                req, None, 302, "Found", {},
+                "https://other.example/asset/pkg",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QDialog, QFileDialog, QMenu, QTableWidgetItem
 
 from core.config import DEFAULT_OUTPUT_FORMAT
+from core.cover_studio import CoverSpec
 from core.fb2_genres import normalize_genre_list
 from core.fb2_processor import (
     COVER_PREVIEW_SIZE,
@@ -34,9 +35,11 @@ from ui.dialogs import (
     BatchEditDialog,
     BookEditDialog,
     BookInspectorDialog,
+    CoverStudioDialog,
     ImportProgressDialog,
     MetadataLookupDialog,
     OrganizeBooksDialog,
+    apply_cover_studio_to_books,
     show_themed_message,
 )
 
@@ -533,6 +536,8 @@ class QueueController:
             self.btn_reset_cover.setEnabled(False)
             if hasattr(self, "btn_lookup_online"):
                 self.btn_lookup_online.setEnabled(False)
+            if hasattr(self, "btn_cover_studio"):
+                self.btn_cover_studio.setEnabled(False)
             self.render_cover_preview(None)
             return
         item_id = self.table.item(rows[0].row(), 0).data(Qt.ItemDataRole.UserRole)
@@ -542,6 +547,8 @@ class QueueController:
             self.btn_reset_cover.setEnabled(data.get('cover_modified', False))
             if hasattr(self, "btn_lookup_online"):
                 self.btn_lookup_online.setEnabled(True)
+            if hasattr(self, "btn_cover_studio"):
+                self.btn_cover_studio.setEnabled(True)
             self.render_cover_preview(data.get('cover_bytes'), data.get('cover_modified', False))
 
     def replace_selected_cover(self):
@@ -669,6 +676,7 @@ class QueueController:
             menu.addSeparator()
             act_edit = menu.addAction(tr("converter.ctx_edit"))
             act_lookup = menu.addAction(tr("converter.ctx_lookup_metadata"))
+            act_cover_studio = menu.addAction(tr("converter.ctx_cover_studio"))
             act_save_src = menu.addAction(tr("converter.ctx_save_source"))
             act_organize = menu.addAction(tr("converter.ctx_organize_fb2"))
             act_autonum = menu.addAction(tr("converter.ctx_autonumber_series", count=1))
@@ -687,6 +695,8 @@ class QueueController:
                 self.edit_book_row(row, item_id)
             elif chosen == act_lookup:
                 self.lookup_book_metadata_row(row, item_id)
+            elif chosen == act_cover_studio:
+                self.open_cover_studio_rows([row])
             elif chosen == act_save_src:
                 self.save_rows_to_source([row])
             elif chosen == act_organize:
@@ -705,6 +715,7 @@ class QueueController:
             act_debug = menu.addAction(tr("converter.ctx_debug_convert"))
             menu.addSeparator()
             act_batch = menu.addAction(tr("converter.ctx_batch_edit", count=cnt))
+            act_cover_studio = menu.addAction(tr("converter.ctx_cover_studio_multi", count=cnt))
             act_save_src = menu.addAction(tr("converter.ctx_save_source_multi", count=cnt))
             act_organize = menu.addAction(tr("converter.ctx_organize_fb2"))
             act_omnibus = menu.addAction(tr("converter.ctx_merge_omnibus", count=cnt))
@@ -720,6 +731,8 @@ class QueueController:
                 self.convert_selected(debug=True)
             elif chosen == act_batch:
                 self.batch_edit_rows(selected_rows)
+            elif chosen == act_cover_studio:
+                self.open_cover_studio_rows(selected_rows)
             elif chosen == act_save_src:
                 self.save_rows_to_source(selected_rows)
             elif chosen == act_organize:
@@ -934,6 +947,50 @@ class QueueController:
         item_id = it0.data(Qt.ItemDataRole.UserRole)
         self.lookup_book_metadata_row(row, item_id)
 
+    def open_cover_studio_for_selected(self):
+        if not hasattr(self, "table"):
+            return
+        rows = sorted({
+            idx.row()
+            for idx in self.table.selectionModel().selectedRows()
+            if not self.table.isRowHidden(idx.row())
+        })
+        if rows:
+            self.open_cover_studio_rows(rows)
+
+    def open_cover_studio_rows(self, rows):
+        if not rows or not hasattr(self, "table"):
+            return
+        item_ids = []
+        for r in sorted(rows):
+            it0 = self.table.item(r, 0)
+            if it0:
+                iid = it0.data(Qt.ItemDataRole.UserRole)
+                if iid in self.files_data:
+                    item_ids.append(iid)
+        if not item_ids:
+            return
+
+        first_data = self.files_data[item_ids[0]]
+        initial_spec = CoverSpec.from_dict(self.app_settings.get("cover_studio_spec"))
+        dlg = CoverStudioDialog(
+            self,
+            book_data=first_data,
+            books_count=len(item_ids),
+            initial_spec=initial_spec,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        spec = dlg.get_spec()
+        self.app_settings["cover_studio_spec"] = spec.to_dict()
+        if hasattr(self, "save_app_settings"):
+            self.save_app_settings()
+
+        only_missing = dlg.get_apply_mode() == "missing_only"
+        apply_cover_studio_to_books(self, item_ids, spec, only_missing=only_missing)
+        self.on_table_selection_changed()
+
     def lookup_book_metadata_row(self, row, item_id):
         data = self.files_data.get(item_id)
         if not data:
@@ -997,6 +1054,12 @@ class QueueController:
                         tr("converter.undo_edit_book"),
                     )
                 )
+
+            updated_cs_spec = dlg.get_cover_studio_spec()
+            if isinstance(updated_cs_spec, dict) and updated_cs_spec != self.app_settings.get("cover_studio_spec"):
+                self.app_settings["cover_studio_spec"] = updated_cs_spec
+                if hasattr(self, "save_app_settings"):
+                    self.save_app_settings()
 
             if dlg.should_save_to_source():
                 try:
@@ -1279,6 +1342,8 @@ class QueueController:
         self.btn_reset_cover.setEnabled(False)
         if hasattr(self, "btn_lookup_online"):
             self.btn_lookup_online.setEnabled(False)
+        if hasattr(self, "btn_cover_studio"):
+            self.btn_cover_studio.setEnabled(False)
         self._update_convert_selected_button(0)
         self.render_cover_preview(None)
         self.apply_table_filter()

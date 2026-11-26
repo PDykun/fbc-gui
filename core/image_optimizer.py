@@ -260,17 +260,26 @@ def _encode_pil_image(img, orig_mime, jpeg_quality=95, keep_alpha=False):
     return out.getvalue(), "image/jpeg"
 
 
-def _open_raster_safely(raw_bytes):
-    """Безопасно открывает растровое изображение в Pillow с проверкой лимита пикселей."""
+def open_raster_image_safely(raw_bytes, max_pixels=MAX_OPTIMIZE_IMAGE_PIXELS, *, load=True):
+    """Безопасно открывает растровое изображение в Pillow с проверкой лимита пикселей (защита от decompression bomb)."""
     if not HAS_PIL or not raw_bytes:
         return None
     img = Image.open(io.BytesIO(raw_bytes))
-    w, h = img.size
-    if w <= 0 or h <= 0 or (w * h) > MAX_OPTIMIZE_IMAGE_PIXELS:
+    try:
+        w, h = img.size
+        if w <= 0 or h <= 0 or (w * h) > int(max_pixels):
+            raise ValueError(f"Image dimensions ({w}x{h}) exceed safety limit")
+        if load:
+            img.load()
+        return img
+    except Exception:
         img.close()
-        raise ValueError(f"Image dimensions ({w}x{h}) exceed safety limit")
-    img.load()
-    return img
+        raise
+
+
+def _open_raster_safely(raw_bytes):
+    """Внутренняя обёртка для безопасного открытия растрового изображения."""
+    return open_raster_image_safely(raw_bytes, max_pixels=MAX_OPTIMIZE_IMAGE_PIXELS, load=True)
 
 
 def optimize_image_bytes(

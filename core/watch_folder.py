@@ -18,6 +18,7 @@ from core.config import (
     atomic_write_text,
     update_fbc_config_file,
 )
+from core.cover_studio import TEMPLATES as COVER_TEMPLATES
 from core.css_preview import generate_css_content as build_css_content, get_default_css_ui_state
 from core.email_sender import send_converted_files_via_email
 from core.fb2_processor import (
@@ -29,7 +30,23 @@ from core.fb2_processor import (
     parse_metadata,
 )
 from core.logger import get_logger
+from core.metadata_lookup import (
+    DEFAULT_ENABLED_PROVIDERS,
+    DEFAULT_PROVIDER_ORDER,
+    fetch_candidate_covers,
+    search_book_metadata,
+)
 from core.presets import apply_preset_to_settings, list_presets, load_preset_file
+from core.watch_enrich import (
+    WATCH_ENRICH_CONFIDENCE_PRESETS,
+    WATCH_ENRICH_MODES,
+    _TITLE_NOISE_RE,
+    _merge_empty_meta_fields,
+    _needs_enrichment,
+    _norm_match_text,
+    match_best_enrich_candidate,
+    prepare_watch_book_item as _prepare_watch_book_item,
+)
 
 logger = get_logger("watch_folder")
 
@@ -77,6 +94,37 @@ def normalize_watch_rule(raw):
     if dev_mode not in ("", "mtp", "usb", "folder"):
         dev_mode = ""
 
+    enrich_mode = str(src.get("auto_enrich_mode") or "off").strip().lower()
+    if enrich_mode not in WATCH_ENRICH_MODES:
+        enrich_mode = "off"
+
+    try:
+        min_conf = float(src.get("enrich_min_confidence", 0.88))
+    except (TypeError, ValueError):
+        min_conf = 0.88
+    min_conf = round(max(0.50, min(0.99, min_conf)), 2)
+
+    raw_provs = src.get("enrich_providers")
+    if isinstance(raw_provs, (list, tuple)):
+        valid_provs = [
+            str(p).strip().lower()
+            for p in raw_provs
+            if str(p).strip().lower() in DEFAULT_PROVIDER_ORDER
+        ]
+        enrich_providers = list(dict.fromkeys(valid_provs)) or list(DEFAULT_ENABLED_PROVIDERS)
+    else:
+        enrich_providers = list(DEFAULT_ENABLED_PROVIDERS)
+
+    try:
+        enrich_timeout = float(src.get("enrich_timeout_sec", 10.0))
+    except (TypeError, ValueError):
+        enrich_timeout = 10.0
+    enrich_timeout = round(max(3.0, min(30.0, enrich_timeout)), 1)
+
+    fb_tpl = str(src.get("fallback_cover_template") or "eink_minimal").strip()
+    if fb_tpl not in COVER_TEMPLATES:
+        fb_tpl = "eink_minimal"
+
     return {
         "id": rule_id,
         "enabled": bool(src.get("enabled", True)),
@@ -90,7 +138,41 @@ def normalize_watch_rule(raw):
         "device_sync_mode": dev_mode,
         "device_sync_target": str(src.get("device_sync_target") or "").strip(),
         "post_action": post_action,
+        "auto_repair": bool(src.get("auto_repair", False)),
+        "auto_enrich_mode": enrich_mode,
+        "enrich_min_confidence": min_conf,
+        "enrich_providers": enrich_providers,
+        "enrich_timeout_sec": enrich_timeout,
+        "fallback_cover_enabled": bool(src.get("fallback_cover_enabled", False)),
+        "fallback_cover_template": fb_tpl,
+        "fallback_cover_series_color": bool(src.get("fallback_cover_series_color", True)),
+        "write_back_source": bool(src.get("write_back_source", False)),
     }
+
+
+def prepare_watch_book_item(
+    item_data,
+    xml_bytes,
+    rule,
+    base_app_settings=None,
+    *,
+    fonts_dir=None,
+    enrich_cache=None,
+    cancel_event=None,
+):
+    """Фасад предконвертационной подготовки книги с сохранением точек подмены в core.watch_folder."""
+    return _prepare_watch_book_item(
+        item_data,
+        xml_bytes,
+        rule,
+        base_app_settings=base_app_settings,
+        fonts_dir=fonts_dir,
+        enrich_cache=enrich_cache,
+        cancel_event=cancel_event,
+        normalize_rule_fn=normalize_watch_rule,
+        search_metadata_fn=search_book_metadata,
+        fetch_covers_fn=fetch_candidate_covers,
+    )
 
 
 def normalize_watch_rules(raw_list):
@@ -466,6 +548,165 @@ class WatchJobWorker(QThread):
                         pass
                 shutil.rmtree(staging_dir, ignore_errors=True)
 
+    def _convert_watch_sources(
+        self,
+        summary,
+        merged_settings,
+        tmp_cfg,
+        title_style,
+        dest_dir,
+        selected_format,
+        compression,
+        no_cover,
+    ):
+        claimed_outputs = set()
+        source_outcomes = []
+        enrich_cache = {}
+
+        for src_path in self.filepaths:
+            if self._cancel_event.is_set() or self.isInterruptionRequested():
+                summary["cancelled"] = True
+                break
+            if not os.path.isfile(src_path):
+                continue
+            try:
+                st = os.stat(src_path)
+                src_size, src_mtime = st.st_size, st.st_mtime
+            except OSError:
+                continue
+
+            src_created = []
+            src_err = ""
+            try:
+                entries = list(iter_fb2_from_file(src_path))
+                if not entries:
+                    raise RuntimeError("No valid FB2 entries found")
+                for source_key, archive_entry, display_name, xml_bytes in entries:
+                    if self._cancel_event.is_set() or self.isInterruptionRequested():
+                        raise ConversionCancelledError("Cancelled")
+                    if not xml_bytes:
+                        continue
+                    meta = parse_metadata(xml_bytes)
+                    cover_bytes, cover_mime = extract_cover_from_fb2(xml_bytes)
+                    item_data = {
+                        "path": src_path,
+                        "archive_entry": archive_entry,
+                        "source_key": source_key,
+                        "display_name": display_name,
+                        "meta": meta,
+                        "orig_meta": copy_meta_dict(meta),
+                        "cover_bytes": cover_bytes,
+                        "cover_mime": cover_mime,
+                        "cover_modified": False,
+                    }
+                    prep_stats = prepare_watch_book_item(
+                        item_data,
+                        xml_bytes,
+                        self.rule,
+                        self.base_app_settings,
+                        fonts_dir=self.fonts_dir,
+                        enrich_cache=enrich_cache,
+                        cancel_event=self._cancel_event,
+                    )
+                    if prep_stats.get("repaired"):
+                        summary["repaired_count"] += 1
+                    if prep_stats.get("enriched"):
+                        summary["enriched_count"] += 1
+                    if prep_stats.get("cover_generated"):
+                        summary["covers_generated_count"] += 1
+                    try:
+                        wf_jpeg_q = int(merged_settings.get("jpeg_quality_level", "95"))
+                    except (TypeError, ValueError):
+                        wf_jpeg_q = 95
+                    created = convert_book_file(
+                        self.fbc_cmd,
+                        tmp_cfg,
+                        self.base_dir,
+                        item_data,
+                        dest_dir,
+                        selected_format,
+                        title_style,
+                        compression=compression,
+                        cancel_event=self._cancel_event,
+                        debug=False,
+                        no_cover=no_cover,
+                        claimed_outputs=claimed_outputs,
+                        image_color_profile=merged_settings.get("image_color_profile", "none"),
+                        jpeg_quality=wf_jpeg_q,
+                        image_color_profile_custom=merged_settings.get("image_color_profile_custom"),
+                    )
+                    src_created.extend(created)
+            except ConversionCancelledError:
+                summary["cancelled"] = True
+                break
+            except Exception as e:
+                src_err = str(e)
+                logger.error("Watch Folder ошибка конвертации %s: %s", os.path.basename(src_path), e)
+
+            source_outcomes.append((src_path, src_size, src_mtime, src_created, src_err))
+        return source_outcomes
+
+    def _deliver_watch_outputs(self, all_created, delivery_mode, dest_dir):
+        if not all_created:
+            return ""
+        if delivery_mode == "email":
+            try:
+                email_settings = dict(self.base_app_settings)
+                if self.rule.get("email_to"):
+                    email_settings["email_to"] = self.rule["email_to"]
+                send_converted_files_via_email(
+                    email_settings,
+                    all_created,
+                    self.app_name,
+                    self.app_version,
+                    cancel_event=self._cancel_event,
+                )
+            except Exception as e:
+                logger.error("Watch Folder ошибка отправки по Email: %s", e)
+                return str(e)
+        elif delivery_mode == "device_sync":
+            try:
+                self._deliver_via_device_sync(all_created, dest_dir)
+            except Exception as e:
+                logger.error("Watch Folder ошибка доставки на ридер: %s", e)
+                return str(e)
+        return ""
+
+    def _finalize_watch_outcomes(self, summary, source_outcomes, delivery_mode, delivery_err):
+        for src_path, src_size, src_mtime, src_created, src_err in source_outcomes:
+            final_err = src_err or (delivery_err if src_created else "")
+            ok = (not final_err) and bool(src_created)
+            if ok:
+                summary["success_count"] += len(src_created)
+                summary["converted_files"].extend(src_created)
+            else:
+                summary["error_count"] += 1
+                summary["errors"].append((os.path.basename(src_path), final_err or "Conversion failed"))
+
+            try:
+                # При ошибке доставки на ридер исходник лучше оставить на месте, чтобы не потерять его
+                if delivery_err and delivery_mode == "device_sync":
+                    moved_to = src_path
+                else:
+                    moved_to = apply_post_action(
+                        src_path,
+                        self.rule["folder"],
+                        self.rule.get("post_action", "move_processed"),
+                        success=ok,
+                    )
+            except Exception as post_err:
+                logger.warning("Ошибка пост-обработки %s: %s", src_path, post_err)
+                moved_to = src_path
+
+            summary["processed_sources"].append({
+                "path": src_path,
+                "size": src_size,
+                "mtime": src_mtime,
+                "ok": ok,
+                "error": final_err,
+                "moved_to": moved_to,
+            })
+
     def run(self):
         summary = {
             "rule_id": self.rule["id"],
@@ -474,6 +715,9 @@ class WatchJobWorker(QThread):
             "delivery_mode": self.rule["delivery_mode"],
             "success_count": 0,
             "error_count": 0,
+            "repaired_count": 0,
+            "enriched_count": 0,
+            "covers_generated_count": 0,
             "converted_files": [],
             "errors": [],
             "processed_sources": [],
@@ -520,137 +764,23 @@ class WatchJobWorker(QThread):
                 dest_dir = os.path.join(env_dir, "out")
                 os.makedirs(dest_dir, exist_ok=True)
 
-            claimed_outputs = set()
-            source_outcomes = []
-
-            for src_path in self.filepaths:
-                if self._cancel_event.is_set() or self.isInterruptionRequested():
-                    summary["cancelled"] = True
-                    break
-                if not os.path.isfile(src_path):
-                    continue
-                try:
-                    st = os.stat(src_path)
-                    src_size, src_mtime = st.st_size, st.st_mtime
-                except OSError:
-                    continue
-
-                src_created = []
-                src_err = ""
-                try:
-                    entries = list(iter_fb2_from_file(src_path))
-                    if not entries:
-                        raise RuntimeError("No valid FB2 entries found")
-                    for source_key, archive_entry, display_name, xml_bytes in entries:
-                        if self._cancel_event.is_set() or self.isInterruptionRequested():
-                            raise ConversionCancelledError("Cancelled")
-                        if not xml_bytes:
-                            continue
-                        meta = parse_metadata(xml_bytes)
-                        cover_bytes, cover_mime = extract_cover_from_fb2(xml_bytes)
-                        item_data = {
-                            "path": src_path,
-                            "archive_entry": archive_entry,
-                            "source_key": source_key,
-                            "display_name": display_name,
-                            "meta": meta,
-                            "orig_meta": copy_meta_dict(meta),
-                            "cover_bytes": cover_bytes,
-                            "cover_mime": cover_mime,
-                            "cover_modified": False,
-                        }
-                        try:
-                            wf_jpeg_q = int(merged_settings.get("jpeg_quality_level", "95"))
-                        except (TypeError, ValueError):
-                            wf_jpeg_q = 95
-                        created = convert_book_file(
-                            self.fbc_cmd,
-                            tmp_cfg,
-                            self.base_dir,
-                            item_data,
-                            dest_dir,
-                            selected_format,
-                            title_style,
-                            compression=compression,
-                            cancel_event=self._cancel_event,
-                            debug=False,
-                            no_cover=no_cover,
-                            claimed_outputs=claimed_outputs,
-                            image_color_profile=merged_settings.get("image_color_profile", "none"),
-                            jpeg_quality=wf_jpeg_q,
-                            image_color_profile_custom=merged_settings.get("image_color_profile_custom"),
-                        )
-                        src_created.extend(created)
-                except ConversionCancelledError:
-                    summary["cancelled"] = True
-                    break
-                except Exception as e:
-                    src_err = str(e)
-                    logger.error("Watch Folder ошибка конвертации %s: %s", os.path.basename(src_path), e)
-
-                source_outcomes.append((src_path, src_size, src_mtime, src_created, src_err))
-
+            source_outcomes = self._convert_watch_sources(
+                summary,
+                merged_settings,
+                tmp_cfg,
+                title_style,
+                dest_dir,
+                selected_format,
+                compression,
+                no_cover,
+            )
             if summary["cancelled"]:
                 self.job_finished.emit(summary)
                 return
 
             all_created = [fp for _, _, _, created, err in source_outcomes if not err for fp in created]
-            delivery_err = ""
-            if all_created and delivery_mode == "email":
-                try:
-                    email_settings = dict(self.base_app_settings)
-                    if self.rule.get("email_to"):
-                        email_settings["email_to"] = self.rule["email_to"]
-                    send_converted_files_via_email(
-                        email_settings,
-                        all_created,
-                        self.app_name,
-                        self.app_version,
-                        cancel_event=self._cancel_event,
-                    )
-                except Exception as e:
-                    delivery_err = str(e)
-                    logger.error("Watch Folder ошибка отправки по Email: %s", e)
-            elif all_created and delivery_mode == "device_sync":
-                try:
-                    self._deliver_via_device_sync(all_created, dest_dir)
-                except Exception as e:
-                    delivery_err = str(e)
-                    logger.error("Watch Folder ошибка доставки на ридер: %s", e)
-
-            for src_path, src_size, src_mtime, src_created, src_err in source_outcomes:
-                final_err = src_err or (delivery_err if src_created else "")
-                ok = (not final_err) and bool(src_created)
-                if ok:
-                    summary["success_count"] += len(src_created)
-                    summary["converted_files"].extend(src_created)
-                else:
-                    summary["error_count"] += 1
-                    summary["errors"].append((os.path.basename(src_path), final_err or "Conversion failed"))
-
-                try:
-                    # При ошибке доставки на ридер исходник лучше оставить на месте, чтобы не потерять его
-                    if delivery_err and delivery_mode == "device_sync":
-                        moved_to = src_path
-                    else:
-                        moved_to = apply_post_action(
-                            src_path,
-                            self.rule["folder"],
-                            self.rule.get("post_action", "move_processed"),
-                            success=ok,
-                        )
-                except Exception as post_err:
-                    logger.warning("Ошибка пост-обработки %s: %s", src_path, post_err)
-                    moved_to = src_path
-
-                summary["processed_sources"].append({
-                    "path": src_path,
-                    "size": src_size,
-                    "mtime": src_mtime,
-                    "ok": ok,
-                    "error": final_err,
-                    "moved_to": moved_to,
-                })
+            delivery_err = self._deliver_watch_outputs(all_created, delivery_mode, dest_dir)
+            self._finalize_watch_outcomes(summary, source_outcomes, delivery_mode, delivery_err)
 
         self.job_finished.emit(summary)
 

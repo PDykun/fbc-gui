@@ -5,6 +5,7 @@
 
 ## История релизов / Release Notes
 
+- [v2.12](RELEASE_NOTES_v2.12.md) — Cover Studio (генератор обложек), Auto-Repair / Auto-Enrich / фолбэк-обложки в Watch Folder, сохранение стиля обложек в пресетах и уведомления трея / Cover Studio, Watch Folder Auto-Repair / Auto-Enrich & Cover Fallback, Preset Cover Styles & Tray Counters
 - [v2.11](RELEASE_NOTES_v2.11.md) — Режим Watch Folder, трей / macOS Menu Bar, оптимизация и имитация E Ink, омнибус FB2, автоопределение ридеров и обновлённый UI / Watch Folder Mode, Tray / macOS Menu Bar, E Ink Optimization & Simulation, FB2 Omnibus, Reader Auto-Detection & UI Refinements
 - [v2.10.1](RELEASE_NOTES_v2.10.1.md) — Обновлённая логика имени файла и заголовка в метаданных, пресет «Нет» и чистые подписи настроек / Updated Filename & Metadata Title Logic, «None» Preset & Cleaner Settings Labels
 - [v2.10](RELEASE_NOTES_v2.10.md) — Расширенные метаданные FB2, Инспектор структуры, менеджер шрифтов и умная очередь / Extended FB2 Metadata, Structure Inspector, Font Manager & Smart Queue

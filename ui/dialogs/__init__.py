@@ -24,6 +24,10 @@ from ui.dialogs.book_edit import (
     BookEditDialog,
 )
 from ui.dialogs.watch_folder import WatchFolderRuleDialog
+from ui.dialogs.cover_studio import (
+    CoverStudioDialog,
+    apply_cover_studio_to_books,
+)
 
 __all__ = [
     "_format_bytes_human",
@@ -42,4 +46,6 @@ __all__ = [
     "BatchEditDialog",
     "BookEditDialog",
     "WatchFolderRuleDialog",
+    "CoverStudioDialog",
+    "apply_cover_studio_to_books",
 ]

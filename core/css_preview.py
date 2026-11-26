@@ -443,11 +443,11 @@ def generate_css_content(st, fonts_dir):
         f'p {{ {para_decl}font-weight: normal; font-style: normal; text-indent: {indent_val}; margin-bottom: 0pt; margin-top: 0pt; text-align: {p_al}; }}',
         '.emptyline { margin-top: 1em; }',
         '',
-        '.dropcap, span.dropcaps, span.dropcap {',
+        'p.has-dropcap .dropcap, .dropcap, span.dropcaps, span.dropcap {',
         f'    {drop_decl}float: left; font-weight: bold; color: ' + drop_cl + '; font-size: ' + drop_sz + ';',
         '    line-height: 0.85; margin-top: 0em; margin-bottom: -0.2em; margin-right: 0.08em; padding-right: .1em;',
         '}',
-        f'.has-dropcap, p.has-dropcap {{ text-indent: 0 !important; text-align: {p_al}; }}',
+        f'p.has-dropcap, .has-dropcap {{ margin: 0; text-indent: 0; text-align: {p_al}; }}',
         '',
         f'.annotation {{ {para_decl}margin: 1.5em; font-size: {anno_sz}; text-align: {anno_al}; font-style: {anno_style}; color: {anno_cl}; }}',
         '',
@@ -462,6 +462,25 @@ def generate_css_content(st, fonts_dir):
         f'.image-caption, p.image-caption {{ {para_decl}font-size: {img_cap_sz}; color: {img_cap_cl}; font-style: {img_cap_st}; text-align: {img_al}; text-indent: 0; margin-top: 0.3em; margin-bottom: 0.8em; }}'
     ])
     return '\n'.join(css_lines) + '\n'
+
+
+def ensure_kfx_dropcap_css(css_text):
+    """Обеспечивает наличие селектора `p.has-dropcap .dropcap` и чистого `p.has-dropcap` для KFX/AZW8 в fb2cng."""
+    if not css_text:
+        return css_text
+    updated = css_text
+    if "p.has-dropcap .dropcap" not in updated:
+        updated = re.sub(
+            r'(?m)^(\s*)(\.dropcap\s*,\s*span\.dropcaps\s*,\s*span\.dropcap\s*\{)',
+            r'\1p.has-dropcap .dropcap, \2',
+            updated,
+        )
+    updated = re.sub(
+        r'(?m)^(\s*)\.has-dropcap\s*,\s*p\.has-dropcap\s*\{\s*text-indent\s*:\s*0\s*!important\s*;',
+        r'\1p.has-dropcap, .has-dropcap { margin: 0; text-indent: 0;',
+        updated,
+    )
+    return updated
 
 
 def _is_italic_font_file(fname):

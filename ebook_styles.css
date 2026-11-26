@@ -44,11 +44,11 @@ body { font-family: "paragraph"; font-weight: normal; font-style: normal; line-h
 p { font-family: "paragraph"; font-weight: normal; font-style: normal; text-indent: 1em; margin-bottom: 0pt; margin-top: 0pt; text-align: justify; }
 .emptyline { margin-top: 1em; }
 
-.dropcap, span.dropcaps, span.dropcap {
+p.has-dropcap .dropcap, .dropcap, span.dropcaps, span.dropcap {
     font-family: "dropcaps"; float: left; font-weight: bold; color: red; font-size: 4em;
     line-height: 0.85; margin-top: 0em; margin-bottom: -0.2em; margin-right: 0.08em; padding-right: .1em;
 }
-.has-dropcap, p.has-dropcap { text-indent: 0 !important; text-align: justify; }
+p.has-dropcap, .has-dropcap { margin: 0; text-indent: 0; text-align: justify; }
 
 .annotation { font-family: "paragraph"; margin: 1.5em; font-size: 70%; text-align: center; font-style: normal; color: blue; }
 

@@ -55,7 +55,14 @@ class MetadataLookupDialog(QDialog):
         root.setContentsMargins(20, 20, 20, 18)
         root.setSpacing(12)
 
-        # --- Карточка поиска ---
+        root.addWidget(self._build_search_card())
+        root.addWidget(self._build_results_card(), 1)
+        root.addLayout(self._build_footer_row())
+
+        if self.ed_title.text().strip() or self.ed_isbn.text().strip():
+            QTimer.singleShot(60, self._start_search)
+
+    def _build_search_card(self):
         search_card = QFrame()
         search_card.setObjectName("SectionCard")
         s_layout = QVBoxLayout(search_card)
@@ -119,9 +126,9 @@ class MetadataLookupDialog(QDialog):
         self.lbl_status.setObjectName("RowDesc")
         self.lbl_status.setWordWrap(True)
         s_layout.addWidget(self.lbl_status)
-        root.addWidget(search_card)
+        return search_card
 
-        # --- Основная зона: кандидаты + сравнение полей ---
+    def _build_results_card(self):
         body_card = QFrame()
         body_card.setObjectName("SectionCard")
         b_layout = QVBoxLayout(body_card)
@@ -186,7 +193,6 @@ class MetadataLookupDialog(QDialog):
         self.compare_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         b_layout.addWidget(self.compare_table, 1)
 
-        # --- Галерея обложек ---
         cov_hdr_row = QHBoxLayout()
         cov_hdr = QLabel(tr("lookup.sec_covers"))
         cov_hdr.setObjectName("SectionHeader")
@@ -213,9 +219,9 @@ class MetadataLookupDialog(QDialog):
         self._covers_layout.setSpacing(10)
         self.covers_scroll.setWidget(self._covers_container)
         b_layout.addWidget(self.covers_scroll)
+        return body_card
 
-        root.addWidget(body_card, 1)
-
+    def _build_footer_row(self):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_cancel = QPushButton(tr("converter.btn_cancel"))
@@ -230,10 +236,7 @@ class MetadataLookupDialog(QDialog):
         self.btn_apply.setEnabled(False)
         self.btn_apply.clicked.connect(self.accept)
         btn_row.addWidget(self.btn_apply)
-        root.addLayout(btn_row)
-
-        if self.ed_title.text().strip() or self.ed_isbn.text().strip():
-            QTimer.singleShot(60, self._start_search)
+        return btn_row
 
     def _stop_workers(self):
         for attr in ("_lookup_worker", "_cover_worker"):

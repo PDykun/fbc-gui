@@ -10,11 +10,7 @@ from core.fb2_processor import COVER_PREVIEW_SIZE, FORMAT_EXT_MAP
 from ui.theme import RoundedRowDelegate, FormatComboBox, PillSelector
 
 
-def build_converter_page(win, parent):
-    layout = QVBoxLayout(parent)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(14)
-
+def _build_converter_banner(win):
     banner = QFrame()
     banner.setObjectName("BannerCard")
     b_layout = QHBoxLayout(banner)
@@ -89,19 +85,10 @@ def build_converter_page(win, parent):
     win.btn_sync_device.setCursor(Qt.CursorShape.PointingHandCursor)
     win.btn_sync_device.clicked.connect(win.send_to_reader_clicked)
     b_layout.addWidget(win.btn_sync_device)
+    return banner
 
-    layout.addWidget(banner)
 
-    content_card = QFrame()
-    content_card.setObjectName("SectionCard")
-    c_layout = QHBoxLayout(content_card)
-    c_layout.setContentsMargins(16, 16, 16, 16)
-    c_layout.setSpacing(16)
-
-    table_col = QVBoxLayout()
-    table_col.setContentsMargins(0, 0, 0, 0)
-    table_col.setSpacing(10)
-
+def _build_queue_filter_bar(win):
     filter_bar = QHBoxLayout()
     filter_bar.setContentsMargins(0, 0, 0, 0)
     filter_bar.setSpacing(10)
@@ -169,9 +156,10 @@ def build_converter_page(win, parent):
     win.btn_redo.setEnabled(False)
     win.btn_redo.clicked.connect(win.redo_last_action)
     filter_bar.addWidget(win.btn_redo)
+    return filter_bar
 
-    table_col.addLayout(filter_bar)
 
+def _build_queue_table(win):
     win.table = QTableWidget()
     win.table.setColumnCount(9)
     win.table.setAlternatingRowColors(False)
@@ -206,9 +194,10 @@ def build_converter_page(win, parent):
     win.table.itemChanged.connect(win.on_table_item_changed)
     win.table.itemSelectionChanged.connect(win.on_table_selection_changed)
     win.table.installEventFilter(win)
-    table_col.addWidget(win.table, 1)
-    c_layout.addLayout(table_col, 1)
+    return win.table
 
+
+def _build_cover_sidebar(win):
     cover_box = QVBoxLayout()
     cover_box.setAlignment(Qt.AlignmentFlag.AlignTop)
     cover_box.setSpacing(8)
@@ -251,7 +240,37 @@ def build_converter_page(win, parent):
     win.btn_lookup_online.clicked.connect(win.lookup_selected_book_metadata)
     cover_box.addWidget(win.btn_lookup_online)
 
-    cover_box.addStretch()
+    win.btn_cover_studio = QPushButton(tr("converter.btn_cover_studio"))
+    win.btn_cover_studio.setObjectName("SecondaryButton")
+    win.btn_cover_studio.setProperty("variant", "secondary")
+    win.btn_cover_studio.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_cover_studio.setEnabled(False)
+    win.btn_cover_studio.clicked.connect(win.open_cover_studio_for_selected)
+    cover_box.addWidget(win.btn_cover_studio)
 
-    c_layout.addLayout(cover_box)
+    cover_box.addStretch()
+    return cover_box
+
+
+def build_converter_page(win, parent):
+    layout = QVBoxLayout(parent)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(14)
+
+    layout.addWidget(_build_converter_banner(win))
+
+    content_card = QFrame()
+    content_card.setObjectName("SectionCard")
+    c_layout = QHBoxLayout(content_card)
+    c_layout.setContentsMargins(16, 16, 16, 16)
+    c_layout.setSpacing(16)
+
+    table_col = QVBoxLayout()
+    table_col.setContentsMargins(0, 0, 0, 0)
+    table_col.setSpacing(10)
+    table_col.addLayout(_build_queue_filter_bar(win))
+    table_col.addWidget(_build_queue_table(win), 1)
+    c_layout.addLayout(table_col, 1)
+
+    c_layout.addLayout(_build_cover_sidebar(win))
     layout.addWidget(content_card, 1)

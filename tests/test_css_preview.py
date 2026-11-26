@@ -323,6 +323,52 @@ class TestCssPreview(unittest.TestCase):
             self.assertNotIn(src_uri, staged)
             self.assertIn(Path(os.path.join(temp_dir, "fonts")).resolve().as_uri().rstrip("/"), staged)
 
+    def test_kfx_dropcap_css_selectors_and_legacy_upgrade(self):
+        from core.css_preview import ensure_kfx_dropcap_css
+        from core.fb2.converter import _attach_stylesheet_file
+
+        st = _sample_state(drop_size="3.5em", drop_color="#990000")
+        css_text = generate_css_content(st, FONTS_DIR)
+        self.assertIn("p.has-dropcap .dropcap, .dropcap, span.dropcaps, span.dropcap {", css_text)
+        self.assertIn("p.has-dropcap, .has-dropcap { margin: 0; text-indent: 0; text-align: justify; }", css_text)
+        self.assertNotIn("text-indent: 0 !important", css_text)
+
+        # Round-trip parsing of dropcap size & color still works
+        with tempfile.TemporaryDirectory() as td:
+            css_path = os.path.join(td, "ebook_styles.css")
+            with open(css_path, "w", encoding="utf-8") as fh:
+                fh.write(css_text)
+            parsed = parse_css_file_to_state(css_path)
+            self.assertEqual(parsed.get("drop_size"), "3.5em")
+            self.assertEqual(parsed.get("drop_color"), "#990000")
+
+        # Legacy CSS without `p.has-dropcap .dropcap` is upgraded automatically (and idempotently)
+        legacy_css = (
+            ".dropcap, span.dropcaps, span.dropcap {\n"
+            "    font-family: \"dropcaps\"; float: left; font-size: 4em;\n"
+            "}\n"
+            ".has-dropcap, p.has-dropcap { text-indent: 0 !important; text-align: justify; }\n"
+        )
+        upgraded = ensure_kfx_dropcap_css(legacy_css)
+        self.assertIn("p.has-dropcap .dropcap, .dropcap, span.dropcaps, span.dropcap {", upgraded)
+        self.assertIn("p.has-dropcap, .has-dropcap { margin: 0; text-indent: 0; text-align: justify; }", upgraded)
+        self.assertEqual(ensure_kfx_dropcap_css(upgraded), upgraded)
+
+        # _attach_stylesheet_file applies the upgrade when staging for fbc
+        with tempfile.TemporaryDirectory() as td:
+            src_dir = os.path.join(td, "src")
+            work_dir = os.path.join(td, "work")
+            os.makedirs(src_dir, exist_ok=True)
+            os.makedirs(work_dir, exist_ok=True)
+            with open(os.path.join(src_dir, "ebook_styles.css"), "w", encoding="utf-8") as fh:
+                fh.write(legacy_css)
+            staged_css = _attach_stylesheet_file(src_dir, None, work_dir)
+            self.assertTrue(os.path.isfile(staged_css))
+            with open(staged_css, "r", encoding="utf-8") as fh:
+                staged_text = fh.read()
+            self.assertIn("p.has-dropcap .dropcap, .dropcap, span.dropcaps, span.dropcap {", staged_text)
+            self.assertIn("p.has-dropcap, .has-dropcap { margin: 0; text-indent: 0; text-align: justify; }", staged_text)
+
 
 if __name__ == "__main__":
     unittest.main()

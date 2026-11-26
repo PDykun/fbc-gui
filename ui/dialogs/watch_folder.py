@@ -5,7 +5,6 @@ import os
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -18,14 +17,26 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.i18n import tr
+from core.cover_studio import TEMPLATES as COVER_TEMPLATES
+from core.i18n import LOCALE, tr
+from core.metadata_lookup import DEFAULT_PROVIDER_ORDER, PROVIDER_LABELS
 from core.presets import list_presets
-from core.watch_folder import PRESET_CURRENT_TOKEN, normalize_watch_rule
-from ui.dialogs.common import show_themed_message
+from core.watch_folder import (
+    PRESET_CURRENT_TOKEN,
+    WATCH_ENRICH_CONFIDENCE_PRESETS,
+    normalize_watch_rule,
+)
+from ui.dialogs.common import create_segmented_tabs, show_themed_message
+from ui.theme import FormatComboBox, PillSelector
+
+
+def _tr_fb(key, ru_default, en_default):
+    default = ru_default if LOCALE.lang_code == "ru" else en_default
+    return str(LOCALE.get(key, default=default))
 
 
 class WatchFolderRuleDialog(QDialog):
-    """Диалог настройки одного правила Watch Folder (папка, пресет, доставка, действие с исходником)."""
+    """Диалог настройки одного правила Watch Folder (основные параметры и подготовка книг)."""
 
     def __init__(self, parent=None, *, rule=None, presets_dir="", app_settings=None):
         super().__init__(parent)
@@ -33,24 +44,42 @@ class WatchFolderRuleDialog(QDialog):
         self.app_settings = app_settings or {}
         self._initial = normalize_watch_rule(rule) if rule else normalize_watch_rule({"enabled": True})
         self._is_edit = bool(rule)
+        self._provider_checks = {}
 
         self.setWindowTitle(
             tr("watch.dlg_edit_title") if self._is_edit else tr("watch.dlg_add_title")
         )
         self.setObjectName("MainContainer")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
         self.setModal(True)
-        if parent and parent.styleSheet():
-            self.setStyleSheet(parent.styleSheet())
-        self.setMinimumWidth(580)
+        if parent is not None:
+            self.setPalette(parent.palette())
+            if parent.styleSheet():
+                self.setStyleSheet(parent.styleSheet())
+        self.setMinimumWidth(620)
         self._build_ui()
         self._populate()
         self._update_delivery_fields()
+        self._update_prep_fields()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(14)
+
+        self.tabs = create_segmented_tabs(self)
+        self.tabs.addTab(self._build_general_tab(), _tr_fb("watch.tab_general", "Основные", "General"))
+        self.tabs.addTab(self._build_prep_tab(), _tr_fb("watch.tab_preparation", "Подготовка книг", "Book Preparation"))
+
+        root.addWidget(self.tabs, 1)
+        root.addLayout(self._build_footer_row())
+
+    def _build_general_tab(self):
+        tab_general = QWidget()
+        gen_lay = QVBoxLayout(tab_general)
+        gen_lay.setContentsMargins(0, 4, 0, 0)
+        gen_lay.setSpacing(12)
 
         card = QFrame()
         card.setObjectName("SectionCard")
@@ -87,20 +116,19 @@ class WatchFolderRuleDialog(QDialog):
         self.recursive_chk.setCursor(Qt.CursorShape.PointingHandCursor)
         form.addRow("", self.recursive_chk)
 
-        self.preset_combo = QComboBox()
+        self.preset_combo = FormatComboBox()
         self.preset_combo.addItem(tr("watch.preset_current"), PRESET_CURRENT_TOKEN)
         for item in list_presets(self.presets_dir):
             self.preset_combo.addItem(item["name"], item["name"])
         form.addRow(tr("watch.lbl_preset"), self.preset_combo)
 
-        self.delivery_combo = QComboBox()
+        self.delivery_combo = FormatComboBox()
         self.delivery_combo.addItem(tr("watch.delivery_folder"), "folder")
         self.delivery_combo.addItem(tr("watch.delivery_email"), "email")
         self.delivery_combo.addItem(tr("watch.delivery_device_sync"), "device_sync")
         self.delivery_combo.currentIndexChanged.connect(self._update_delivery_fields)
         form.addRow(tr("watch.lbl_delivery"), self.delivery_combo)
 
-        # Поле для доставки в папку
         self.output_dir_row = QWidget()
         out_lay = QHBoxLayout(self.output_dir_row)
         out_lay.setContentsMargins(0, 0, 0, 0)
@@ -115,7 +143,6 @@ class WatchFolderRuleDialog(QDialog):
         self.lbl_output_dir = QLabel(tr("watch.lbl_output_dir"))
         form.addRow(self.lbl_output_dir, self.output_dir_row)
 
-        # Поле для доставки по Email
         self.email_to_edit = QLineEdit()
         self.email_to_edit.setPlaceholderText(
             self.app_settings.get("email_to", "") or "reader@kindle.com"
@@ -123,12 +150,11 @@ class WatchFolderRuleDialog(QDialog):
         self.lbl_email_to = QLabel(tr("watch.lbl_email_to"))
         form.addRow(self.lbl_email_to, self.email_to_edit)
 
-        # Поля для доставки на ридер
         self.sync_row = QWidget()
         sync_lay = QHBoxLayout(self.sync_row)
         sync_lay.setContentsMargins(0, 0, 0, 0)
         sync_lay.setSpacing(8)
-        self.sync_mode_combo = QComboBox()
+        self.sync_mode_combo = FormatComboBox()
         self.sync_mode_combo.addItem(tr("watch.sync_mode_global"), "")
         self.sync_mode_combo.addItem(tr("settings.opt_sync_mtp"), "mtp")
         self.sync_mode_combo.addItem(tr("settings.opt_sync_usb"), "usb")
@@ -142,8 +168,7 @@ class WatchFolderRuleDialog(QDialog):
         self.lbl_sync = QLabel(tr("watch.lbl_sync_target"))
         form.addRow(self.lbl_sync, self.sync_row)
 
-        # Действие с исходником
-        self.post_action_combo = QComboBox()
+        self.post_action_combo = FormatComboBox()
         self.post_action_combo.addItem(tr("watch.post_move_processed"), "move_processed")
         self.post_action_combo.addItem(tr("watch.post_keep"), "keep")
         self.post_action_combo.addItem(tr("watch.post_trash"), "trash")
@@ -160,8 +185,134 @@ class WatchFolderRuleDialog(QDialog):
         self.lbl_hint.setWordWrap(True)
         card_lay.addWidget(self.lbl_hint)
 
-        root.addWidget(card)
+        gen_lay.addWidget(card)
+        return tab_general
 
+    def _build_prep_tab(self):
+        tab_prep = QWidget()
+        prep_lay = QVBoxLayout(tab_prep)
+        prep_lay.setContentsMargins(0, 4, 0, 0)
+        prep_lay.setSpacing(12)
+
+        prep_card = QFrame()
+        prep_card.setObjectName("SectionCard")
+        pc_lay = QVBoxLayout(prep_card)
+        pc_lay.setContentsMargins(18, 16, 18, 16)
+        pc_lay.setSpacing(12)
+
+        prep_hdr = QLabel(
+            _tr_fb("watch.sec_book_prep", "ПОДГОТОВКА КНИГ ПЕРЕД КОНВЕРТАЦИЕЙ", "BOOK PREPARATION BEFORE CONVERSION")
+        )
+        prep_hdr.setObjectName("SectionHeader")
+        pc_lay.addWidget(prep_hdr)
+
+        prep_form = QFormLayout()
+        prep_form.setSpacing(10)
+        prep_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.auto_repair_chk = QCheckBox(
+            _tr_fb(
+                "watch.chk_auto_repair",
+                "Исправлять повреждённые FB2 и битые иллюстрации перед конвертацией",
+                "Repair malformed FB2 XML and broken images before conversion",
+            )
+        )
+        self.auto_repair_chk.setCursor(Qt.CursorShape.PointingHandCursor)
+        prep_form.addRow("", self.auto_repair_chk)
+
+        self.enrich_mode_combo = FormatComboBox()
+        self.enrich_mode_combo.addItem(_tr_fb("watch.enrich_off", "Выключено", "Off"), "off")
+        self.enrich_mode_combo.addItem(_tr_fb("watch.enrich_cover_only", "Только недостающая обложка", "Missing cover only"), "cover_only")
+        self.enrich_mode_combo.addItem(_tr_fb("watch.enrich_empty_only", "Пустые поля и обложка", "Empty fields & cover"), "empty_only")
+        self.enrich_mode_combo.currentIndexChanged.connect(self._update_prep_fields)
+        prep_form.addRow(
+            _tr_fb("watch.lbl_auto_enrich", "Автопоиск в сети:", "Online auto-lookup:"),
+            self.enrich_mode_combo,
+        )
+
+        self.conf_selector = PillSelector(
+            [
+                (_tr_fb("watch.conf_strict", "Строгая", "Strict"), "strict"),
+                (_tr_fb("watch.conf_balanced", "Сбалансированная", "Balanced"), "balanced"),
+                (_tr_fb("watch.conf_relaxed", "Мягкая", "Relaxed"), "relaxed"),
+            ],
+            default="balanced",
+            segmented=True,
+        )
+        self.lbl_conf = QLabel(_tr_fb("watch.lbl_confidence", "Точность совпадения:", "Match accuracy:"))
+        prep_form.addRow(self.lbl_conf, self.conf_selector)
+
+        prov_row = QWidget()
+        prov_lay = QHBoxLayout(prov_row)
+        prov_lay.setContentsMargins(0, 0, 0, 0)
+        prov_lay.setSpacing(10)
+        for pid in DEFAULT_PROVIDER_ORDER:
+            chk = QCheckBox(PROVIDER_LABELS.get(pid, pid))
+            chk.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._provider_checks[pid] = chk
+            prov_lay.addWidget(chk)
+        prov_lay.addStretch(1)
+        self.lbl_providers = QLabel(_tr_fb("watch.lbl_providers", "Источники:", "Sources:"))
+        self.prov_row = prov_row
+        prep_form.addRow(self.lbl_providers, prov_row)
+
+        self.fallback_cover_chk = QCheckBox(
+            _tr_fb(
+                "watch.chk_fallback_cover",
+                "Создавать обложку в Cover Studio, если она не найдена",
+                "Generate a cover in Cover Studio if still missing",
+            )
+        )
+        self.fallback_cover_chk.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.fallback_cover_chk.toggled.connect(self._update_prep_fields)
+        prep_form.addRow("", self.fallback_cover_chk)
+
+        self.fallback_tpl_combo = FormatComboBox()
+        is_ru = (LOCALE.lang_code or "ru") == "ru"
+        for tid, info in COVER_TEMPLATES.items():
+            self.fallback_tpl_combo.addItem(info["name_ru"] if is_ru else info["name_en"], tid)
+        self.fallback_tpl_combo.activated.connect(self._on_fallback_template_activated)
+        self.lbl_fallback_tpl = QLabel(_tr_fb("watch.lbl_fallback_template", "Стиль обложки:", "Cover style:"))
+        prep_form.addRow(self.lbl_fallback_tpl, self.fallback_tpl_combo)
+
+        self.fallback_series_color_chk = QCheckBox(
+            _tr_fb(
+                "watch.chk_fallback_series_color",
+                "Единый цвет обложки для всех книг одной серии",
+                "Consistent cover color for all books in the same series",
+            )
+        )
+        self.fallback_series_color_chk.setCursor(Qt.CursorShape.PointingHandCursor)
+        prep_form.addRow("", self.fallback_series_color_chk)
+
+        self.write_back_chk = QCheckBox(
+            _tr_fb(
+                "watch.chk_write_back",
+                "Сохранять исправления и обложку обратно в исходный файл",
+                "Write repairs and cover back to the source file",
+            )
+        )
+        self.write_back_chk.setCursor(Qt.CursorShape.PointingHandCursor)
+        prep_form.addRow("", self.write_back_chk)
+
+        pc_lay.addLayout(prep_form)
+
+        prep_hint = QLabel(
+            _tr_fb(
+                "watch.hint_prep",
+                "По умолчанию исходный файл не изменяется — исправления, найденные метаданные и обложка применяются только к временной копии перед конвертацией.",
+                "By default, source files are never modified — repairs, fetched metadata, and generated covers are applied only to a temporary copy before conversion.",
+            )
+        )
+        prep_hint.setObjectName("RowDesc")
+        prep_hint.setWordWrap(True)
+        pc_lay.addWidget(prep_hint)
+
+        prep_lay.addWidget(prep_card)
+        prep_lay.addStretch(1)
+        return tab_prep
+
+    def _build_footer_row(self):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_cancel = QPushButton(tr("common.cancel"))
@@ -175,7 +326,16 @@ class WatchFolderRuleDialog(QDialog):
         btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_save.clicked.connect(self._on_save)
         btn_row.addWidget(btn_save)
-        root.addLayout(btn_row)
+        return btn_row
+
+    @staticmethod
+    def _confidence_to_preset(value):
+        val = float(value or 0.88)
+        if val >= 0.90:
+            return "strict"
+        if val <= 0.83:
+            return "relaxed"
+        return "balanced"
 
     def _populate(self):
         r = self._initial
@@ -204,6 +364,23 @@ class WatchFolderRuleDialog(QDialog):
         if pa_idx >= 0:
             self.post_action_combo.setCurrentIndex(pa_idx)
 
+        # Подготовка книг
+        self.auto_repair_chk.setChecked(bool(r.get("auto_repair", False)))
+        em_idx = self.enrich_mode_combo.findData(r.get("auto_enrich_mode", "off"))
+        if em_idx >= 0:
+            self.enrich_mode_combo.setCurrentIndex(em_idx)
+        self.conf_selector.set(self._confidence_to_preset(r.get("enrich_min_confidence", 0.88)))
+        active_provs = set(r.get("enrich_providers") or ())
+        for pid, chk in self._provider_checks.items():
+            chk.setChecked(pid in active_provs)
+
+        self.fallback_cover_chk.setChecked(bool(r.get("fallback_cover_enabled", False)))
+        tpl_idx = self.fallback_tpl_combo.findData(r.get("fallback_cover_template", "eink_minimal"))
+        if tpl_idx >= 0:
+            self.fallback_tpl_combo.setCurrentIndex(tpl_idx)
+        self.fallback_series_color_chk.setChecked(bool(r.get("fallback_cover_series_color", True)))
+        self.write_back_chk.setChecked(bool(r.get("write_back_source", False)))
+
     def _update_delivery_fields(self):
         mode = self.delivery_combo.currentData() or "folder"
         is_folder = mode == "folder"
@@ -224,6 +401,20 @@ class WatchFolderRuleDialog(QDialog):
         else:
             self.lbl_hint.setText(tr("watch.hint_folder"))
 
+    def _on_fallback_template_activated(self, _index):
+        if not self.fallback_cover_chk.isChecked():
+            self.fallback_cover_chk.setChecked(True)
+
+    def _update_prep_fields(self):
+        enrich_on = (self.enrich_mode_combo.currentData() or "off") != "off"
+        self.lbl_conf.setEnabled(enrich_on)
+        self.conf_selector.setEnabled(enrich_on)
+        self.lbl_providers.setEnabled(enrich_on)
+        self.prov_row.setEnabled(enrich_on)
+
+        fb_on = self.fallback_cover_chk.isChecked()
+        self.fallback_series_color_chk.setEnabled(fb_on)
+
     def _browse_watch_folder(self):
         start = self.folder_edit.text().strip() or os.path.expanduser("~")
         chosen = QFileDialog.getExistingDirectory(self, tr("watch.dlg_choose_folder"), start)
@@ -241,11 +432,15 @@ class WatchFolderRuleDialog(QDialog):
     def _on_save(self):
         folder = self.folder_edit.text().strip()
         if not folder or not os.path.isdir(folder):
+            self.tabs.setCurrentIndex(0)
             show_themed_message(self, tr("common.warning"), tr("watch.err_invalid_folder"), "warning")
             return
         self.accept()
 
     def get_rule(self):
+        selected_provs = [pid for pid, chk in self._provider_checks.items() if chk.isChecked()]
+        conf_key = self.conf_selector.get() or "balanced"
+        min_conf = WATCH_ENRICH_CONFIDENCE_PRESETS.get(conf_key, 0.88)
         return normalize_watch_rule({
             "id": self._initial["id"],
             "enabled": self.enabled_chk.isChecked(),
@@ -259,4 +454,12 @@ class WatchFolderRuleDialog(QDialog):
             "device_sync_mode": self.sync_mode_combo.currentData() or "",
             "device_sync_target": self.sync_target_edit.text().strip(),
             "post_action": self.post_action_combo.currentData() or "move_processed",
+            "auto_repair": self.auto_repair_chk.isChecked(),
+            "auto_enrich_mode": self.enrich_mode_combo.currentData() or "off",
+            "enrich_min_confidence": min_conf,
+            "enrich_providers": selected_provs,
+            "fallback_cover_enabled": self.fallback_cover_chk.isChecked(),
+            "fallback_cover_template": self.fallback_tpl_combo.currentData() or "eink_minimal",
+            "fallback_cover_series_color": self.fallback_series_color_chk.isChecked(),
+            "write_back_source": self.write_back_chk.isChecked(),
         })

@@ -20,6 +20,7 @@ from xml.parsers import expat as _xml_expat
 
 from core.fb2_genres import KNOWN_GENRE_CODES, normalize_genre_list
 from core.fb2_processor import COVER_TARGET_SIZE, HAS_PIL, normalize_isbn
+from core.image_optimizer import open_raster_image_safely
 from core.logger import get_logger
 from core.updater import _build_ssl_context, is_safe_http_url, safe_urlopen
 
@@ -447,12 +448,16 @@ def fit_cover_bytes_to_target(raw_bytes, mime="image/jpeg", target_size=COVER_TA
     if not raw_bytes:
         raise ValueError("Empty image data")
     if HAS_PIL:
-        with Image.open(io.BytesIO(raw_bytes)) as im:
-            im = im.convert("RGB")
-            fitted = ImageOps.fit(im, target_size, method=Image.Resampling.LANCZOS)
-            out = io.BytesIO()
-            fitted.save(out, format="JPEG", quality=92)
-            return out.getvalue(), "image/jpeg"
+        im = open_raster_image_safely(raw_bytes, load=True)
+        if im is not None:
+            try:
+                rgb = im.convert("RGB")
+                fitted = ImageOps.fit(rgb, target_size, method=Image.Resampling.LANCZOS)
+                out = io.BytesIO()
+                fitted.save(out, format="JPEG", quality=92)
+                return out.getvalue(), "image/jpeg"
+            finally:
+                im.close()
     return raw_bytes, (mime or "image/jpeg")
 
 
@@ -488,18 +493,21 @@ def download_cover_image(
     mime = _detect_image_mime_from_bytes(raw)
     width = height = 0
     if HAS_PIL:
-        with Image.open(io.BytesIO(raw)) as im:
-            im.load()
-            width, height = im.size
-            fmt = (im.format or "").upper()
-            fmt_mime = {
-                "JPEG": "image/jpeg",
-                "PNG": "image/png",
-                "WEBP": "image/webp",
-                "GIF": "image/gif",
-            }.get(fmt)
-            if fmt_mime:
-                mime = fmt_mime
+        im = open_raster_image_safely(raw, load=True)
+        if im is not None:
+            try:
+                width, height = im.size
+                fmt = (im.format or "").upper()
+                fmt_mime = {
+                    "JPEG": "image/jpeg",
+                    "PNG": "image/png",
+                    "WEBP": "image/webp",
+                    "GIF": "image/gif",
+                }.get(fmt)
+                if fmt_mime:
+                    mime = fmt_mime
+            finally:
+                im.close()
         if width < 60 or height < 80:
             raise ValueError(f"Cover dimensions too small ({width}x{height})")
     elif not mime:

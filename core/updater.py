@@ -312,12 +312,13 @@ def _build_ssl_context():
 
 
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Контролирует HTTP-редиректы: проверяет схему URL, лимит переходов и снимает секретные заголовки на чужой origin."""
+    """Контролирует HTTP-редиректы: проверяет схему URL, доверенные хосты, лимит переходов и снимает секретные заголовки на чужой origin."""
 
-    def __init__(self, require_https=True, max_redirects=MAX_HTTP_REDIRECTS):
+    def __init__(self, require_https=True, max_redirects=MAX_HTTP_REDIRECTS, allowed_hosts=None):
         super().__init__()
         self._require_https = bool(require_https)
         self._max_redirects = max(0, int(max_redirects))
+        self._allowed_hosts = tuple(allowed_hosts) if allowed_hosts is not None else None
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         count = int(getattr(req, "_fbc_redirect_count", 0))
@@ -328,6 +329,8 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         resolved = urllib.parse.urljoin(req.full_url, str(newurl or "").strip())
         if not is_safe_http_url(resolved, allow_relative=False, require_https=self._require_https):
             raise ValueError(f"Blocked unsafe redirect URL: {resolved}")
+        if self._allowed_hosts is not None and not is_allowed_update_host(resolved, self._allowed_hosts):
+            raise ValueError(f"Blocked redirect to untrusted host: {resolved}")
         new_req = super().redirect_request(req, fp, code, msg, headers, resolved)
         if new_req is None:
             return None
@@ -342,14 +345,29 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         return new_req
 
 
-def safe_urlopen(req, timeout=15, context=None, require_https=True, max_redirects=MAX_HTTP_REDIRECTS):
-    """Безопасная обёртка над urllib.request с проверкой URL, редиректов и TLS-контекста."""
+def safe_urlopen(
+    req,
+    timeout=15,
+    context=None,
+    require_https=True,
+    max_redirects=MAX_HTTP_REDIRECTS,
+    allowed_hosts=None,
+):
+    """Безопасная обёртка над urllib.request с проверкой URL, редиректов, доверенных хостов и TLS-контекста."""
     url = req.full_url if isinstance(req, urllib.request.Request) else str(req)
     if not is_safe_http_url(url, allow_relative=False, require_https=require_https):
         raise ValueError(f"Unsupported URL scheme: {url}")
+    if allowed_hosts is not None and not is_allowed_update_host(url, allowed_hosts):
+        raise ValueError(f"Untrusted URL host: {url}")
     if urllib.request.urlopen is not _ORIG_URLOPEN:
         return urllib.request.urlopen(req, timeout=timeout, context=context)
-    handlers = [_SafeRedirectHandler(require_https=require_https, max_redirects=max_redirects)]
+    handlers = [
+        _SafeRedirectHandler(
+            require_https=require_https,
+            max_redirects=max_redirects,
+            allowed_hosts=allowed_hosts,
+        )
+    ]
     if context is not None:
         handlers.append(urllib.request.HTTPSHandler(context=context))
     opener = urllib.request.build_opener(*handlers)
@@ -483,7 +501,7 @@ def download_and_verify_update(
     downloaded = 0
 
     try:
-        with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True) as resp, open(target_path, "wb") as out_fh:
+        with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True, allowed_hosts=allowed_hosts) as resp, open(target_path, "wb") as out_fh:
             try:
                 total = max(0, int(resp.headers.get("Content-Length") or 0))
             except (TypeError, ValueError):

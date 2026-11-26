@@ -759,3 +759,37 @@ QTabBar::tab:selected {
     color: #F1F5F9;
     font-weight: 600;
 }
+
+/* Чекбоксы и карточки шаблонов Cover Studio */
+QCheckBox {
+    color: #F1F5F9;
+    spacing: 8px;
+    background: transparent;
+}
+
+QCheckBox:disabled {
+    color: #64748B;
+}
+
+QToolButton#TemplateCardBtn {
+    background-color: #181F2C;
+    color: #E2E8F0;
+    border: 1.5px solid #2A3447;
+    border-radius: 10px;
+    padding: 6px 4px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+QToolButton#TemplateCardBtn:hover {
+    background-color: #222B3C;
+    border-color: #475569;
+    color: #F8FAFC;
+}
+
+QToolButton#TemplateCardBtn:checked {
+    background-color: #213B56;
+    border: 2px solid #38BDF8;
+    color: #F8FAFC;
+    font-weight: 600;
+}

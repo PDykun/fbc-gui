@@ -459,22 +459,26 @@ def extract_cover_from_fb2(xml_bytes):
 
 def fit_image_to_cover_size(image_path, target_size=COVER_TARGET_SIZE):
     target_w, target_h = target_size
+    with open(image_path, "rb") as f:
+        raw_bytes = f.read()
     if get_facade_attr("HAS_PIL", HAS_PIL) and Image is not None and ImageOps is not None:
-        with Image.open(image_path) as im:
-            w, h = im.size
-            if w * h > MAX_COVER_IMAGE_PIXELS:
-                raise ValueError(f"Cover image exceeds pixel limit ({w}x{h} > {MAX_COVER_IMAGE_PIXELS})")
-            im = im.convert("RGB")
-            fitted = ImageOps.fit(im, (target_w, target_h), method=Image.Resampling.LANCZOS)
-            out = io.BytesIO()
-            fitted.save(out, format="JPEG", quality=92)
-            return out.getvalue(), "image/jpeg"
+        from core.image_optimizer import open_raster_image_safely
+
+        im = open_raster_image_safely(raw_bytes, max_pixels=MAX_COVER_IMAGE_PIXELS, load=True)
+        if im is not None:
+            try:
+                rgb = im.convert("RGB")
+                fitted = ImageOps.fit(rgb, (target_w, target_h), method=Image.Resampling.LANCZOS)
+                out = io.BytesIO()
+                fitted.save(out, format="JPEG", quality=92)
+                return out.getvalue(), "image/jpeg"
+            finally:
+                im.close()
     ext = os.path.splitext(image_path)[1].lower()
     mime = {
         ".png": "image/png",
         ".webp": "image/webp",
         ".gif": "image/gif",
     }.get(ext, "image/jpeg")
-    with open(image_path, "rb") as f:
-        return f.read(), mime
+    return raw_bytes, mime
 

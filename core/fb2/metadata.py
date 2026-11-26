@@ -22,6 +22,7 @@ from core.fb2.xml_io import (
     _decode_fb2_text,
     _find_title_info,
     _get_root_ns_uri,
+    _has_disallowed_xml_declarations,
     _local_tag,
     _parse_fb2_root,
     _qtag,
@@ -139,7 +140,10 @@ def _parse_metadata_fallback(xml_bytes):
         meta['isbn'] = _rx_tag(m_pub.group(0), 'isbn')
 
     try:
-        ti_el = ET.fromstring(fragment.encode('utf-8'))
+        frag_bytes = fragment.encode('utf-8')
+        if _has_disallowed_xml_declarations(frag_bytes):
+            raise ValueError("Disallowed XML declaration in title-info fragment")
+        ti_el = ET.fromstring(frag_bytes)
         meta['genres'] = normalize_genre_list([el.text for el in ti_el.findall('genre') if el.text])
         t_el = ti_el.find('book-title')
         if t_el is not None and t_el.text:
@@ -274,6 +278,179 @@ def _build_annotation_element(ns_uri, text):
     return anno_el
 
 
+def _apply_cover_to_xml(root, title_info, ns_uri, root_ns, cover_bytes, cover_mime):
+    norm_mime = (cover_mime or 'image/jpeg').strip().lower()
+    ext_map = {'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif'}
+    cover_id = 'cover' + ext_map.get(norm_mime, '.jpg')
+
+    coverpage_el = title_info.find(_qtag(ns_uri, 'coverpage'))
+    if coverpage_el is None:
+        coverpage_el = _insert_in_xsd_order(title_info, ET.Element(_qtag(ns_uri, 'coverpage')), _TITLE_INFO_XSD_ORDER)
+    image_el = coverpage_el.find(_qtag(ns_uri, 'image'))
+    if image_el is None:
+        image_el = ET.SubElement(coverpage_el, _qtag(ns_uri, 'image'))
+
+    old_cover_id = None
+    for k, v in list(image_el.attrib.items()):
+        if k.endswith('href') and v.startswith('#'):
+            old_cover_id = v[1:]
+            if k != f'{{{XLINK_NS}}}href':
+                del image_el.attrib[k]
+    image_el.set(f'{{{XLINK_NS}}}href', f'#{cover_id}')
+
+    target_bin = None
+    old_bin = None
+    for bin_el in root.findall(_qtag(root_ns, 'binary')):
+        bid = bin_el.attrib.get('id')
+        if bid == cover_id:
+            target_bin = bin_el
+        elif old_cover_id and bid == old_cover_id:
+            old_bin = bin_el
+    if old_bin is not None and old_cover_id != cover_id:
+        body_refs = set()
+        for b_el in root.findall(_qtag(root_ns, 'body')):
+            for img in b_el.iter():
+                for ak, av in img.attrib.items():
+                    if ak.endswith('href') and av.startswith('#'):
+                        body_refs.add(av[1:])
+        if old_cover_id not in body_refs:
+            root.remove(old_bin)
+    if target_bin is None:
+        target_bin = ET.SubElement(root, _qtag(root_ns, 'binary'))
+        target_bin.set('id', cover_id)
+    target_bin.set('content-type', norm_mime or 'image/jpeg')
+    target_bin.text = base64.encodebytes(cover_bytes).decode('ascii')
+
+
+def _apply_publish_info_field(root, field_name, meta, current_meta):
+    if field_name not in meta:
+        return
+    new_val = (meta.get(field_name) or '').strip()
+    old_val = (current_meta.get(field_name) or '').strip()
+    if new_val == old_val:
+        return
+    desc, pub_info, desc_ns = _find_description_and_publish_info(root)
+    if desc is None:
+        return
+    if new_val:
+        if pub_info is None:
+            pub_info = _insert_in_xsd_order(desc, ET.Element(_qtag(desc_ns, 'publish-info')), _DESCRIPTION_XSD_ORDER)
+        field_el = pub_info.find(_qtag(desc_ns, field_name))
+        if field_el is None:
+            field_el = _insert_in_xsd_order(pub_info, ET.Element(_qtag(desc_ns, field_name)), _PUBLISH_INFO_XSD_ORDER)
+        field_el.text = new_val
+    elif pub_info is not None:
+        field_el = pub_info.find(_qtag(desc_ns, field_name))
+        if field_el is not None:
+            pub_info.remove(field_el)
+        if len(pub_info) == 0:
+            desc.remove(pub_info)
+
+
+def _apply_title_info_metadata(root, title_info, ns_uri, root_ns, meta, current_meta, *, cover_bytes=None, cover_mime="image/jpeg", cover_modified=False):
+    # 1. Жанры (минимальный патч: трогаем только если явно переданы и изменились)
+    if 'genres' in meta:
+        new_genres = normalize_genre_list(meta.get('genres'))
+        old_genres = normalize_genre_list(current_meta.get('genres'))
+        if new_genres != old_genres:
+            for g_el in list(title_info.findall(_qtag(ns_uri, 'genre'))):
+                title_info.remove(g_el)
+            for idx, code in enumerate(new_genres):
+                g_el = ET.Element(_qtag(ns_uri, 'genre'))
+                g_el.text = code
+                title_info.insert(idx, g_el)
+
+    # 2. Автор
+    a_el = title_info.find(_qtag(ns_uri, 'author'))
+    if a_el is None:
+        a_el = _insert_in_xsd_order(title_info, ET.Element(_qtag(ns_uri, 'author')), _TITLE_INFO_XSD_ORDER)
+    for tag, key in [('first-name', 'first'), ('last-name', 'last'), ('middle-name', 'mid')]:
+        el = a_el.find(_qtag(ns_uri, tag))
+        val = meta.get(key, '')
+        if el is not None:
+            el.text = val
+        elif val:
+            new_el = ET.Element(_qtag(ns_uri, tag))
+            new_el.text = val
+            _insert_in_xsd_order(a_el, new_el, _AUTHOR_XSD_ORDER)
+
+    # 3. Название
+    t_el = title_info.find(_qtag(ns_uri, 'book-title'))
+    if t_el is not None:
+        t_el.text = meta.get('title', '')
+    elif meta.get('title'):
+        new_t = ET.Element(_qtag(ns_uri, 'book-title'))
+        new_t.text = meta['title']
+        _insert_in_xsd_order(title_info, new_t, _TITLE_INFO_XSD_ORDER)
+
+    # 4. Аннотация (не трогаем богатую XML-разметку, если текст не менялся)
+    if 'annotation' in meta:
+        new_anno = (meta.get('annotation') or '').strip()
+        old_anno = (current_meta.get('annotation') or '').strip()
+        if new_anno != old_anno:
+            old_anno_el = title_info.find(_qtag(ns_uri, 'annotation'))
+            if old_anno_el is not None:
+                title_info.remove(old_anno_el)
+            if new_anno:
+                new_anno_el = _build_annotation_element(ns_uri, new_anno)
+                _insert_in_xsd_order(title_info, new_anno_el, _TITLE_INFO_XSD_ORDER)
+
+    # 5. Обложка
+    if cover_modified and cover_bytes:
+        _apply_cover_to_xml(root, title_info, ns_uri, root_ns, cover_bytes, cover_mime)
+
+    # 6. Язык (<lang>, не затрагивая <src-lang>)
+    if 'lang' in meta:
+        new_lang = (meta.get('lang') or '').strip().lower()
+        old_lang = (current_meta.get('lang') or '').strip().lower()
+        if new_lang != old_lang:
+            lang_el = title_info.find(_qtag(ns_uri, 'lang'))
+            if new_lang:
+                if lang_el is None:
+                    lang_el = _insert_in_xsd_order(title_info, ET.Element(_qtag(ns_uri, 'lang')), _TITLE_INFO_XSD_ORDER)
+                lang_el.text = new_lang
+            elif lang_el is not None:
+                title_info.remove(lang_el)
+
+    # 7. Переводчик (обновляем только первого <translator>, остальных сохраняем)
+    tr_keys = ('translator_first', 'translator_middle', 'translator_last')
+    if any(k in meta for k in tr_keys):
+        new_tr = tuple((meta.get(k) or '').strip() for k in tr_keys)
+        old_tr = tuple((current_meta.get(k) or '').strip() for k in tr_keys)
+        if new_tr != old_tr:
+            translators = title_info.findall(_qtag(ns_uri, 'translator'))
+            if any(new_tr):
+                tr0 = translators[0] if translators else _insert_in_xsd_order(
+                    title_info, ET.Element(_qtag(ns_uri, 'translator')), _TITLE_INFO_XSD_ORDER
+                )
+                for tag, val in zip(('first-name', 'middle-name', 'last-name'), new_tr):
+                    el = tr0.find(_qtag(ns_uri, tag))
+                    if val:
+                        if el is None:
+                            el = ET.Element(_qtag(ns_uri, tag))
+                            _insert_in_xsd_order(tr0, el, _AUTHOR_XSD_ORDER)
+                        el.text = val
+                    elif el is not None:
+                        tr0.remove(el)
+            elif translators:
+                title_info.remove(translators[0])
+
+    # 8. Серия
+    seq_els = list(title_info.findall(_qtag(ns_uri, 'sequence')))
+    seq_el = seq_els[0] if seq_els else None
+    if meta.get('series'):
+        if seq_el is None:
+            seq_el = _insert_in_xsd_order(title_info, ET.Element(_qtag(ns_uri, 'sequence')), _TITLE_INFO_XSD_ORDER)
+        seq_el.set('name', meta['series'])
+        if meta.get('num'):
+            seq_el.set('number', meta['num'])
+        else:
+            seq_el.attrib.pop('number', None)
+    elif seq_els:
+        for extra_seq in seq_els:
+            title_info.remove(extra_seq)
+
+
 def update_fb2_xml(xml_bytes, meta, cover_bytes=None, cover_mime="image/jpeg", cover_modified=False, orig_meta=None):
     root = _parse_fb2_root(xml_bytes)
     if root is None:
@@ -288,189 +465,20 @@ def update_fb2_xml(xml_bytes, meta, cover_bytes=None, cover_mime="image/jpeg", c
     title_info, ns_uri = _find_title_info(root)
     root_ns = _get_root_ns_uri(root)
     if title_info is not None:
-        # 1. Жанры (минимальный патч: трогаем только если явно переданы и изменились)
-        if 'genres' in meta:
-            new_genres = normalize_genre_list(meta.get('genres'))
-            old_genres = normalize_genre_list(current_meta.get('genres'))
-            if new_genres != old_genres:
-                for g_el in list(title_info.findall(_qtag(ns_uri, 'genre'))):
-                    title_info.remove(g_el)
-                for idx, code in enumerate(new_genres):
-                    g_el = ET.Element(_qtag(ns_uri, 'genre'))
-                    g_el.text = code
-                    title_info.insert(idx, g_el)
+        _apply_title_info_metadata(
+            root,
+            title_info,
+            ns_uri,
+            root_ns,
+            meta,
+            current_meta,
+            cover_bytes=cover_bytes,
+            cover_mime=cover_mime,
+            cover_modified=cover_modified,
+        )
 
-        # 2. Автор
-        a_el = title_info.find(_qtag(ns_uri, 'author'))
-        if a_el is None:
-            a_el = _insert_in_xsd_order(title_info, ET.Element(_qtag(ns_uri, 'author')), _TITLE_INFO_XSD_ORDER)
-        for tag, key in [('first-name', 'first'), ('last-name', 'last'), ('middle-name', 'mid')]:
-            el = a_el.find(_qtag(ns_uri, tag))
-            val = meta.get(key, '')
-            if el is not None:
-                el.text = val
-            elif val:
-                new_el = ET.Element(_qtag(ns_uri, tag))
-                new_el.text = val
-                _insert_in_xsd_order(a_el, new_el, _AUTHOR_XSD_ORDER)
-
-        # 3. Название
-        t_el = title_info.find(_qtag(ns_uri, 'book-title'))
-        if t_el is not None:
-            t_el.text = meta.get('title', '')
-        elif meta.get('title'):
-            new_t = ET.Element(_qtag(ns_uri, 'book-title'))
-            new_t.text = meta['title']
-            _insert_in_xsd_order(title_info, new_t, _TITLE_INFO_XSD_ORDER)
-
-        # 4. Аннотация (не трогаем богатую XML-разметку, если текст не менялся)
-        if 'annotation' in meta:
-            new_anno = (meta.get('annotation') or '').strip()
-            old_anno = (current_meta.get('annotation') or '').strip()
-            if new_anno != old_anno:
-                old_anno_el = title_info.find(_qtag(ns_uri, 'annotation'))
-                if old_anno_el is not None:
-                    title_info.remove(old_anno_el)
-                if new_anno:
-                    new_anno_el = _build_annotation_element(ns_uri, new_anno)
-                    _insert_in_xsd_order(title_info, new_anno_el, _TITLE_INFO_XSD_ORDER)
-
-        # 5. Обложка
-        if cover_modified and cover_bytes:
-            norm_mime = (cover_mime or 'image/jpeg').strip().lower()
-            ext_map = {'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif'}
-            cover_id = 'cover' + ext_map.get(norm_mime, '.jpg')
-
-            coverpage_el = title_info.find(_qtag(ns_uri, 'coverpage'))
-            if coverpage_el is None:
-                coverpage_el = _insert_in_xsd_order(title_info, ET.Element(_qtag(ns_uri, 'coverpage')), _TITLE_INFO_XSD_ORDER)
-            image_el = coverpage_el.find(_qtag(ns_uri, 'image'))
-            if image_el is None:
-                image_el = ET.SubElement(coverpage_el, _qtag(ns_uri, 'image'))
-
-            old_cover_id = None
-            for k, v in list(image_el.attrib.items()):
-                if k.endswith('href') and v.startswith('#'):
-                    old_cover_id = v[1:]
-                    if k != f'{{{XLINK_NS}}}href':
-                        del image_el.attrib[k]
-            image_el.set(f'{{{XLINK_NS}}}href', f'#{cover_id}')
-
-            target_bin = None
-            old_bin = None
-            for bin_el in root.findall(_qtag(root_ns, 'binary')):
-                bid = bin_el.attrib.get('id')
-                if bid == cover_id:
-                    target_bin = bin_el
-                elif old_cover_id and bid == old_cover_id:
-                    old_bin = bin_el
-            if old_bin is not None and old_cover_id != cover_id:
-                body_refs = set()
-                for b_el in root.findall(_qtag(root_ns, 'body')):
-                    for img in b_el.iter():
-                        for ak, av in img.attrib.items():
-                            if ak.endswith('href') and av.startswith('#'):
-                                body_refs.add(av[1:])
-                if old_cover_id not in body_refs:
-                    root.remove(old_bin)
-            if target_bin is None:
-                target_bin = ET.SubElement(root, _qtag(root_ns, 'binary'))
-                target_bin.set('id', cover_id)
-            target_bin.set('content-type', norm_mime or 'image/jpeg')
-            target_bin.text = base64.encodebytes(cover_bytes).decode('ascii')
-
-        # 6. Язык (<lang>, не затрагивая <src-lang>)
-        if 'lang' in meta:
-            new_lang = (meta.get('lang') or '').strip().lower()
-            old_lang = (current_meta.get('lang') or '').strip().lower()
-            if new_lang != old_lang:
-                lang_el = title_info.find(_qtag(ns_uri, 'lang'))
-                if new_lang:
-                    if lang_el is None:
-                        lang_el = _insert_in_xsd_order(title_info, ET.Element(_qtag(ns_uri, 'lang')), _TITLE_INFO_XSD_ORDER)
-                    lang_el.text = new_lang
-                elif lang_el is not None:
-                    title_info.remove(lang_el)
-
-        # 7. Переводчик (обновляем только первого <translator>, остальных сохраняем)
-        tr_keys = ('translator_first', 'translator_middle', 'translator_last')
-        if any(k in meta for k in tr_keys):
-            new_tr = tuple((meta.get(k) or '').strip() for k in tr_keys)
-            old_tr = tuple((current_meta.get(k) or '').strip() for k in tr_keys)
-            if new_tr != old_tr:
-                translators = title_info.findall(_qtag(ns_uri, 'translator'))
-                if any(new_tr):
-                    tr0 = translators[0] if translators else _insert_in_xsd_order(
-                        title_info, ET.Element(_qtag(ns_uri, 'translator')), _TITLE_INFO_XSD_ORDER
-                    )
-                    for tag, val in zip(('first-name', 'middle-name', 'last-name'), new_tr):
-                        el = tr0.find(_qtag(ns_uri, tag))
-                        if val:
-                            if el is None:
-                                el = ET.Element(_qtag(ns_uri, tag))
-                                _insert_in_xsd_order(tr0, el, _AUTHOR_XSD_ORDER)
-                            el.text = val
-                        elif el is not None:
-                            tr0.remove(el)
-                elif translators:
-                    title_info.remove(translators[0])
-
-        # 8. Серия
-        seq_els = list(title_info.findall(_qtag(ns_uri, 'sequence')))
-        seq_el = seq_els[0] if seq_els else None
-        if meta.get('series'):
-            if seq_el is None:
-                seq_el = _insert_in_xsd_order(title_info, ET.Element(_qtag(ns_uri, 'sequence')), _TITLE_INFO_XSD_ORDER)
-            seq_el.set('name', meta['series'])
-            if meta.get('num'):
-                seq_el.set('number', meta['num'])
-            else:
-                seq_el.attrib.pop('number', None)
-        elif seq_els:
-            for extra_seq in seq_els:
-                title_info.remove(extra_seq)
-
-    # 9. Издатель (<description>/<publish-info>/<publisher>)
-    if 'publisher' in meta:
-        new_pub = (meta.get('publisher') or '').strip()
-        old_pub = (current_meta.get('publisher') or '').strip()
-        if new_pub != old_pub:
-            desc, pub_info, desc_ns = _find_description_and_publish_info(root)
-            if desc is not None:
-                if new_pub:
-                    if pub_info is None:
-                        pub_info = _insert_in_xsd_order(desc, ET.Element(_qtag(desc_ns, 'publish-info')), _DESCRIPTION_XSD_ORDER)
-                    pub_el = pub_info.find(_qtag(desc_ns, 'publisher'))
-                    if pub_el is None:
-                        pub_el = _insert_in_xsd_order(pub_info, ET.Element(_qtag(desc_ns, 'publisher')), _PUBLISH_INFO_XSD_ORDER)
-                    pub_el.text = new_pub
-                elif pub_info is not None:
-                    pub_el = pub_info.find(_qtag(desc_ns, 'publisher'))
-                    if pub_el is not None:
-                        pub_info.remove(pub_el)
-                    if len(pub_info) == 0:
-                        desc.remove(pub_info)
-
-    # 10. ISBN (<description>/<publish-info>/<isbn>)
-    if 'isbn' in meta:
-        new_isbn = (meta.get('isbn') or '').strip()
-        old_isbn = (current_meta.get('isbn') or '').strip()
-        if new_isbn != old_isbn:
-            desc, pub_info, desc_ns = _find_description_and_publish_info(root)
-            if desc is not None:
-                if new_isbn:
-                    if pub_info is None:
-                        pub_info = _insert_in_xsd_order(desc, ET.Element(_qtag(desc_ns, 'publish-info')), _DESCRIPTION_XSD_ORDER)
-                    isbn_el = pub_info.find(_qtag(desc_ns, 'isbn'))
-                    if isbn_el is None:
-                        isbn_el = _insert_in_xsd_order(pub_info, ET.Element(_qtag(desc_ns, 'isbn')), _PUBLISH_INFO_XSD_ORDER)
-                    isbn_el.text = new_isbn
-                elif pub_info is not None:
-                    isbn_el = pub_info.find(_qtag(desc_ns, 'isbn'))
-                    if isbn_el is not None:
-                        pub_info.remove(isbn_el)
-                    if len(pub_info) == 0:
-                        desc.remove(pub_info)
+    _apply_publish_info_field(root, 'publisher', meta, current_meta)
+    _apply_publish_info_field(root, 'isbn', meta, current_meta)
 
     body = root.find(_qtag(root_ns, 'body'))
     if body is not None:

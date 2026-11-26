@@ -517,6 +517,28 @@ class TestMetadataLookup(unittest.TestCase):
         self.assertIn("key=***", masked)
         self.assertIn("Basic ***", masked)
 
+    def test_open_raster_image_safely_blocks_decompression_bomb(self):
+        from core.image_optimizer import HAS_PIL, open_raster_image_safely
+        if not HAS_PIL:
+            self.skipTest("Pillow not installed")
+        import io
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (200, 200), color=(10, 20, 30)).save(buf, format="PNG")
+        raw = buf.getvalue()
+
+        # Succeeds under normal limit
+        im = open_raster_image_safely(raw, max_pixels=100_000, load=True)
+        try:
+            self.assertEqual(im.size, (200, 200))
+        finally:
+            im.close()
+
+        # Rejects when dimensions exceed safety limit
+        with self.assertRaises(ValueError):
+            open_raster_image_safely(raw, max_pixels=10_000, load=True)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -62,8 +62,12 @@ Every metadata edit, online lookup, batch update, cover replacement, row reorder
 - **Queue deduplication:** books sharing normalized author, series, number, and title are flagged **≈ Duplicate**. Click **Remove Duplicates (N)** to clean the queue in one step (Undo supported).
 - **Skip existing:** when enabled, books whose target output file already exists, is at least as new as the source, and have no unsaved metadata/cover edits are marked **↷ Skipped** instead of re-converting.
 
-### Covers
-Select a book to inspect its cover and dimensions in the right panel. **Replace Cover...** automatically fits the image to `600×900 px` (LANCZOS), **Restore Original** reverts to the embedded cover, and **Fetch Online** immediately opens the online cover & metadata lookup dialog for the selected book.
+### Covers & Cover Studio
+Select a book to inspect its cover and dimensions in the right panel:
+- **Replace Cover...** — automatically fits the selected image to `600×900 px` (LANCZOS).
+- **Restore Original** — reverts to the embedded cover.
+- **Fetch Online** — opens the online cover & metadata lookup dialog.
+- **Create Cover... (Cover Studio)** — built-in offline typographic cover generator (also available in the queue context menu for single or batch selection, and inside the **Edit Book** dialog). Features 5 templates (*Classic Binding*, *E Ink Minimal*, *Series Edition*, *Modern Poster*, *Chronicle*), 6 primary palettes, custom background/accent hex pickers, **Consistent color for all books in the same series**, bundled/user font selection from `fonts/`, live E Ink display simulation (*Color / Carta / Kaleido 3 / Gallery 3*), and batch modes (**Apply to All** or **Missing Covers Only**) with full Undo/Redo. The last used style is persisted in settings and exported/imported inside user presets (`.fbcpreset.json`).
 
 ### Running Conversion
 - Choose the target format from the toolbar dropdown (`EPUB2`, `EPUB3`, `KEPUB`, `KEPUB3`, `AZW3`, `KFX`, `AZW8`, `PDF`, `TXT`, `MD`).
@@ -141,9 +145,91 @@ In **Settings → Device Delivery** (or via the **To Reader** button on the Conv
 
 ### Watch Folder Mode & System Tray / macOS Menu Bar
 In **Settings → Auto-Conversion (Watch Folders) & Tray**:
-- Add **multiple watched folders simultaneously** (e.g., `ToKindle` and `ToKobo`), linking each to its own conversion preset, delivery method (**Folder**, **Email**, or **Reader**), and source post-action (**Move to Processed folder**, **Keep in place**, or **Move to Trash**).
-- Incoming `.fb2` and `.zip` files are converted in an isolated background environment (without modifying the main window's active settings or queue), with partial-download protection (`.crdownload`, `.part`, `.tmp`) and coalesced OS notifications.
+- Add **multiple watched folders simultaneously** (e.g., `ToKindle` and `ToKobo`), linking each on the **General** tab to its own conversion preset, delivery method (**Folder**, **Email**, or **Reader**), and source post-action (**Move to Processed folder**, **Keep in place**, or **Move to Trash**).
+- On the **Book Preparation** tab, each rule can independently enable:
+  - **Auto-Repair** — repairs malformed FB2 XML, removes corrupted `<binary>` entries, and optimizes oversized images before conversion.
+  - **Online Auto-Lookup (Auto-Enrich)** — *Off*, *Missing cover only*, or *Empty fields & cover*, with selectable match accuracy (**Strict** `0.92`, **Balanced** `0.88`, **Relaxed** `0.80`), provider selection, and per-batch session caching.
+  - **Cover Studio Fallback** — automatically generates a typographic cover with the selected template (and optional series color consistency) if no cover was found.
+  - **Write repairs and cover back to the source file** — disabled by default so source files remain untouched (all changes apply to a temporary copy).
+- Incoming `.fb2` and `.zip` files are converted in an isolated background environment (without modifying the main window's active settings or queue), with partial-download protection (`.crdownload`, `.part`, `.tmp`). Coalesced OS notifications include non-zero preparation counters (e.g., `To Kindle: 3 book(s) ready (Folder) • repaired: 1, enriched: 2, covers created: 1`).
 - Enable **System tray / Menu Bar icon** for background status, pause/resume, folder shortcuts, and recent history; macOS includes an optional **Hide Dock icon when minimized** toggle, and both macOS and Windows support opt-in **Launch at system login** (disabled by default).
+
+#### Watch Folder JSON Schema (`watch_folders` in `settings.json`)
+Watch Folder rules are stored in the `watch_folders` array inside `settings.json`. Example rule object:
+
+```json
+{
+  "id": "a1b2c3d4e5f6",
+  "enabled": true,
+  "name": "To Kindle",
+  "folder": "/Users/name/Downloads/ToKindle",
+  "recursive": false,
+  "preset_name": "Kindle Paperwhite (2024)",
+  "delivery_mode": "folder",
+  "output_dir": "",
+  "email_to": "",
+  "device_sync_mode": "",
+  "device_sync_target": "",
+  "post_action": "move_processed",
+  "auto_repair": true,
+  "auto_enrich_mode": "empty_only",
+  "enrich_min_confidence": 0.88,
+  "enrich_providers": ["fantlab", "litres", "openlibrary"],
+  "enrich_timeout_sec": 10.0,
+  "fallback_cover_enabled": true,
+  "fallback_cover_template": "eink_minimal",
+  "fallback_cover_series_color": true,
+  "write_back_source": false
+}
+```
+
+| Field | Type / Values | Description |
+| :--- | :--- | :--- |
+| `id` | `string` | Unique rule identifier (auto-generated). |
+| `enabled` | `bool` | Whether watching is active for this folder. |
+| `name` | `string` | Display name shown in the table, tray menu, and notifications. |
+| `folder` | `string` | Absolute path to the watched directory. |
+| `recursive` | `bool` | Watch nested subdirectories (`Processed/`, `Failed/`, `Converted/` are always excluded). |
+| `preset_name` | `string` | Preset name or `"__current__"` to use current app settings. |
+| `delivery_mode` | `"folder"` \| `"email"` \| `"device_sync"` | Delivery target for converted books. |
+| `output_dir` | `string` | Destination folder when `delivery_mode` is `"folder"` (empty defaults to `Converted/` inside `folder`). |
+| `email_to` | `string` | Recipient override when `delivery_mode` is `"email"` (empty uses global email recipient). |
+| `device_sync_mode` | `""` \| `"mtp"` \| `"usb"` \| `"folder"` | Reader sync mode override (`""` uses global setting). |
+| `device_sync_target` | `string` | Target path on the reader (empty uses global setting). |
+| `post_action` | `"move_processed"` \| `"keep"` \| `"trash"` | Action taken on source files after successful conversion (failed files move to `Failed/`). |
+| `auto_repair` | `bool` | Enable automatic FB2 XML repair and image optimization before conversion. |
+| `auto_enrich_mode` | `"off"` \| `"cover_only"` \| `"empty_only"` | Online metadata & cover auto-lookup mode. |
+| `enrich_min_confidence` | `float` (`0.50`–`0.99`) | Minimum match confidence (`0.92` strict, `0.88` balanced, `0.80` relaxed). |
+| `enrich_providers` | `string[]` | Active lookup providers: `fantlab`, `litres`, `openlibrary`, `google_books`, `opds`. |
+| `enrich_timeout_sec` | `float` (`3.0`–`30.0`) | Per-request network timeout in seconds. |
+| `fallback_cover_enabled` | `bool` | Generate a Cover Studio cover when the book still has no cover. |
+| `fallback_cover_template` | `string` | Cover Studio template: `classic_serif`, `eink_minimal`, `series_edition`, `modern_band`, `chronicle`. |
+| `fallback_cover_series_color` | `bool` | Use deterministic per-series cover colors (`auto_series`). |
+| `write_back_source` | `bool` | Atomically write repairs, enriched metadata, and generated covers back to the source FB2/ZIP. |
+
+#### Cover Studio JSON Schema (`cover_studio_spec` in `settings.json` & `.fbcpreset.json`)
+Cover Studio preferences are stored under `cover_studio_spec` in `settings.json` and automatically preserved in `settings.cover_studio_spec` inside `.fbcpreset.json` user presets:
+
+```json
+{
+  "template_id": "eink_minimal",
+  "palette_id": "auto_series",
+  "custom_bg": "",
+  "custom_fg": "",
+  "custom_accent": "",
+  "title_font": "PT Astra Serif",
+  "meta_font": "PT Astra Serif",
+  "show_author": true,
+  "show_series": true,
+  "show_series_number": true,
+  "show_genre_badge": false,
+  "custom_subtitle": "",
+  "eink_profile": "none",
+  "output_size": [600, 900],
+  "output_format": "JPEG",
+  "jpeg_quality": 90
+}
+```
 
 ## 8. Auto-Updates, Themes & Keyboard Shortcuts
 

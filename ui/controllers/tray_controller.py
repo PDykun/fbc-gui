@@ -247,6 +247,20 @@ class TrayWatchController:
             self._tray_icon.setIcon(self._load_tray_qicon(self._watch_busy))
         self.refresh_tray_menu()
 
+    @staticmethod
+    def _format_watch_prep_suffix(summary):
+        parts = []
+        repaired_cnt = int(summary.get("repaired_count", 0) or 0)
+        enriched_cnt = int(summary.get("enriched_count", 0) or 0)
+        covers_cnt = int(summary.get("covers_generated_count", 0) or 0)
+        if repaired_cnt > 0:
+            parts.append(tr("watch.notify_prep_repaired", count=repaired_cnt))
+        if enriched_cnt > 0:
+            parts.append(tr("watch.notify_prep_enriched", count=enriched_cnt))
+        if covers_cnt > 0:
+            parts.append(tr("watch.notify_prep_covers", count=covers_cnt))
+        return f" • {', '.join(parts)}" if parts else ""
+
     def _on_watch_batch_completed(self, summary):
         self.refresh_tray_menu()
         if not self._is_bool_setting("watch_notifications_enabled", True):
@@ -268,6 +282,8 @@ class TrayWatchController:
         else:
             msg = tr("watch.notify_ok", rule=rule_name, count=ok_cnt, delivery=delivery_lbl)
             level = "info"
+
+        msg += self._format_watch_prep_suffix(summary)
 
         send_system_notification(
             self.app_name,

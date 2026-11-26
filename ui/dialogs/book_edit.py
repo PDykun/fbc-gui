@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QTreeWidget, QTreeWidgetItem, QScrollArea,
 )
 
+from core.cover_studio import CoverSpec
 from core.i18n import tr
 from core.fb2_genres import (
     FB2_GENRE_GROUPS, KNOWN_GENRE_CODES, COMMON_LANG_CODES,
@@ -21,6 +22,7 @@ from core.fb2_processor import (
 
 
 from ui.dialogs.common import show_themed_message, create_segmented_tabs
+from ui.dialogs.cover_studio import CoverStudioDialog
 from ui.dialogs.metadata_lookup import MetadataLookupDialog
 
 
@@ -30,11 +32,15 @@ class BookEditDialog(QDialog):
     def __init__(self, parent, data, output_format, filename_mode="default", filename_tokens=None, app_settings=None):
         super().__init__(parent)
         self.setWindowTitle(tr("converter.edit_dlg_title"))
+        self.setObjectName("MainContainer")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
         self.setModal(True)
         self.setMinimumWidth(780)
-        if parent and parent.styleSheet():
-            self.setStyleSheet(parent.styleSheet())
+        if parent is not None:
+            self.setPalette(parent.palette())
+            if parent.styleSheet():
+                self.setStyleSheet(parent.styleSheet())
 
         self._output_format = output_format
         self._filename_mode = filename_mode
@@ -313,6 +319,13 @@ class BookEditDialog(QDialog):
         self.btn_lookup_online.clicked.connect(self._open_online_lookup)
         cover_box.addWidget(self.btn_lookup_online)
 
+        self.btn_cover_studio = QPushButton(tr("converter.btn_cover_studio"))
+        self.btn_cover_studio.setObjectName("SecondaryButton")
+        self.btn_cover_studio.setProperty("variant", "secondary")
+        self.btn_cover_studio.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cover_studio.clicked.connect(self._open_cover_studio)
+        cover_box.addWidget(self.btn_cover_studio)
+
         cover_box.addStretch()
         return cover_box
 
@@ -513,6 +526,30 @@ class BookEditDialog(QDialog):
             self.btn_reset_cover.setEnabled(True)
             self._render_cover()
         self._update_target_preview()
+
+    def _open_cover_studio(self):
+        initial_spec = CoverSpec.from_dict(self._app_settings.get("cover_studio_spec"))
+        fonts_dir = getattr(self.parent(), "fonts_dir", None)
+        dlg = CoverStudioDialog(
+            self,
+            book_data={"meta": self.get_meta()},
+            books_count=1,
+            initial_spec=initial_spec,
+            fonts_dir=fonts_dir,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._app_settings["cover_studio_spec"] = dlg.get_spec().to_dict()
+        cover_bytes, cover_mime = dlg.get_rendered_cover()
+        if cover_bytes:
+            self._cover_bytes = cover_bytes
+            self._cover_mime = cover_mime
+            self._cover_modified = True
+            self.btn_reset_cover.setEnabled(True)
+            self._render_cover()
+
+    def get_cover_studio_spec(self):
+        return self._app_settings.get("cover_studio_spec")
 
     def get_meta(self):
         new_anno = self.ed_annotation.toPlainText().strip() if hasattr(self, "ed_annotation") else self._orig_annotation

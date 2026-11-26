@@ -35,6 +35,7 @@ S2K_THIRD_PARTY_URL = "https://github.com/rupor-github/sync2kindle"
 
 from core.config import (
     DEFAULT_OUTPUT_FORMAT,
+    cleanup_stale_temp_dirs,
     get_default_app_settings,
     migrate_fbc_config_211,
 )
@@ -161,6 +162,9 @@ def init_app_runtime():
     ) = setup_app_environment()
     LOG_PATH = init_logging(BASE_DIR)
     logger.info("%s v%s (build %s) started; base_dir=%s", APP_NAME, APP_VERSION, BUILD_NUMBER, BASE_DIR)
+    cleaned_tmp = cleanup_stale_temp_dirs()
+    if cleaned_tmp:
+        logger.debug("Очищено устаревших временных каталогов: %d", cleaned_tmp)
     init_locale(LOCALES_DIR, BUNDLED_LOCALES_DIR)
     init_themes(THEMES_DIR, BUNDLED_THEMES_DIR)
     _RUNTIME_INITIALIZED = True
@@ -353,6 +357,10 @@ class MainWindow(
             try:
                 if worker.isRunning() and not worker.wait(timeout_ms):
                     logger.warning("Фоновый поток %s не завершился за %d мс при закрытии окна", name, timeout_ms)
+                    try:
+                        worker.disconnect()
+                    except (TypeError, RuntimeError):
+                        pass
             except RuntimeError:
                 pass
 

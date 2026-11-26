@@ -1,0 +1,57 @@
+# FBC GUI v2.12 (build 129)
+
+## Русская версия
+
+**Встроенный генератор типографских обложек Cover Studio, автоматическая подготовка книг в режиме Watch Folder (Auto-Repair, Auto-Enrich и фолбэк-обложки), сохранение стиля обложек в пользовательских пресетах и улучшенное оформление всех тем.**
+
+**✨ Новые возможности**
+- **Cover Studio — локальный генератор типографских обложек**: встроенная студия для создания аккуратных обложек (600×900 px, 2× суперсэмплинг) без сторонних сервисов. Доступна на правой панели обложки (**«Создать обложку...»**), в контекстном меню очереди (для одной или нескольких книг) и в диалоге **«Редактирование книги»** (`BookEditDialog`).
+  - **5 шаблонов оформления**: *Классический переплёт*, *Минимализм E Ink*, *Серийное издание*, *Современный постер* и *Летопись*.
+  - **Цветовые палитры и серийная консистентность**: 6 базовых палитр (*Бумага E Ink*, *Графит*, *Изумруд*, *Бордо*, *Индиго*, *Пергамент*), ручной подбор цвета фона/акцента с автоконтрастом и режим **«Единый цвет для всех книг одной серии»** (детерминированный выбор цвета по названию серии).
+  - **Типографика, живое превью и симуляция E Ink**: умный перенос кириллицы и латиницы без висячих предлогов, выбор шрифтов из папки `fonts/`, переключение отображаемых полей (Автор, Серия, Номер тома, Жанр, подзаголовок), живая симуляция экранов *Цвет / Carta / Kaleido 3 / Gallery 3* и пакетное применение (**«Применить ко всем»** или **«Только для книг без обложки»**) с полной поддержкой Undo/Redo.
+- **Автоматическая подготовка книг в режиме Watch Folder (вкладка «Подготовка книг»)**:
+  - **Auto-Repair**: автоматическое исправление повреждённого FB2 XML, удаление битых `<binary>` и оптимизация тяжёлых иллюстраций перед конвертацией.
+  - **Auto-Enrich с порогом точности совпадения**: фоновый онлайн-подбор недостающей обложки или пустых метаданных (`FantLab`, `LitRes`, `Open Library`, `Google Books`, `OPDS`) с выбором точности совпадения (**Строгая / Сбалансированная / Мягкая**), жёсткой проверкой автора и кэшированием запросов в рамках пакета.
+  - **Фолбэк Cover Studio**: если после онлайн-поиска обложка всё ещё отсутствует, она автоматически генерируется в Cover Studio по выбранному стилю с опцией единого цвета для серии.
+  - **Безопасный режим по умолчанию**: все правки применяются во временной копии без изменения исходного файла; опционально можно включить сохранение исправлений и обложки обратно в исходник.
+- **Счётчики подготовки в уведомлениях трея Watch Folder**: системные уведомления после фоновой автоконвертации теперь отображают сводку выполненных действий подготовки (например, `• исправлено: 1, обогащено: 2, обложек создано: 1`), если хотя бы один счётчик отличен от нуля.
+- **Сохранение стиля Cover Studio в пользовательских пресетах**: настройки `cover_studio_spec` автоматически сохраняются, экспортируются, импортируются и применяются вместе с файлами `.fbcpreset.json` с валидацией схемы через `CoverSpec`.
+
+*_Исправления ошибок и техническое обслуживание_*
+- *Исправлено отсутствие буквиц при конвертации в форматы KFX / AZW8: в генерируемый `ebook_styles.css` и встроенные пресеты устройств добавлен составной селектор `p.has-dropcap .dropcap` и чистый `p.has-dropcap` (без `!important`), необходимые движку `fb2cng` для распознавания буквицы в Kindle Enhanced Typesetting; при конвертации устаревшие пользовательские `ebook_styles.css` автоматически дорабатываются на лету.*
+- *Усилена безопасность парсинга и загрузки: добавлена защита от `<!DOCTYPE` / `<!ENTITY` перед фолбэк-парсингом XML (`core/fb2/diagnostics.py`, `core/fb2/metadata.py`), проверка допустимых хостов на каждом шаге редиректа в автообновлении (`core/updater.py`) и безопасное открытие растровых изображений с лимитом пикселей (`open_raster_image_safely` в `core/image_optimizer.py`).*
+- *Устранены потенциальные утечки ресурсов: добавлена автоочистка зависших временных директорий при старте (`cleanup_stale_temp_dirs`), гарантированное удаление временных файлов предпросмотра через `atexit` (`ui/native_webview.py`), отключение сигналов фоновых потоков при таймауте закрытия (`fbc_gui.py`) и диагностическое логирование в `core/cover_studio.py`.*
+- *Проведён модульный рефакторинг без нарушения публичных API: вынесены переиспользуемые виджеты из `ui/theme.py` в `ui/widgets.py`, выделена логика подготовки/обогащения Watch Folder из `core/watch_folder.py` в `core/watch_enrich.py`, унифицировано декодирование локальных обложек через `open_raster_image_safely` (`core/fb2/xml_io.py`), декомпозированы крупные функции в `CoverStudioDialog`, `WatchFolderRuleDialog`, `MetadataLookupDialog`, `converter_page`, `settings_page`, `core/workers.py` и `core/fb2/metadata.py`.*
+- *Исправлено отображение выпадающих списков в `WatchFolderRuleDialog` и `CoverStudioDialog`: поля переведены на `FormatComboBox` с векторной стрелкой, а список стилей обложки в Watch Folder всегда доступен для выбора всех 5 шаблонов с автоактивацией галочки генерации.*
+- *Улучшена поддержка светлых и тёмных тем QSS (`Modern` и `Golden`): вынесены единые стили карточек шаблонов (`QToolButton#TemplateCardBtn`) и чекбоксов (`QCheckBox`) во все 4 файла `themes/*.qss`, исправлены фон и наследование палитры в диалогах `CoverStudioDialog`, `WatchFolderRuleDialog` и `BookEditDialog`.*
+- *Доработана вёрстка Cover Studio: перенос карточек шаблонов через `FlowLayout`, исключён декоративный церковнославянский шрифт `Pomorsky Unicode` из автовыбора кириллицы, исправлены отступы сегментов E Ink, HiDPI-иконки палитр и синхронизация цветов в `ColorPickerWidget`.*
+- *Расширено покрытие юнит-тестами (`tests/test_cover_studio.py`, `tests/test_watch_folder_enrich.py`, `tests/test_presets.py`, `tests/test_updater.py`, `tests/test_config.py`, `tests/test_metadata_lookup.py`, `tests/test_fb2_processor.py`) до 224 тестов.*
+
+---
+
+## English Version
+
+**Built-in Cover Studio typographic cover generator, Watch Folder automatic book preparation (Auto-Repair, Auto-Enrich & Cover Studio fallback), user preset persistence for Cover Studio styles, and cross-theme QSS refinements.**
+
+**✨ New Features**
+- **Cover Studio — Local Typographic Cover Generator**: Built-in studio for generating crisp typographic book covers (600×900 px, 2× supersampled) fully offline. Accessible from the right cover panel (**Create Cover...**), queue context menu (single or batch selection), and the **Edit Book** dialog (`BookEditDialog`).
+  - **5 Built-in Templates**: *Classic Binding*, *E Ink Minimal*, *Series Edition*, *Modern Poster*, and *Chronicle*.
+  - **Color Palettes & Series Consistency**: 6 primary palettes (*E Ink Paper*, *Graphite*, *Emerald*, *Burgundy*, *Indigo*, *Parchment*), custom background/accent hex pickers with automatic contrast, and **Consistent color for all books in the same series** (deterministic series-name hashing).
+  - **Typography, Live Preview & E Ink Simulation**: Smart Cyrillic/Latin word wrapping without orphaned prepositions, font picker backed by `fonts/`, toggleable fields (Author, Series, Volume #, Genre, Subtitle), live *Color / Carta / Kaleido 3 / Gallery 3* E Ink display simulation, and batch application (**Apply to All** or **Missing Covers Only**) with full Undo/Redo.
+- **Watch Folder Automatic Book Preparation (Book Preparation Tab)**:
+  - **Auto-Repair**: Automatically repairs malformed FB2 XML, removes broken `<binary>` entries, and optimizes oversized illustrations before conversion.
+  - **Confidence-Gated Auto-Enrich**: Background online lookup for missing covers or empty metadata fields (`FantLab`, `LitRes`, `Open Library`, `Google Books`, `OPDS`) with selectable match accuracy (**Strict / Balanced / Relaxed**), strict author verification, and per-batch session caching.
+  - **Cover Studio Fallback**: Automatically generates a typographic cover via Cover Studio when a book still has no cover after lookup, using the selected template and optional series color consistency.
+  - **Non-Destructive by Default**: All repairs, metadata updates, and generated covers are applied to a temporary working copy without altering source files unless **Write repairs and cover back to the source file** is explicitly enabled.
+- **Watch Folder Tray Notification Counters**: Native OS notifications after background conversion now append a concise summary of non-zero preparation counters (e.g., `• repaired: 1, enriched: 2, covers created: 1`).
+- **Cover Studio Style Persistence in User Presets**: `cover_studio_spec` is now saved, exported, imported, and restored with `.fbcpreset.json` bundles, with strict schema sanitization via `CoverSpec`.
+
+*_Bug Fixes & Maintenance_*
+- *Fixed missing drop caps when converting to KFX / AZW8: added the descendant selector `p.has-dropcap .dropcap` and clean `p.has-dropcap` rules (without `!important`) to generated `ebook_styles.css` and all built-in device presets so `fb2cng` recognizes drop caps for Kindle Enhanced Typesetting; legacy user stylesheets are automatically upgraded on the fly during conversion.*
+- *Hardened XML parsing, update redirects, and image decoding: added `<!DOCTYPE` / `<!ENTITY` guards before stdlib XML fallback parsing (`core/fb2/diagnostics.py`, `core/fb2/metadata.py`), per-hop redirect host validation in the updater (`core/updater.py`), and pixel-bounded safe image decoding (`open_raster_image_safely` in `core/image_optimizer.py`).*
+- *Fixed potential resource leaks: added startup cleanup for stale temporary directories (`cleanup_stale_temp_dirs`), `atexit` cleanup for native preview temp folders (`ui/native_webview.py`), worker signal disconnection on shutdown timeout (`fbc_gui.py`), and debug logging in `core/cover_studio.py`.*
+- *Completed modular refactoring without breaking public imports: extracted reusable widgets from `ui/theme.py` into `ui/widgets.py`, moved Watch Folder preparation/enrichment logic from `core/watch_folder.py` into `core/watch_enrich.py`, unified local cover decoding via `open_raster_image_safely` (`core/fb2/xml_io.py`), and decomposed large builder/worker methods in `CoverStudioDialog`, `WatchFolderRuleDialog`, `MetadataLookupDialog`, `converter_page`, `settings_page`, `core/workers.py`, and `core/fb2/metadata.py`.*
+- *Upgraded dropdown controls in `WatchFolderRuleDialog` and `CoverStudioDialog` to `FormatComboBox` with a vector chevron arrow; kept the Watch Folder cover style selector always interactive across all 5 templates with automatic checkbox activation on pick.*
+- *Unified Light and Dark QSS styling across all 4 themes (`Modern` & `Golden`): moved `QToolButton#TemplateCardBtn` and `QCheckBox` styles into `themes/*.qss` and fixed window background and palette inheritance in `CoverStudioDialog`, `WatchFolderRuleDialog`, and `BookEditDialog`.*
+- *Polished Cover Studio layout: switched template cards to `FlowLayout`, excluded Church Slavonic `Pomorsky Unicode` from modern Cyrillic font discovery, refined E Ink pill segment padding, HiDPI circular palette swatches, and `ColorPickerWidget` swatch synchronization.*
+- *Expanded the unit test suite (`tests/test_cover_studio.py`, `tests/test_watch_folder_enrich.py`, `tests/test_presets.py`, `tests/test_updater.py`, `tests/test_config.py`, `tests/test_metadata_lookup.py`, `tests/test_fb2_processor.py`) to 224 tests.*

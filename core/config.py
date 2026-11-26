@@ -933,3 +933,37 @@ def update_fbc_config_file(fbc_config_path, css_path, app_settings):
         atomic_write_text(fbc_config_path, buf.getvalue())
     except Exception as e:
         logger.exception("Ошибка сохранения FBC_CONFIG: %s", e)
+
+
+def cleanup_stale_temp_dirs(
+    prefixes=("fbc_preview_", "fbc_gui_update_"),
+    max_age_sec=86400,
+    temp_root=None,
+):
+    """Удаляет устаревшие временные каталоги превью и обновлений старше max_age_sec в TEMP."""
+    import time
+
+    root_dir = temp_root or tempfile.gettempdir()
+    if not root_dir or not os.path.isdir(root_dir):
+        return 0
+    cutoff = time.time() - max(0, float(max_age_sec))
+    removed = 0
+    try:
+        entries = list(os.scandir(root_dir))
+    except OSError as e:
+        logger.debug("Не удалось просканировать временный каталог %s: %s", root_dir, e)
+        return 0
+    for entry in entries:
+        try:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            if not any(entry.name.startswith(pref) for pref in prefixes):
+                continue
+            st = entry.stat(follow_symlinks=False)
+            if st.st_mtime <= cutoff:
+                shutil.rmtree(entry.path, ignore_errors=True)
+                if not os.path.exists(entry.path):
+                    removed += 1
+        except OSError as e:
+            logger.debug("Не удалось очистить временный каталог %s: %s", entry.path, e)
+    return removed

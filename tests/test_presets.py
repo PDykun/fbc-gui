@@ -344,6 +344,43 @@ class TestPresets(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_preset_file(p_huge)
 
+    def test_cover_studio_spec_roundtrip_and_sanitization(self):
+        with tempfile.TemporaryDirectory() as td:
+            settings = get_default_app_settings()
+            settings["cover_studio_spec"] = {
+                "template_id": "series_edition",
+                "palette_id": "emerald",
+                "custom_bg": "#12352C",
+                "custom_accent": "#C9A227",
+                "title_font": "PT Astra Serif",
+                "show_genre_badge": True,
+                "eink_profile": "kaleido3",
+                "output_size": [800, 1200],
+                "jpeg_quality": 92,
+                "unknown_injected_field": "drop-me",
+            }
+            saved = save_preset(td, "Cover Studio Style", settings, "body {}")
+            loaded = load_preset_file(saved)
+            spec_out = loaded["settings"]["cover_studio_spec"]
+            self.assertEqual(spec_out["template_id"], "series_edition")
+            self.assertEqual(spec_out["palette_id"], "emerald")
+            self.assertEqual(spec_out["eink_profile"], "eink_kaleido3")
+            self.assertEqual(spec_out["output_size"], [800, 1200])
+            self.assertTrue(spec_out["show_genre_badge"])
+            self.assertNotIn("unknown_injected_field", spec_out)
+
+            target = get_default_app_settings()
+            apply_preset_to_settings(target, loaded)
+            self.assertEqual(target["cover_studio_spec"]["template_id"], "series_edition")
+            self.assertEqual(target["cover_studio_spec"]["palette_id"], "emerald")
+
+            # Невалидный или пустой cover_studio_spec игнорируется и не затирает существующий
+            apply_preset_to_settings(
+                target,
+                {"settings": {"output_format": "epub3", "cover_studio_spec": "not-a-dict"}},
+            )
+            self.assertEqual(target["cover_studio_spec"]["template_id"], "series_edition")
+
 
 if __name__ == "__main__":
     unittest.main()

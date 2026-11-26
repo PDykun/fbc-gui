@@ -182,9 +182,7 @@ def _build_format_section(win, s_layout):
     l_fmt.addWidget(win.filename_builder)
     s_layout.addWidget(card_fmt)
 
-def _build_text_layout_section(win, s_layout):
-    card_text, l_text = create_section_card(tr("settings.sec_text_layout"))
-
+def _build_text_typography_rows(win, l_text):
     win.footnotes_mode_selector = PillSelector(
         [
             (tr("settings.opt_fn_mode_default"), "default"),
@@ -278,6 +276,8 @@ def _build_text_layout_section(win, s_layout):
     win.title_template_builder.setVisible(title_mode == "custom")
     l_text.addWidget(win.title_template_builder)
 
+
+def _build_text_transforms_and_toc_rows(win, l_text):
     win.tt_speech_selector = PillSelector(
         [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
         default=str(win.app_settings.get("text_transform_speech", "false")),
@@ -423,6 +423,12 @@ def _build_text_layout_section(win, s_layout):
         tr("settings.desc_open_from_cover"),
         win.open_from_cover_selector
     )
+
+
+def _build_text_layout_section(win, s_layout):
+    card_text, l_text = create_section_card(tr("settings.sec_text_layout"))
+    _build_text_typography_rows(win, l_text)
+    _build_text_transforms_and_toc_rows(win, l_text)
     s_layout.addWidget(card_text)
 
 def _build_adv_convert_section(win, s_layout):

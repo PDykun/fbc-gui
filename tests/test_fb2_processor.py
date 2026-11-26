@@ -1319,6 +1319,19 @@ class TestFb2Processor(unittest.TestCase):
             self.assertFalse(os.path.islink(dst_fonts))
             self.assertTrue(os.path.isfile(os.path.join(dst_fonts, "sample.ttf")))
 
+    def test_quick_check_rejects_doctype_without_expanding_entities(self):
+        from core.fb2.diagnostics import _is_strict_xml_valid, quick_check_fb2
+
+        xxe_fb2 = (
+            b'<?xml version="1.0" encoding="utf-8"?>'
+            b'<!DOCTYPE foo [<!ENTITY a "1234567890"><!ENTITY b "&a;&a;&a;&a;&a;">]>'
+            b'<FictionBook><description><title-info><book-title>&b;</book-title></title-info></description>'
+            b'<body><section><p>Text</p></section></body></FictionBook>'
+        )
+        self.assertFalse(_is_strict_xml_valid(xxe_fb2))
+        warns = quick_check_fb2(xxe_fb2, meta={"title": "T", "last": "A"}, cover_bytes=b"img")
+        self.assertIn("broken_xml", warns)
+
 
 if __name__ == "__main__":
     unittest.main()

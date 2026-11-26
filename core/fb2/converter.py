@@ -280,7 +280,16 @@ def _attach_stylesheet_file(base_dir, fbc_config, tmp_work_dir):
         return None
 
     dst_css = os.path.join(tmp_work_dir, "ebook_styles.css")
-    shutil.copy2(src_css, dst_css)
+    try:
+        from core.css_preview import ensure_kfx_dropcap_css
+
+        with open(src_css, "r", encoding="utf-8") as fh:
+            raw_css = fh.read()
+        patched_css = ensure_kfx_dropcap_css(raw_css)
+        with open(dst_css, "w", encoding="utf-8") as fh:
+            fh.write(patched_css)
+    except Exception:
+        shutil.copy2(src_css, dst_css)
     return dst_css
 
 

@@ -79,7 +79,7 @@ Most FB2 conversion workflows force a trade-off: **[Calibre](https://calibre-ebo
 - **Source FB2 Organizer (without conversion) & Omnibus Merger:** copy or move selected `.fb2` / `.fb2.zip` files into **Author / Series / File**, **Author / File**, or **Flat** folder layouts with a live **Before → After** preview table, or combine multiple books into a single valid **FB2 Omnibus** volume with isolated IDs, footnotes, and images.
 - **Queue deduplication & skip existing:** automatically flags logical duplicates (by author, series, number, and title) with a one-click **Remove duplicates** action (Undo/Redo supported), and lets you toggle **Skip existing** to bypass already up-to-date output files (`↷ Skipped`).
 - **Real-time search & status filters:** instant filter (`Cmd/Ctrl+F`, `Esc` to reset) across filenames, authors, series, titles, genres, language, publisher, ISBN, and output names, paired with status pills (**All / Pending / Done / Errors / ⚠ Warnings**).
-- **Cover manager & save-back to source:** preview covers, replace with automatic `600×900 px` LANCZOS aspect-fit resizing, restore originals, and atomically write edited metadata & covers back into the original `.fb2` or `.zip` file.
+- **Cover Studio & cover manager:** preview covers, replace with automatic `600×900 px` LANCZOS resizing, restore originals, or generate crisp offline typographic covers with **Cover Studio** (5 templates, 6 palettes + custom hex pickers, deterministic per-series colors, live E Ink simulation, batch apply for all or missing covers only, Undo/Redo, and `.fbcpreset.json` preset persistence), and atomically write edited metadata & covers back into the original `.fb2` or `.zip` file.
 
 ### 🎨 Visual CSS & Live Book Preview
 - **Complete visual stylesheet builder (`ebook_styles.css`):** configure body/title/author/drop-cap fonts (or `None` to use e-reader system fonts), heading hierarchy (`H1–H5`), paragraph alignment & indents, drop caps, annotations, epigraphs, poems, footnotes (background & border), illustration widths, and PDF page frames.
@@ -96,7 +96,7 @@ Most FB2 conversion workflows force a trade-off: **[Calibre](https://calibre-ebo
 - **Full `fb2cng` typography, navigation & image controls:** soft hyphenation, drop caps toggle, direct speech / dash / dialogue `text_transformations`, separate annotation page & annotation-in-TOC, visible TOC placement (`None / Before / After`), TOC type (`Normal / Old Kindle / Flat`), untitled chapters in TOC, EPUB `page_map` (with Adobe DE mode), `fix_zip`, image `scale_factor` (`0.5–2.0`), open-from-cover, auto-generated fallback covers, `--no-cover`, Baseline JPEG compatibility, SVG vector vs. raster toggle, transparency removal, grayscale, screen resolution & DPI.
 
 ### ✉️ Watch Folder Mode, Direct Device Delivery (USB / MTP) & Send-to-Kindle (SMTP)
-- **Multi-Folder Watch Mode, System Tray / macOS Menu Bar & Autostart:** assign multiple watched folders simultaneously (each with its own preset, delivery method, and post-action) for isolated background conversion with partial-download protection, native OS notifications, tray/Menu Bar controls, optional macOS Dock hiding, and opt-in login autostart.
+- **Multi-Folder Watch Mode with Book Preparation, System Tray / macOS Menu Bar & Autostart:** assign multiple watched folders simultaneously (each with its own preset, delivery method, post-action, optional **Auto-Repair**, confidence-gated **Auto-Enrich**, and **Cover Studio fallback** without altering source files by default) for isolated background conversion with partial-download protection, native OS notifications with preparation counters, tray/Menu Bar controls, optional macOS Dock hiding, and opt-in login autostart.
 - **USB / MTP & Mounted Folder Sync ([`sync2kindle`](https://github.com/rupor-github/sync2kindle)) + Auto-Detection:** deliver converted books straight to modern MTP Kindles (Scribe, PW12, Colorsoft) and legacy USB Kindles via [`sync2kindle`](https://github.com/rupor-github/sync2kindle) (`s2k`, auto-downloaded from GitHub with checksum verification; on macOS, MTP mode uses `libmtp`), or to auto-detected mounted Kobo / PocketBook / ONYX BOOX / Kobo cloud folders with **Dry Run** preview and local-file protection.
 - **Automatic SMTP delivery:** optionally email converted books straight to your Kindle / PocketBook / personal inbox right after conversion finishes, with automatic **20 MB batch splitting**, `certifi`-verified SSL / STARTTLS support, and a built-in **Send Test Email** check.
 - **Hardened OS-native secret storage:** SMTP passwords and optional Google Books API keys are stored securely in **macOS Keychain** (passed via `stdin`, never exposed in process arguments) or **Windows Credential Manager** via `keyring`, and are never exported in presets.
@@ -180,8 +180,9 @@ fbc-gui/
 │   ├── version.py          # Single source of truth for app version, build number & metadata
 │   ├── fb2/                # Domain FB2 package (common, xml_io, templates, metadata, diagnostics, converter, organizer, omnibus)
 │   ├── fb2_processor.py    # Backward-compatible facade re-exporting core/fb2/*
+│   ├── cover_studio.py     # Offline typographic cover generator (5 templates, series palettes, E Ink profiles)
 │   ├── image_optimizer.py  # Extensible E Ink image optimization profiles & preview display simulation
-│   ├── watch_folder.py     # Isolated multi-folder Watch Folder background queue & stability watcher
+│   ├── watch_folder.py     # Isolated multi-folder Watch Folder with Auto-Repair, Auto-Enrich & Cover fallback
 │   ├── notifier.py         # Native macOS & Windows batch notifications
 │   ├── autostart.py        # Cross-platform login autostart (LaunchAgents / Windows HKCU Run)
 │   ├── fbc_manager.py      # OS PATH discovery, --version & MD5/SHA256 check, GitHub auto-download
@@ -191,7 +192,7 @@ fbc-gui/
 │   ├── workers.py          # Background workers (Import, Convert, TestEmail, DeviceSync, MetadataLookup, CoverFetch)
 │   ├── config.py           # Atomic settings.json/config.yaml sync, device profiles, Keychain/keyring
 │   ├── css_preview.py      # ebook_styles.css parser/generator & modular 2-page book-spread HTML preview
-│   ├── presets.py          # User & bundled *.fbcpreset.json manager (strips private credentials)
+│   ├── presets.py          # User & bundled *.fbcpreset.json manager (includes cover_studio_spec, strips secrets)
 │   ├── email_sender.py     # certifi-verified SMTP SSL/STARTTLS sender with 20 MB batching
 │   ├── undo_commands.py    # QUndoStack commands for metadata, covers, removals & reordering
 │   ├── updater.py          # GitHub Releases auto-updater, semver, host allowlist, SHA-256 verify & OS installers
@@ -199,7 +200,7 @@ fbc-gui/
 │   └── logger.py           # Application diagnostics logger
 ├── ui/
 │   ├── controllers/        # MainWindow controllers (settings, presets, preview, queue, conversion, tray, updates)
-│   ├── dialogs/            # Modular themed dialogs (common, progress, book_edit, metadata_lookup, inspector, organizer, watch_folder, setup_update)
+│   ├── dialogs/            # Modular themed dialogs (common, progress, book_edit, cover_studio, metadata_lookup, inspector, organizer, watch_folder, setup_update)
 │   ├── theme.py            # External QSS theme registry, PillSelector, ColorPicker, TemplateBuilder
 │   ├── native_webview.py   # Isolated WKWebView (macOS) / Edge WebView2 (Windows) / fallback renderer
 │   └── pages/              # Converter, Styles, Preview, Settings (sectioned), About views
@@ -209,7 +210,7 @@ fbc-gui/
 ├── presets_defaults/       # 8 built-in device presets
 ├── docs/                   # Bilingual User Guides (EN/RU) & Release Notes
 ├── fonts/                  # PT Astra Serif & Pomorsky Unicode + OFL-1.1.txt
-└── tests/                  # 191 unit tests across core, controllers, UI, and worker modules
+└── tests/                  # 215+ unit tests across core, controllers, UI, and worker modules
 ```
 
 </details>

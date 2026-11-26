@@ -605,6 +605,65 @@ class DeviceSyncWorker(QThread):
                 tempfile,
             )
 
+    def _run_folder_sync(self, sync_folder_to_mounted_device):
+        self.status_changed.emit(tr("settings.sync_status_copying"))
+        self.sync_progress.emit(5, tr("settings.sync_status_copying"))
+
+        def _on_folder_prog(cur, total, fname):
+            pct = 5 + int(90 * cur / max(1, total))
+            self.sync_progress.emit(
+                pct,
+                tr("converter.progress_sync_file", cur=cur, total=total, name=fname),
+            )
+
+        res = sync_folder_to_mounted_device(
+            self.source_dir,
+            self.target_dir,
+            dry_run=self.dry_run,
+            explicit_files=self.explicit_files,
+            progress_callback=_on_folder_prog,
+        )
+        self.sent_count = len(res["copied"])
+        self.skipped_count = len(res["skipped"])
+        self.sync_progress.emit(100, tr("converter.progress_sync_done", count=self.sent_count))
+        lines = []
+        if res["copied"]:
+            prefix = tr("settings.sync_dry_would_copy") if self.dry_run else tr("settings.sync_copied")
+            lines.append(f"{prefix} ({len(res['copied'])}):")
+            lines.extend(f"  • {name}" for name in res["copied"])
+        if res["skipped"]:
+            lines.append(f"{tr('settings.sync_skipped')} ({len(res['skipped'])})")
+        if not lines:
+            lines.append(tr("settings.sync_nothing"))
+        self.finished_sync.emit(True, "\n".join(lines), self.dry_run)
+
+    def _ensure_s2k_binary(self, resolve_local_s2k, download_and_install_s2k):
+        self.status_changed.emit(tr("settings.sync_status_checking_s2k"))
+        self.sync_progress.emit(5, tr("settings.sync_status_checking_s2k"))
+        info = resolve_local_s2k(self.user_data_dir, raise_on_missing_lib=True)
+        if info:
+            return info
+        self.status_changed.emit("downloading")
+        self.sync_progress.emit(-1, tr("settings.sync_status_downloading_s2k"))
+
+        def _on_dl_prog(dl, tot, name):
+            self.download_progress.emit(dl, tot, name)
+            if tot and tot > 0:
+                pct = max(0, min(100, int(dl * 100 / tot)))
+                self.sync_progress.emit(pct, tr("settings.sync_status_downloading_s2k"))
+
+        def _on_dl_status(st):
+            self.status_changed.emit(st)
+            if st == "verifying":
+                self.sync_progress.emit(-1, tr("settings.sync_status_verifying_s2k"))
+
+        return download_and_install_s2k(
+            self.user_data_dir,
+            cancel_event=self._cancel_event,
+            progress_callback=_on_dl_prog,
+            status_callback=_on_dl_status,
+        )
+
     def _run_device_sync_locked(
         self,
         _run_cancellable_process,
@@ -629,63 +688,10 @@ class DeviceSyncWorker(QThread):
         staging_dir = None
         try:
             if self.mode == "folder":
-                self.status_changed.emit(tr("settings.sync_status_copying"))
-                self.sync_progress.emit(5, tr("settings.sync_status_copying"))
-
-                def _on_folder_prog(cur, total, fname):
-                    pct = 5 + int(90 * cur / max(1, total))
-                    self.sync_progress.emit(
-                        pct,
-                        tr("converter.progress_sync_file", cur=cur, total=total, name=fname),
-                    )
-
-                res = sync_folder_to_mounted_device(
-                    self.source_dir,
-                    self.target_dir,
-                    dry_run=self.dry_run,
-                    explicit_files=self.explicit_files,
-                    progress_callback=_on_folder_prog,
-                )
-                self.sent_count = len(res["copied"])
-                self.skipped_count = len(res["skipped"])
-                self.sync_progress.emit(100, tr("converter.progress_sync_done", count=self.sent_count))
-                lines = []
-                if res["copied"]:
-                    prefix = tr("settings.sync_dry_would_copy") if self.dry_run else tr("settings.sync_copied")
-                    lines.append(f"{prefix} ({len(res['copied'])}):")
-                    lines.extend(f"  • {name}" for name in res["copied"])
-                if res["skipped"]:
-                    lines.append(f"{tr('settings.sync_skipped')} ({len(res['skipped'])})")
-                if not lines:
-                    lines.append(tr("settings.sync_nothing"))
-                self.finished_sync.emit(True, "\n".join(lines), self.dry_run)
+                self._run_folder_sync(sync_folder_to_mounted_device)
                 return
 
-            self.status_changed.emit(tr("settings.sync_status_checking_s2k"))
-            self.sync_progress.emit(5, tr("settings.sync_status_checking_s2k"))
-            info = resolve_local_s2k(self.user_data_dir, raise_on_missing_lib=True)
-            if not info:
-                self.status_changed.emit("downloading")
-                self.sync_progress.emit(-1, tr("settings.sync_status_downloading_s2k"))
-
-                def _on_dl_prog(dl, tot, name):
-                    self.download_progress.emit(dl, tot, name)
-                    if tot and tot > 0:
-                        pct = max(0, min(100, int(dl * 100 / tot)))
-                        self.sync_progress.emit(pct, tr("settings.sync_status_downloading_s2k"))
-
-                def _on_dl_status(st):
-                    self.status_changed.emit(st)
-                    if st == "verifying":
-                        self.sync_progress.emit(-1, tr("settings.sync_status_verifying_s2k"))
-
-                info = download_and_install_s2k(
-                    self.user_data_dir,
-                    cancel_event=self._cancel_event,
-                    progress_callback=_on_dl_prog,
-                    status_callback=_on_dl_status,
-                )
-
+            info = self._ensure_s2k_binary(resolve_local_s2k, download_and_install_s2k)
             work_dir = self.user_data_dir
             if not work_dir or not os.path.isdir(work_dir):
                 work_dir = os.path.dirname(os.path.abspath(info["path"]))
