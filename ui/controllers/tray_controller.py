@@ -373,7 +373,12 @@ class TrayWatchController:
         if row < 0 or row >= len(rules):
             return
         name = rules[row].get("name") or rules[row].get("folder")
-        if not show_themed_confirm(self, tr("common.warning"), tr("watch.confirm_delete", name=name)):
+        if not show_themed_confirm(
+            self,
+            tr("common.warning"),
+            tr("watch.confirm_delete", name=name),
+            tr("watch.btn_delete"),
+        ):
             return
         rules.pop(row)
         self._apply_updated_watch_rules(rules)

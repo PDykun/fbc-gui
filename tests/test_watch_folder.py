@@ -409,6 +409,38 @@ class TestWatchFolderAndTray(unittest.TestCase):
             self.assertIn(book, res["files"])
             self.assertFalse(any("Processed" in p for p in res["files"]))
 
+    def test_delete_watch_folder_clicked_passes_confirm_label_and_removes_rule(self):
+        from PyQt6.QtWidgets import QDialog, QTableWidget, QWidget
+        from ui.controllers.tray_controller import TrayWatchController
+
+        class _DummyHost(QWidget, TrayWatchController):
+            def __init__(self, watch_dir):
+                super().__init__()
+                self.app_settings = {
+                    "watch_folders": [
+                        {"id": "r_del", "enabled": True, "name": "Inbox", "folder": watch_dir}
+                    ]
+                }
+                self.watch_table = QTableWidget(1, 6)
+                self.watch_table.selectRow(0)
+                self.watch_table.setCurrentCell(0, 1)
+                self.watch_manager = MagicMock()
+                self._tray_icon = None
+                self._tray_menu = None
+                self.saved = False
+
+            def save_app_settings(self):
+                self.saved = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = _DummyHost(tmp)
+            with patch.object(QDialog, "exec", return_value=QDialog.DialogCode.Accepted):
+                host.delete_watch_folder_clicked()
+            self.assertTrue(host.saved)
+            self.assertEqual(host.app_settings["watch_folders"], [])
+            host.watch_manager.set_rules.assert_called_once_with([])
+            host.watch_manager.stop.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

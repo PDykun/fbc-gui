@@ -189,7 +189,7 @@ def show_conversion_summary_dialog(parent, title, summary_text, icon_type="info"
     return retry_requested["value"]
 
 
-def show_themed_confirm(parent, title, text, confirm_label, cancel_label=None, icon_type="warning"):
+def show_themed_confirm(parent, title, text, confirm_label=None, cancel_label=None, icon_type="warning"):
     """Отображает тематическое окно подтверждения с двумя кнопками и возвращает True при подтверждении."""
     dlg = QDialog(parent)
     dlg.setWindowTitle(title)
@@ -237,7 +237,7 @@ def show_themed_confirm(parent, title, text, confirm_label, cancel_label=None, i
     btn_cancel.clicked.connect(dlg.reject)
     btn_row.addWidget(btn_cancel)
 
-    btn_confirm = QPushButton(confirm_label)
+    btn_confirm = QPushButton(confirm_label or tr("common.ok"))
     btn_confirm.setObjectName("AccentButton")
     btn_confirm.setProperty("variant", "primary")
     btn_confirm.setCursor(Qt.CursorShape.PointingHandCursor)
