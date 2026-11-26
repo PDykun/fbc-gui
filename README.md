@@ -33,7 +33,7 @@
 
 ---
 
-**FBC GUI** is a fast, native desktop studio (**macOS Apple Silicon & Intel**, **Windows x64 & ARM64**) built around the next-generation [`fb2cng`](https://github.com/rupor-github/fb2cng) converter. Instead of juggling raw YAML configs, hand-edited CSS, command-line flags, or heavy library managers, FBC GUI gives you a **visual typography editor with two-page book-spread preview**, **batch metadata & cover editing with full Undo/Redo**, **drag-and-drop filename & title template builders**, **one-click e-reader presets**, **direct Send-to-Kindle / SMTP delivery**, and **SHA-256 verified in-app updates** — all in a single clean interface.
+**FBC GUI** is a fast, native desktop studio (**macOS Apple Silicon & Intel**, **Windows x64 & ARM64**) built around the next-generation [`fb2cng`](https://github.com/rupor-github/fb2cng) converter. Instead of juggling raw YAML configs, hand-edited CSS, command-line flags, or heavy library managers, FBC GUI gives you a **visual typography editor with two-page book-spread preview & E Ink display simulation**, **E Ink image optimization**, **multi-folder Watch Folder automation with System Tray / macOS Menu Bar**, **batch metadata, online lookup & FB2 Omnibus merging with full Undo/Redo**, **drag-and-drop filename & title template builders**, **8 one-click e-reader presets**, **direct USB/MTP (`sync2kindle`) & Send-to-Kindle / SMTP delivery**, and **SHA-256 verified in-app updates** — all in a single clean interface.
 
 > [!TIP]
 > **Official project website, screenshots & full visual guide (EN / RU):** **[https://pashka.eu/fbc_gui/](https://pashka.eu/fbc_gui/)**
@@ -42,20 +42,21 @@
 
 ## Why FBC GUI?
 
-Most FB2 conversion workflows force a trade-off: **Calibre** is heavy and uses a generic HTML pipeline that often loses FB2 typography nuances; **raw `fb2cng` CLI** produces great books but requires manual YAML/CSS/Go-template editing; **online converters** limit file sizes, upload your library to third-party servers, and offer almost no styling control.
+Most FB2 conversion workflows force a trade-off: **[Calibre](https://calibre-ebook.com/)** is a heavy library manager with a generic HTML pipeline (and requires the KFX Output plugin + Amazon Kindle Previewer 3 for KFX); **raw [`fb2cng`](https://github.com/rupor-github/fb2cng) CLI** produces great books but requires manual YAML/CSS/Go-template editing and a separate CLI for device sync; self-hosted wrappers like **[`fb2cng-web`](https://github.com/asm0dey/fb2cng-web)** simplify drag-and-drop conversion in Docker but lack metadata, CSS, E Ink preview, and USB/MTP workflows; **online converters & Amazon Send to Kindle** upload your books to third-party servers and offer little or no FB2 styling control.
 
-| Capability | **FBC GUI** | Raw `fb2cng` CLI | Calibre | Online Converters |
-| :--- | :---: | :---: | :---: | :---: |
-| **Native `fb2cng` engine** (EPUB2/3, KEPUB, AZW3, KFX/AZW8, PDF, TXT, MD) | ✅ All 10 formats | ✅ CLI flags | ⚠️ Generic pipeline | ❌ Limited formats |
-| **Zero-config engine setup** (auto-detect, MD5/SHA256 verify & GitHub download) | ✅ Automatic | ❌ Manual | ❌ N/A | ➖ Cloud |
-| **Visual CSS & typography studio** (fonts, drop caps, footnotes, headings, SVG) | ✅ Live controls | ❌ Manual CSS | ⚠️ Raw CSS box | ❌ None |
-| **Live preview on your actual FB2 book** (2-page spread, WebKit / WebView2 + E-Ink B&W) | ✅ 2-page spread & sample | ❌ None | ⚠️ After convert | ❌ None |
-| **Visual drag-and-drop Go-template builder** (`output_name` & `title_template`) | ✅ Pill timeline | ❌ Hand-written Go | ⚠️ Python templates | ❌ None |
-| **Batch metadata, series auto-numbering & cover auto-fit (`600×900`)** | ✅ Inline + Undo/Redo | ❌ External tools | ✅ Library-bound | ❌ None |
-| **Write edited metadata & covers back into source `.fb2` / `.zip`** | ✅ Atomic save-back | ❌ Read-only | ⚠️ Copies to DB | ❌ None |
-| **Device profiles + exportable Settings+CSS presets** (`.fbcpreset.json`) | ✅ 8 built-in + custom | ❌ Manual YAML | ⚠️ Separate profiles | ❌ None |
-| **Direct Send-to-Kindle / SMTP** with Keychain / Windows Credential Manager | ✅ Auto-batched (20 MB) | ❌ External tool | ✅ Built-in | ❌ Manual |
-| **100% local & private** (no library lock-in, no cloud uploads) | ✅ Local files | ✅ Local files | ⚠️ Own DB copy | ❌ Cloud upload |
+| Capability | **FBC GUI** | Raw [`fb2cng`](https://github.com/rupor-github/fb2cng) CLI | [`fb2cng-web`](https://github.com/asm0dey/fb2cng-web) (Docker) | [Calibre](https://calibre-ebook.com/) | Online / Send to Kindle |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Native `fb2cng` engine** (EPUB2/3, KEPUB, AZW3, KFX/AZW8, PDF, TXT, MD) | ✅ All 10 formats | ✅ CLI flags | ✅ Web drop | ⚠️ Generic pipeline; KFX needs plugin + Kindle Previewer 3 | ❌ Limited formats (no native KFX/KEPUB) |
+| **Zero-config engine setup** (auto-detect, checksum verify & GitHub download) | ✅ Automatic (`fbc` + `s2k`) | ❌ Manual | ⚠️ Docker setup | ⚠️ Built-in + plugins | ➖ Cloud |
+| **Visual CSS & typography studio + live 2-page FB2 book preview** | ✅ Live controls + WKWebView / WebView2 | ❌ Manual CSS | ❌ None | ⚠️ Raw CSS box; preview after convert | ❌ None |
+| **E Ink image optimization & display simulation** (Carta, 16-gray, Kaleido 3, Gallery 3) | ✅ Built-in + live E Ink toggle | ⚠️ Basic resize / grayscale | ❌ None | ❌ None | ❌ None |
+| **Visual drag-and-drop template builder** (`output_name` & `title_template`) | ✅ Pill timeline | ❌ Hand-written Go | ❌ None | ⚠️ Python templates | ❌ None |
+| **Batch metadata, online lookup** (`FantLab`, `LitRes`, `Open Library`, `Google Books`, `OPDS`) **& source save-back** | ✅ Inline + Undo/Redo + atomic save-back | ❌ External tools | ❌ None | ✅ Lookup (writes to own DB copy) | ❌ None |
+| **FB2 Structure Inspector, Auto-Repair & Omnibus Merger** | ✅ Inspector + Repair + Omnibus | ❌ None | ❌ None | ⚠️ Via plugins (e.g. EpubMerge) | ❌ None |
+| **Device profiles + shareable Settings+CSS presets** (`.fbcpreset.json`) | ✅ 8 built-in + custom | ❌ Manual YAML | ❌ Server config | ⚠️ Separate profiles | ❌ None |
+| **Multi-folder Watch Folder mode + System Tray / macOS Menu Bar** | ✅ Multi-folder, per-folder presets & delivery | ❌ External scripts | ❌ None | ⚠️ Single auto-add folder into DB | ❌ None |
+| **Direct USB/MTP delivery (`sync2kindle`), reader auto-detect & SMTP** | ✅ USB/MTP + auto-detect + 20 MB SMTP | ⚠️ Separate `s2k` CLI | ❌ Download only | ✅ USB/MTP + SMTP | ⚠️ Kindle cloud only |
+| **100% local & private** (no library DB lock-in, no cloud uploads) | ✅ Local files | ✅ Local files | ✅ Self-hosted LAN | ⚠️ Own DB copy | ❌ Cloud upload |
 
 ---
 
@@ -96,16 +97,16 @@ Most FB2 conversion workflows force a trade-off: **Calibre** is heavy and uses a
 
 ### ✉️ Watch Folder Mode, Direct Device Delivery (USB / MTP) & Send-to-Kindle (SMTP)
 - **Multi-Folder Watch Mode, System Tray / macOS Menu Bar & Autostart:** assign multiple watched folders simultaneously (each with its own preset, delivery method, and post-action) for isolated background conversion with partial-download protection, native OS notifications, tray/Menu Bar controls, optional macOS Dock hiding, and opt-in login autostart.
-- **USB / MTP & Mounted Folder Sync (`sync2kindle`) + Auto-Detection:** deliver converted books straight to modern MTP Kindles (Scribe, PW12, Colorsoft), legacy USB Kindles via `sync2kindle` (`s2k`, auto-downloaded from GitHub with checksum verification), or auto-detected mounted Kobo / PocketBook / ONYX BOOX / Kobo cloud folders with **Dry Run** preview and local-file protection.
+- **USB / MTP & Mounted Folder Sync ([`sync2kindle`](https://github.com/rupor-github/sync2kindle)) + Auto-Detection:** deliver converted books straight to modern MTP Kindles (Scribe, PW12, Colorsoft) and legacy USB Kindles via [`sync2kindle`](https://github.com/rupor-github/sync2kindle) (`s2k`, auto-downloaded from GitHub with checksum verification; on macOS, MTP mode uses `libmtp`), or to auto-detected mounted Kobo / PocketBook / ONYX BOOX / Kobo cloud folders with **Dry Run** preview and local-file protection.
 - **Automatic SMTP delivery:** optionally email converted books straight to your Kindle / PocketBook / personal inbox right after conversion finishes, with automatic **20 MB batch splitting**, `certifi`-verified SSL / STARTTLS support, and a built-in **Send Test Email** check.
 - **Hardened OS-native secret storage:** SMTP passwords and optional Google Books API keys are stored securely in **macOS Keychain** (passed via `stdin`, never exposed in process arguments) or **Windows Credential Manager** via `keyring`, and are never exported in presets.
 
 ### 🖥️ Native Desktop Experience, Auto-Updates & Security
 - **Built-in GitHub Releases auto-updater (SHA-256 verified):** checks `releases/latest/download/version.json` via CDN (no API rate limits) automatically after launch or on demand via **Help → Check for Updates...** and the **About** page. Uses semantic versioning (`packaging.version`), detects your exact OS and CPU architecture (`macos-arm64`, `macos-x64`, `windows-x64`, `windows-arm64`), downloads in-app with MB progress and cancellation, verifies **SHA-256** checksums before launch, and applies updates natively (silent Inno Setup upgrade with auto-relaunch on Windows; auto-mounted `.dmg` in Finder on macOS).
 - **Single-instance & OS file integration:** open `.fb2` / `.zip` files via macOS Finder *"Open With"* / Dock drag-and-drop or the optional Windows Explorer context menu — files automatically route into the running window.
-- **2 theme families × 3 appearance modes:** **Modern** and **Golden** external QSS themes with **Auto (system) / Light / Dark** smooth crossfade switching.
+- **2 theme families × 3 appearance modes & refined controls:** **Modern** and **Golden** external QSS themes with **Auto (system) / Light / Dark** smooth crossfade switching, high-contrast segmented-pill tabs in modal dialogs (**FB2 Inspector** and **Edit Book**), and smooth drag-and-drop template pills with a vertical insertion indicator.
 - **Bilingual UI:** instant switching between **English** and **Russian** via external `locales/*.json` files.
-- **Clean, verified `fb2cng` auto-setup:** no third-party binaries are bundled in the repo or installers. On startup, FBC GUI scans your OS `PATH` and standard install paths, verifies binary identity (`--version`), version compatibility (`>= 2.1.1`), and MD5/SHA256 checksums against [rupor-github/fb2cng](https://github.com/rupor-github/fb2cng), and automatically downloads the matching platform release if needed.
+- **Clean, verified `fb2cng` & `sync2kindle` auto-setup:** no third-party binaries are bundled in the repo or installers. On startup, FBC GUI scans your OS `PATH` and standard install paths, verifies binary identity (`--version`), version compatibility (`>= 2.1.1`), and MD5/SHA256 checksums against [rupor-github/fb2cng](https://github.com/rupor-github/fb2cng), and locates or downloads [`sync2kindle`](https://github.com/rupor-github/sync2kindle) (`s2k`) on demand with checksum verification when using USB/MTP sync.
 - **Security & reliability hardening:** atomic writes (`fsync` + `os.replace`) for configs, CSS, and presets (with automatic `.bak` recovery on corrupted settings), XXE-hardened `lxml` parsing, `http`/`https` URL validation, and `certifi`-backed TLS verification.
 
 ---
@@ -114,13 +115,13 @@ Most FB2 conversion workflows force a trade-off: **Calibre** is heavy and uses a
 
 ```mermaid
 flowchart LR
-    A[FB2 / Multi-book ZIP / Folders] --> B[Background Import & Resilient XML Parser]
-    B --> C[Metadata & Cover Studio<br/>Inline Edit • Batch • Undo/Redo • Save-Back]
-    C --> D[Visual CSS & Template Studio<br/>Live Book Preview • Device Presets]
+    A[FB2 / Multi-book ZIP / Folders / Watch Folders] --> B[Background Import & Resilient XML Parser]
+    B --> C[Metadata, Online Lookup & Omnibus Studio<br/>Inline Edit • Inspector/Repair • Undo/Redo • Save-Back]
+    C --> D[Visual CSS, E Ink Optimizer & Template Studio<br/>2-Page Live Preview • E Ink Simulation • 8 Device Presets]
     D --> E{fb2cng Auto-Manager<br/>PATH Search → MD5/SHA256 Verify<br/>→ GitHub Download if needed}
     E --> F[Parallel fb2cng Workers<br/>EPUB2/3 • KEPUB • AZW3 • KFX • PDF • TXT • MD]
     F --> G[Source / Custom Folder]
-    F -. Optional .-> H[Auto-Batched SMTP / Send-to-Kindle]
+    F -. Optional .-> H[USB/MTP sync2kindle • Mounted Reader • 20 MB SMTP]
 ```
 
 ---
@@ -202,12 +203,13 @@ fbc-gui/
 │   ├── theme.py            # External QSS theme registry, PillSelector, ColorPicker, TemplateBuilder
 │   ├── native_webview.py   # Isolated WKWebView (macOS) / Edge WebView2 (Windows) / fallback renderer
 │   └── pages/              # Converter, Styles, Preview, Settings (sectioned), About views
+├── icons/                  # System Tray (Windows) & Menu Bar template icons (macOS)
 ├── themes/                 # modern_{dark,light}.qss & golden_{dark,light}.qss
 ├── locales/                # en.json & ru.json
 ├── presets_defaults/       # 8 built-in device presets
 ├── docs/                   # Bilingual User Guides (EN/RU) & Release Notes
 ├── fonts/                  # PT Astra Serif & Pomorsky Unicode + OFL-1.1.txt
-└── tests/                  # 190 unit tests across core, controllers, UI, and worker modules
+└── tests/                  # 191 unit tests across core, controllers, UI, and worker modules
 ```
 
 </details>
@@ -230,7 +232,7 @@ Native prebuilt installers for all **4 supported platforms** are built automatic
 - 🔄 **In-App Updates:** once installed, FBC GUI checks GitHub Releases automatically (or via **Help → Check for Updates...**), verifies the **SHA-256** checksum, and installs the matching build for your OS and architecture.
 
 > [!NOTE]
-> **No third-party binaries bundled:** `fb2cng` (`fbc` / `fbc.exe`) is intentionally excluded from this repository and from all installers. On first launch, FBC GUI automatically locates `fb2cng` in your system `PATH` or downloads and verifies the matching release from [rupor-github/fb2cng](https://github.com/rupor-github/fb2cng).
+> **No third-party binaries bundled:** `fb2cng` (`fbc` / `fbc.exe`) and `sync2kindle` (`s2k` / `s2k.exe`) are intentionally excluded from this repository and from all installers. On first launch (or when using USB/MTP sync), FBC GUI automatically locates them in your system `PATH` or downloads and verifies the matching releases from [rupor-github/fb2cng](https://github.com/rupor-github/fb2cng) and [rupor-github/sync2kindle](https://github.com/rupor-github/sync2kindle).
 
 ---
 
@@ -264,3 +266,4 @@ python3 -m unittest discover -s tests -v
   - **PT Astra Serif** (`fonts/PT-Astra-Serif_*.ttf`) — Copyright © 2016 JSC «RPA RusBITech» (designed by A. Korolkova & I. Chaeva, ParaType Ltd), licensed under the **SIL Open Font License 1.1 (OFL-1.1)** with Reserved Font Name `PT Astra Serif`.
   - **Pomorsky Unicode** (`fonts/PomorskyUnicode.otf`) — Copyright 1999–2000 Nikita Simmons; Copyright 2015 Aleksandr Andreev and Nikita Simmons (Church Slavonic Initiative / Ponomar Project), licensed under the **SIL Open Font License 1.1 (OFL-1.1)**.
 - **fb2cng (`fbc`)** — external third-party converter ([rupor-github/fb2cng](https://github.com/rupor-github/fb2cng), GPL-3.0). Not bundled with FBC GUI; located on the user's system or downloaded on demand from GitHub.
+- **sync2kindle (`s2k`)** — external third-party Kindle sideloading tool ([rupor-github/sync2kindle](https://github.com/rupor-github/sync2kindle), GPL-3.0) used for USB/MTP device synchronization (macOS MTP mode requires `libmtp`). Not bundled with FBC GUI; located on the user's system or downloaded on demand from GitHub.
