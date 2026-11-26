@@ -7,7 +7,7 @@ import os
 import unittest
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from core import cover_studio as cs
 

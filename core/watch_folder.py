@@ -38,13 +38,13 @@ from core.metadata_lookup import (
 )
 from core.presets import apply_preset_to_settings, list_presets, load_preset_file
 from core.watch_enrich import (
-    WATCH_ENRICH_CONFIDENCE_PRESETS,
-    WATCH_ENRICH_MODES,
-    _TITLE_NOISE_RE,
-    _merge_empty_meta_fields,
-    _needs_enrichment,
-    _norm_match_text,
-    match_best_enrich_candidate,
+    WATCH_ENRICH_CONFIDENCE_PRESETS as WATCH_ENRICH_CONFIDENCE_PRESETS,
+    WATCH_ENRICH_MODES as WATCH_ENRICH_MODES,
+    _TITLE_NOISE_RE as _TITLE_NOISE_RE,
+    _merge_empty_meta_fields as _merge_empty_meta_fields,
+    _needs_enrichment as _needs_enrichment,
+    _norm_match_text as _norm_match_text,
+    match_best_enrich_candidate as match_best_enrich_candidate,
     prepare_watch_book_item as _prepare_watch_book_item,
 )
 
