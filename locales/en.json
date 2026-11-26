@@ -702,6 +702,7 @@
     "lbl_url": "Website",
     "desc_url": "Official project page",
     "lbl_third_party": "Third-party components",
+    "lbl_third_party_s2k": "Third-party delivery tool (USB / MTP)",
     "third_party_ver": "version {ver}",
     "lbl_docs": "User Guide",
     "desc_docs": "Online user documentation on GitHub (English & Russian)",

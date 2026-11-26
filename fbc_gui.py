@@ -30,6 +30,8 @@ APP_URL = __url__
 THIRD_PARTY_NAME = "fbc2ng"
 THIRD_PARTY_VERSION = "2.1.1"
 THIRD_PARTY_URL = "https://github.com/rupor-github/fb2cng"
+S2K_THIRD_PARTY_NAME = "sync2kindle (s2k)"
+S2K_THIRD_PARTY_URL = "https://github.com/rupor-github/sync2kindle"
 
 from core.config import (
     DEFAULT_OUTPUT_FORMAT,
@@ -709,6 +711,7 @@ class MainWindow(
             parent,
             APP_NAME, APP_VERSION, APP_AUTHOR, APP_EMAIL, APP_URL,
             THIRD_PARTY_NAME, getattr(self, "fbc_version", THIRD_PARTY_VERSION) or THIRD_PARTY_VERSION, THIRD_PARTY_URL,
+            S2K_THIRD_PARTY_NAME, S2K_THIRD_PARTY_URL,
         )
 
     def eventFilter(self, obj, event):

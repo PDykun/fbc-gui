@@ -16,7 +16,9 @@ def build_about_page(
     app_url,
     third_party_name,
     third_party_version,
-    third_party_url
+    third_party_url,
+    s2k_name="sync2kindle (s2k)",
+    s2k_url="https://github.com/rupor-github/sync2kindle",
 ):
     layout = QVBoxLayout(parent)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -73,6 +75,12 @@ def build_about_page(
     tp_layout.addWidget(btn_tp_url)
 
     add_setting_row(c_layout, tr("about.lbl_third_party"), third_party_name, tp_widget)
+
+    s2k_label = s2k_url.replace("https://", "").replace("http://", "")
+    win.btn_s2k_url = QPushButton(s2k_label)
+    win.btn_s2k_url.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_s2k_url.clicked.connect(lambda: webbrowser.open(s2k_url))
+    add_setting_row(c_layout, tr("about.lbl_third_party_s2k"), s2k_name, win.btn_s2k_url)
 
     layout.addWidget(card)
     layout.addStretch()
