@@ -76,7 +76,7 @@ class TestThemeRegistry(unittest.TestCase):
             dlg.ed_series.setText("Собрание Сочинений")
             dlg.ed_num.setText("3")
             dlg.ed_title.setText("Чайка")
-            self.assertEqual(dlg.lbl_target_val.text(), "Чехов - (СС - 03) Чайка.epub")
+            self.assertEqual(dlg.lbl_target_val.text(), "Чехов - (СС-03) - Чайка.epub")
         finally:
             dlg.deleteLater()
 
@@ -111,6 +111,37 @@ class TestThemeRegistry(unittest.TestCase):
             self.assertTrue(dlg.debug_requested)
         finally:
             dlg.deleteLater()
+
+    def test_template_builder_separator_chips_are_non_selectable_draggable_labels(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit
+        from ui.theme import FilenameTemplateBuilder, _SeparatorChip
+
+        app = QApplication.instance() or QApplication([])
+        self.assertIsNotNone(app)
+        for mode in ("filename", "title"):
+            builder = FilenameTemplateBuilder(mode=mode)
+            try:
+                builder._append_text("(")
+                builder._append_text(")")
+                sep_chips = builder.drop_area.findChildren(_SeparatorChip)
+                self.assertGreaterEqual(len(sep_chips), 2)
+                for chip in sep_chips:
+                    self.assertEqual(chip.findChildren(QLineEdit), [])
+                    labels = chip.findChildren(QLabel)
+                    self.assertEqual(len(labels), 1)
+                    self.assertEqual(labels[0].textInteractionFlags(), Qt.TextInteractionFlag.NoTextInteraction)
+                    self.assertTrue(labels[0].testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents))
+                builder.drop_area._set_drop_indicator(1)
+                self.assertIsNotNone(builder.drop_area._drop_indicator_rect())
+                builder.drop_area._set_drop_indicator(None)
+                self.assertIsNone(builder.drop_area._drop_indicator_rect())
+            finally:
+                builder.deleteLater()
+
+        from ui.theme import _make_closed_hand_cursor_pixmap
+        hand_pix = _make_closed_hand_cursor_pixmap()
+        self.assertFalse(hand_pix.isNull())
 
 
 if __name__ == "__main__":

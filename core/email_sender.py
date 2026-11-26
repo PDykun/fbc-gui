@@ -3,8 +3,10 @@ import smtplib
 from email.message import EmailMessage
 
 from core.i18n import tr
+from core.logger import get_logger
 from core.updater import _build_ssl_context
 
+logger = get_logger("email_sender")
 
 MAX_EMAIL_ATTACHMENTS_BYTES = 20 * 1024 * 1024  # 20 МБ на одно письмо (запас под base64/MIME)
 
@@ -39,8 +41,30 @@ def is_email_auto_send_ready(app_settings):
     return bool(auto_enabled and is_smtp_configured(app_settings))
 
 
-def split_files_into_email_batches(file_paths, max_bytes=MAX_EMAIL_ATTACHMENTS_BYTES):
+def find_oversized_email_files(file_paths, max_bytes=None):
+    """Возвращает список (filepath, size_bytes) для файлов, чей размер превышает max_bytes."""
+    limit = MAX_EMAIL_ATTACHMENTS_BYTES if max_bytes is None else max_bytes
+    oversized = []
+    for fp in (file_paths or []):
+        try:
+            fsize = os.path.getsize(fp)
+        except OSError:
+            continue
+        if fsize > limit:
+            oversized.append((fp, fsize))
+    return oversized
+
+
+def split_files_into_email_batches(file_paths, max_bytes=None, reject_oversized=False):
     """Разбивает список файлов на порции так, чтобы суммарный размер вложений не превышал max_bytes."""
+    limit = MAX_EMAIL_ATTACHMENTS_BYTES if max_bytes is None else max_bytes
+    if reject_oversized:
+        oversized = find_oversized_email_files(file_paths, max_bytes=limit)
+        if oversized:
+            names = ", ".join(f"{os.path.basename(p)} ({sz / (1024 * 1024):.1f} MB)" for p, sz in oversized)
+            limit_mb = limit / (1024 * 1024)
+            raise ValueError(f"Attachment exceeds email size limit ({limit_mb:.0f} MB): {names}")
+
     batches = []
     current_batch = []
     current_size = 0
@@ -51,7 +75,7 @@ def split_files_into_email_batches(file_paths, max_bytes=MAX_EMAIL_ATTACHMENTS_B
         except OSError:
             fsize = 0
 
-        if current_batch and (current_size + fsize > max_bytes):
+        if current_batch and (current_size + fsize > limit):
             batches.append(current_batch)
             current_batch = [fp]
             current_size = fsize
@@ -101,6 +125,19 @@ def send_converted_files_via_email(
     smtp_password = app_settings.get("smtp_password", "")
     email_from = (app_settings.get("email_from", "") or smtp_user).strip()
     email_to = app_settings.get("email_to", "").strip()
+
+    if smtp_sec == "none" and smtp_user:
+        logger.warning(
+            "SMTP-авторизация для %s:%s выполняется без шифрования (smtp_security='none')",
+            smtp_host,
+            smtp_port,
+        )
+
+    oversized = find_oversized_email_files(file_paths)
+    if oversized:
+        names = ", ".join(f"{os.path.basename(p)} ({sz / (1024 * 1024):.1f} MB)" for p, sz in oversized)
+        limit_mb = MAX_EMAIL_ATTACHMENTS_BYTES / (1024 * 1024)
+        raise ValueError(f"Attachment exceeds email size limit ({limit_mb:.0f} MB): {names}")
 
     if progress_callback:
         progress_callback(15, tr("converter.progress_email_prep"))
@@ -155,6 +192,13 @@ def send_test_email(app_settings, app_name, app_version):
     smtp_password = app_settings.get("smtp_password", "")
     email_from = (app_settings.get("email_from", "") or smtp_user).strip()
     email_to = app_settings.get("email_to", "").strip()
+
+    if smtp_sec == "none" and smtp_user:
+        logger.warning(
+            "SMTP-авторизация для %s:%s выполняется без шифрования (smtp_security='none')",
+            smtp_host,
+            smtp_port,
+        )
 
     msg = EmailMessage()
     msg["Subject"] = tr("settings.email_test_subject", app=app_name)

@@ -95,14 +95,15 @@ COVER_PREVIEW_SIZE = (180, 270)
 FORMAT_EXT_MAP = {
     "epub2": ".epub", "epub3": ".epub",
     "kepub": ".kepub.epub", "kepub3": ".kepub.epub",
-    "azw3": ".azw3", "kfx": ".kfx", "azw8": ".azw8", "md": ".md"
+    "azw3": ".azw3", "kfx": ".kfx", "azw8": ".azw8",
+    "pdf": ".pdf", "txt": ".txt", "md": ".md",
 }
 EPUB_BASED_FORMATS = {"epub2", "epub3", "kepub", "kepub3"}
 
 FILENAME_TAG_IDS = ("title", "series", "series_abbr", "num", "last", "first", "mid", "format")
 TITLE_TAG_IDS = ("title", "series", "series_abbr", "num", "last", "first", "mid")
 
-DEFAULT_FILENAME_TOKENS = [
+LEGACY_DEFAULT_FILENAME_TOKENS = [
     {"type": "tag", "id": "last"},
     {"type": "text", "value": " - "},
     {"type": "text", "value": "("},
@@ -110,6 +111,18 @@ DEFAULT_FILENAME_TOKENS = [
     {"type": "text", "value": " - "},
     {"type": "tag", "id": "num"},
     {"type": "text", "value": ") "},
+    {"type": "tag", "id": "title"},
+]
+
+DEFAULT_FILENAME_TOKENS = [
+    {"type": "tag", "id": "last"},
+    {"type": "text", "value": " - "},
+    {"type": "text", "value": "("},
+    {"type": "tag", "id": "series_abbr"},
+    {"type": "text", "value": "-"},
+    {"type": "tag", "id": "num"},
+    {"type": "text", "value": ")"},
+    {"type": "text", "value": " - "},
     {"type": "tag", "id": "title"},
 ]
 

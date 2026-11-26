@@ -1116,6 +1116,99 @@ class _ResetIconButton(QPushButton):
         painter.end()
 
 
+def _make_rounded_drag_pixmap(widget):
+    """Снимает изображение плашки со скруглённой маской без прямоугольных углов."""
+    raw = widget.grab()
+    if raw.isNull():
+        return raw
+    dpr = raw.devicePixelRatio() or 1.0
+    rounded = QPixmap(raw.size())
+    rounded.setDevicePixelRatio(dpr)
+    rounded.fill(Qt.GlobalColor.transparent)
+
+    w = raw.width() / dpr
+    h = raw.height() / dpr
+    radius = min(h / 2.0, 15.0)
+
+    painter = QPainter(rounded)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    clip_path = QPainterPath()
+    clip_path.addRoundedRect(QRectF(0.0, 0.0, w, h), radius, radius)
+    painter.setClipPath(clip_path)
+    painter.setOpacity(0.92)
+    painter.drawPixmap(0, 0, raw)
+    painter.end()
+    return rounded
+
+
+def _make_closed_hand_cursor_pixmap():
+    """Рисует аккуратный курсор сжатой руки для сохранения вида руки во время QDrag."""
+    dpr = 2.0
+    size = 24
+    pix = QPixmap(int(size * dpr), int(size * dpr))
+    pix.setDevicePixelRatio(dpr)
+    pix.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+    hand = QPainterPath()
+    # Ладонь и четыре согнутых пальца + большой палец слева
+    hand.moveTo(7.5, 11.0)
+    hand.cubicTo(5.8, 10.6, 4.8, 11.8, 5.2, 13.4)
+    hand.lineTo(6.8, 17.5)
+    hand.cubicTo(7.6, 19.3, 9.2, 20.2, 11.6, 20.2)
+    hand.lineTo(15.2, 20.2)
+    hand.cubicTo(17.7, 20.2, 19.2, 18.6, 19.4, 16.0)
+    hand.lineTo(19.6, 10.4)
+    hand.cubicTo(19.6, 9.0, 17.7, 8.8, 17.4, 10.1)
+    hand.lineTo(17.2, 8.7)
+    hand.cubicTo(17.1, 7.3, 15.1, 7.2, 14.9, 8.6)
+    hand.lineTo(14.7, 8.2)
+    hand.cubicTo(14.5, 6.8, 12.5, 6.8, 12.3, 8.2)
+    hand.lineTo(12.1, 8.6)
+    hand.cubicTo(11.8, 7.3, 9.8, 7.5, 9.8, 9.0)
+    hand.lineTo(9.8, 12.2)
+    hand.lineTo(7.5, 11.0)
+    hand.closeSubpath()
+
+    painter.setPen(QPen(QColor("#111827"), 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setBrush(QColor("#FFFFFF"))
+    painter.drawPath(hand)
+
+    # Короткие линии разделения пальцев для читаемости
+    painter.setPen(QPen(QColor("#111827"), 1.1, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    painter.drawLine(QPointF(12.2, 8.8), QPointF(12.2, 12.0))
+    painter.drawLine(QPointF(14.8, 8.8), QPointF(14.8, 12.2))
+    painter.drawLine(QPointF(17.3, 9.8), QPointF(17.3, 12.4))
+    painter.end()
+    return pix
+
+
+def _start_chip_drag(widget, mime_format, payload_bytes, action):
+    """Запускает QDrag с центрированной точкой захвата и курсором сжатой руки."""
+    drag = QDrag(widget)
+    mime = QMimeData()
+    mime.setData(mime_format, payload_bytes)
+    drag.setMimeData(mime)
+
+    pix = _make_rounded_drag_pixmap(widget)
+    if not pix.isNull():
+        drag.setPixmap(pix)
+        drag.setHotSpot(QPoint(widget.width() // 2, widget.height() // 2))
+
+    hand_pix = _make_closed_hand_cursor_pixmap()
+    if not hand_pix.isNull():
+        drag.setDragCursor(hand_pix, Qt.DropAction.MoveAction)
+        drag.setDragCursor(hand_pix, Qt.DropAction.CopyAction)
+
+    QApplication.setOverrideCursor(Qt.CursorShape.ClosedHandCursor)
+    try:
+        return drag.exec(action)
+    finally:
+        QApplication.restoreOverrideCursor()
+
+
 class _PaletteTagButton(QPushButton):
     """Кнопка тега в палитре: клик добавляет тег в конец, перетаскивание вставляет в нужную позицию."""
 
@@ -1134,12 +1227,12 @@ class _PaletteTagButton(QPushButton):
     def mouseMoveEvent(self, event):
         if (event.buttons() & Qt.MouseButton.LeftButton) and self._drag_start is not None:
             if (event.position().toPoint() - self._drag_start).manhattanLength() >= QApplication.startDragDistance():
-                drag = QDrag(self)
-                mime = QMimeData()
-                mime.setData("application/x-fbc-new-tag", self.tag_id.encode("utf-8"))
-                drag.setMimeData(mime)
-                drag.setPixmap(self.grab())
-                drag.exec(Qt.DropAction.CopyAction)
+                _start_chip_drag(
+                    self,
+                    "application/x-fbc-new-tag",
+                    self.tag_id.encode("utf-8"),
+                    Qt.DropAction.CopyAction,
+                )
                 self._drag_start = None
                 return
         super().mouseMoveEvent(event)
@@ -1167,6 +1260,7 @@ class _ActiveTagChip(QFrame):
 
         lbl = QLabel(label)
         lbl.setObjectName("TokenTagLabel")
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         lay.addWidget(lbl)
 
@@ -1185,42 +1279,44 @@ class _ActiveTagChip(QFrame):
     def mouseMoveEvent(self, event):
         if (event.buttons() & Qt.MouseButton.LeftButton) and self._drag_start is not None:
             if (event.position().toPoint() - self._drag_start).manhattanLength() >= QApplication.startDragDistance():
-                drag = QDrag(self)
-                mime = QMimeData()
-                mime.setData("application/x-fbc-move-token", str(self.index).encode("utf-8"))
-                drag.setMimeData(mime)
-                drag.setPixmap(self.grab())
-                drag.exec(Qt.DropAction.MoveAction)
+                _start_chip_drag(
+                    self,
+                    "application/x-fbc-move-token",
+                    str(self.index).encode("utf-8"),
+                    Qt.DropAction.MoveAction,
+                )
                 self._drag_start = None
                 return
         super().mouseMoveEvent(event)
 
 
 class _SeparatorChip(QFrame):
-    """Редактируемый чип-разделитель в области конструктора с увеличенными отступами и удалением."""
+    """Перетаскиваемая плашка-разделитель в области конструктора без выделения текста внутри."""
 
-    text_changed = pyqtSignal(int, str)
     remove_requested = pyqtSignal(int)
 
     def __init__(self, index, value, parent=None):
         super().__init__(parent)
         self.index = index
+        self.value = str(value or "")
         self._drag_start = None
         self.setObjectName("TokenSepChip")
         self.setFixedHeight(30)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(12, 0, 8, 0)
+        lay.setContentsMargins(10, 0, 8, 0)
         lay.setSpacing(6)
 
-        self.edit = QLineEdit(value)
-        self.edit.setObjectName("TokenSepEdit")
-        self.edit.setFrame(False)
-        self.edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._fit_width(value)
-        self.edit.textChanged.connect(self._on_text_changed)
-        lay.addWidget(self.edit)
+        lay.addWidget(_DragGripDots(self))
+
+        display_text = self.value.strip() if self.value.strip() else tr("settings.fn_space")
+        self.label = QLabel(display_text)
+        self.label.setObjectName("TokenTagLabel")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        lay.addWidget(self.label)
 
         btn_rm = QPushButton("✕")
         btn_rm.setObjectName("TokenRemoveBtn")
@@ -1228,15 +1324,6 @@ class _SeparatorChip(QFrame):
         btn_rm.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_rm.clicked.connect(lambda: self.remove_requested.emit(self.index))
         lay.addWidget(btn_rm)
-
-    def _fit_width(self, text):
-        fm = QFontMetrics(self.edit.font())
-        w = max(24, fm.horizontalAdvance(text or " ") + 12)
-        self.edit.setFixedWidth(min(140, w))
-
-    def _on_text_changed(self, text):
-        self._fit_width(text)
-        self.text_changed.emit(self.index, text)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1246,12 +1333,12 @@ class _SeparatorChip(QFrame):
     def mouseMoveEvent(self, event):
         if (event.buttons() & Qt.MouseButton.LeftButton) and self._drag_start is not None:
             if (event.position().toPoint() - self._drag_start).manhattanLength() >= QApplication.startDragDistance():
-                drag = QDrag(self)
-                mime = QMimeData()
-                mime.setData("application/x-fbc-move-token", str(self.index).encode("utf-8"))
-                drag.setMimeData(mime)
-                drag.setPixmap(self.grab())
-                drag.exec(Qt.DropAction.MoveAction)
+                _start_chip_drag(
+                    self,
+                    "application/x-fbc-move-token",
+                    str(self.index).encode("utf-8"),
+                    Qt.DropAction.MoveAction,
+                )
                 self._drag_start = None
                 return
         super().mouseMoveEvent(event)
@@ -1268,14 +1355,64 @@ class _TokenDropArea(QFrame):
         self.setObjectName("TokenDropArea")
         self.setAcceptDrops(True)
         self.setMinimumHeight(56)
+        self._drop_indicator_idx = None
         self.flow = FlowLayout(self, margin=12, h_spacing=6, v_spacing=8)
 
-    def _drop_index_for_pos(self, pos):
+    def _token_widgets(self):
         token_widgets = []
         for i in range(self.flow.count()):
             w = self.flow.itemAt(i).widget()
             if w is not None and not w.property("is_arrow"):
                 token_widgets.append(w)
+        return token_widgets
+
+    def _set_drop_indicator(self, idx):
+        if self._drop_indicator_idx != idx:
+            self._drop_indicator_idx = idx
+            self.update()
+
+    def _drop_indicator_rect(self):
+        if self._drop_indicator_idx is None:
+            return None
+        token_widgets = self._token_widgets()
+        bar_w = 3.0
+        if not token_widgets:
+            return QRectF(12.0, 12.0, bar_w, 30.0)
+        idx = max(0, min(len(token_widgets), self._drop_indicator_idx))
+        if idx == 0:
+            g = token_widgets[0].geometry()
+            x = max(6.0, g.left() - 5.0)
+            return QRectF(x, g.top() - 2.0, bar_w, g.height() + 4.0)
+        if idx >= len(token_widgets):
+            g = token_widgets[-1].geometry()
+            x = min(self.width() - 8.0, g.right() + 4.0)
+            return QRectF(x, g.top() - 2.0, bar_w, g.height() + 4.0)
+
+        prev_g = token_widgets[idx - 1].geometry()
+        next_g = token_widgets[idx].geometry()
+        if abs(prev_g.top() - next_g.top()) < 10:
+            x = (prev_g.right() + next_g.left()) / 2.0 - bar_w / 2.0
+            return QRectF(x, next_g.top() - 2.0, bar_w, next_g.height() + 4.0)
+        x = max(6.0, next_g.left() - 5.0)
+        return QRectF(x, next_g.top() - 2.0, bar_w, next_g.height() + 4.0)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        rect = self._drop_indicator_rect()
+        if rect is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        col = self.palette().color(QPalette.ColorRole.Highlight)
+        if not col.isValid():
+            col = QColor("#38BDF8")
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(col)
+        painter.drawRoundedRect(rect, 1.5, 1.5)
+        painter.end()
+
+    def _drop_index_for_pos(self, pos):
+        token_widgets = self._token_widgets()
         if not token_widgets:
             return 0
         for idx, w in enumerate(token_widgets):
@@ -1289,14 +1426,21 @@ class _TokenDropArea(QFrame):
     def dragEnterEvent(self, event):
         md = event.mimeData()
         if md.hasFormat("application/x-fbc-new-tag") or md.hasFormat("application/x-fbc-move-token"):
+            self._set_drop_indicator(self._drop_index_for_pos(event.position().toPoint()))
             event.acceptProposedAction()
 
     def dragMoveEvent(self, event):
         md = event.mimeData()
         if md.hasFormat("application/x-fbc-new-tag") or md.hasFormat("application/x-fbc-move-token"):
+            self._set_drop_indicator(self._drop_index_for_pos(event.position().toPoint()))
             event.acceptProposedAction()
 
+    def dragLeaveEvent(self, event):
+        self._set_drop_indicator(None)
+        super().dragLeaveEvent(event)
+
     def dropEvent(self, event):
+        self._set_drop_indicator(None)
         md = event.mimeData()
         target_idx = self._drop_index_for_pos(event.position().toPoint())
         if md.hasFormat("application/x-fbc-new-tag"):
@@ -1479,7 +1623,6 @@ class FilenameTemplateBuilder(QWidget):
                 self.drop_area.flow.addWidget(chip)
             else:
                 sep = _SeparatorChip(idx, tok.get("value", ""))
-                sep.text_changed.connect(self._update_text_token)
                 sep.remove_requested.connect(self._remove_token)
                 self.drop_area.flow.addWidget(sep)
         self._update_preview()
@@ -1492,10 +1635,7 @@ class FilenameTemplateBuilder(QWidget):
         self._emit_changed()
 
     def _append_text(self, text):
-        if self._tokens and self._tokens[-1].get("type") == "text":
-            self._tokens[-1]["value"] = self._tokens[-1].get("value", "") + text
-        else:
-            self._tokens.append({"type": "text", "value": text})
+        self._tokens.append({"type": "text", "value": text})
         self._rebuild_chips()
         self._emit_changed()
 
@@ -1515,11 +1655,6 @@ class FilenameTemplateBuilder(QWidget):
         self._tokens.insert(target_idx, tok)
         self._rebuild_chips()
         self._emit_changed()
-
-    def _update_text_token(self, idx, new_val):
-        if 0 <= idx < len(self._tokens) and self._tokens[idx].get("type") == "text":
-            self._tokens[idx]["value"] = new_val
-            self._emit_changed()
 
     def _remove_token(self, idx):
         if 0 <= idx < len(self._tokens):

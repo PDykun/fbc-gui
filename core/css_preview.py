@@ -608,8 +608,49 @@ def _render_preview_cover_placeholder(author_text, title_text, ctx, series_text=
     )
 
 
-def _prepare_preview_style_context(st, font_families, fonts_dir, rich_html, grayscale):
+def _process_preview_data_uri(data_uri, image_color_profile="none", simulate_eink=False, custom_profile=None):
+    """Обрабатывает data:image/... URI обложки через единый пайплайн Pillow (оптимизация + имитация E Ink)."""
+    import base64 as _b64
+    from core.image_optimizer import optimize_and_preview_image_bytes
+
+    if not data_uri or not str(data_uri).startswith("data:image/"):
+        return data_uri, False
+    m = re.match(r"^data:(image/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$", str(data_uri))
+    if not m:
+        return data_uri, False
+    mime, b64_body = m.group(1), m.group(2)
+    if "svg" in mime.lower():
+        return data_uri, False
+    try:
+        raw_bytes = _b64.b64decode(b64_body)
+        out_bytes, out_mime = optimize_and_preview_image_bytes(
+            raw_bytes,
+            mime=mime,
+            profile_id=image_color_profile,
+            simulate_eink=simulate_eink,
+            custom_profile=custom_profile,
+        )
+        if out_bytes:
+            encoded = _b64.b64encode(out_bytes).decode("ascii")
+            return f"data:{out_mime};base64,{encoded}", True
+    except Exception as e:
+        get_logger("css_preview").debug("Ошибка оптимизации обложки превью: %s", e)
+    return data_uri, False
+
+
+def _prepare_preview_style_context(
+    st,
+    font_families,
+    fonts_dir,
+    rich_html,
+    grayscale,
+    image_color_profile="none",
+    simulate_eink=False,
+    image_color_profile_custom=None,
+):
     """Готовит санитизированный контекст стилей и @font-face для предпросмотра."""
+    from core.image_optimizer import get_eink_paper_preview_style, resolve_image_display_profile
+
     st = _sanitize_css_state(st)
     para_file = st.get("font_para") or "PT-Astra-Serif_Regular.ttf"
     title_file = st.get("font_title") or "PT-Astra-Serif_Regular.ttf"
@@ -634,6 +675,24 @@ def _prepare_preview_style_context(st, font_families, fonts_dir, rich_html, gray
     def _disp_font(fname):
         return tr("styles.font_none") if fname in ("__none__", "Нет", "None", "") else fname
 
+    prof = resolve_image_display_profile(image_color_profile, custom_profile=image_color_profile_custom)
+    effective_gray = bool(grayscale or prof.get("mode") == "grayscale")
+    eink_style = get_eink_paper_preview_style(
+        image_color_profile,
+        simulate_eink=bool(simulate_eink),
+        custom_profile=image_color_profile_custom,
+    )
+    eink_override_css = ""
+    if eink_style:
+        bg = _sanitize_css_value(eink_style.get("paper_bg"), "#ECEAE2")
+        fg = _sanitize_css_value(eink_style.get("paper_text"), "#242422")
+        pfilt = _sanitize_css_value(eink_style.get("page_filter"), "grayscale(100%)")
+        eink_override_css = (
+            f"\n    .book-spread, .book-meta-card {{ background-color: {bg}; color: {fg}; }}"
+            f"\n    .cover-page, .title-page {{ background: {bg}; }}"
+            f"\n    .title-page-body, .book-columns, .cover-placeholder {{ filter: {pfilt}; }}"
+        )
+
     pf_val = st.get("pdf_frame", "0")
     note_bg = st["note_bg"]
     return {
@@ -649,7 +708,11 @@ def _prepare_preview_style_context(st, font_families, fonts_dir, rich_html, gray
         "drop_disp": _disp_font(drop_file),
         "note_bg_css": note_bg if note_bg != "transparent" else "#FDFBF7",
         "page_outline_css": f"outline: {pf_val} solid #EBE8E0;" if pf_val != "0" else "",
-        "gray_css": "filter: grayscale(100%);" if grayscale else "",
+        "gray_css": "filter: grayscale(100%);" if effective_gray else "",
+        "image_color_profile": str(image_color_profile or "none"),
+        "simulate_eink": bool(simulate_eink),
+        "image_color_profile_custom": image_color_profile_custom,
+        "eink_override_css": eink_override_css,
     }
 
 
@@ -662,10 +725,22 @@ def _build_book_mode_preview_parts(book_preview, ctx, dropcaps_enable):
         running_title = f'{book_preview["series"]} — {running_title}' if running_title else book_preview["series"]
 
     if book_preview.get("cover_data_uri"):
-        safe_cover_uri = _html.escape(book_preview["cover_data_uri"], quote=True)
+        raw_uri = book_preview["cover_data_uri"]
+        img_style = ctx["gray_css"]
+        if ctx.get("image_color_profile", "none") != "none" or ctx.get("simulate_eink") or ctx.get("image_color_profile_custom"):
+            processed_uri, was_processed = _process_preview_data_uri(
+                raw_uri,
+                image_color_profile=ctx.get("image_color_profile", "none"),
+                simulate_eink=bool(ctx.get("simulate_eink", False)),
+                custom_profile=ctx.get("image_color_profile_custom"),
+            )
+            raw_uri = processed_uri
+            if was_processed:
+                img_style = ""
+        safe_cover_uri = _html.escape(raw_uri, quote=True)
         cover_html = (
             f'<img class="book-cover-img" src="{safe_cover_uri}" '
-            f'style="{ctx["gray_css"]}">'
+            f'style="{img_style}">'
         )
     else:
         cover_html = _render_preview_cover_placeholder(
@@ -1229,6 +1304,7 @@ def _build_preview_stylesheet(ctx):
         .replace("__FONT_FACES__", ctx["font_faces"])
         .replace("__PARA_STACK__", ctx["para_stack"])
         .replace("__PAGE_OUTLINE_CSS__", ctx["page_outline_css"])
+        + ctx.get("eink_override_css", "")
     )
 
 
@@ -1254,6 +1330,7 @@ def _render_preview_rich_html(ctx, app_name, running_header_esc, cover_html, rig
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src file: data:;">
 <title>{tr("preview.html_title", app=app_name)}</title>
 <style>
 {stylesheet}
@@ -1295,12 +1372,24 @@ def build_full_preview_html(
     book_preview=None,
     dropcaps_enable=True,
     use_web_engine=False,
+    image_color_profile="none",
+    simulate_eink=False,
+    image_color_profile_custom=None,
 ):
     """Собирает HTML-страницу для встроенного превью (WKWebView / WebView2 / QWebEngineView / QTextEdit) или браузера."""
     import html as _html
 
     rich_html = bool(for_browser or use_web_engine)
-    ctx = _prepare_preview_style_context(st, font_families, fonts_dir, rich_html, grayscale)
+    ctx = _prepare_preview_style_context(
+        st,
+        font_families,
+        fonts_dir,
+        rich_html,
+        grayscale,
+        image_color_profile=image_color_profile,
+        simulate_eink=simulate_eink,
+        image_color_profile_custom=image_color_profile_custom,
+    )
     is_book_mode = bool(book_preview and (book_preview.get("title") or book_preview.get("blocks")))
 
     if is_book_mode:

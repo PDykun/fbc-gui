@@ -14,6 +14,7 @@ from core.fb2.common import (
     HAS_LXML,
     HAS_PIL,
     Image,
+    LEGACY_DEFAULT_FILENAME_TOKENS,
     LXML_ET,
     MAX_FB2_XML_BYTES,
     NS,
@@ -102,6 +103,7 @@ from core.fb2.converter import (
     patch_html_title_elements,
     should_skip_existing_conversion,
 )
+from core.fb2.omnibus import merge_fb2_books_to_omnibus
 from core.fb2.organizer import (
     _INVALID_PATH_CHARS_RE,
     _sanitize_fs_component,
@@ -123,6 +125,7 @@ __all__ = [
     "HAS_LXML",
     "HAS_PIL",
     "Image",
+    "LEGACY_DEFAULT_FILENAME_TOKENS",
     "LXML_ET",
     "MAX_FB2_XML_BYTES",
     "NS",
@@ -189,6 +192,7 @@ __all__ = [
     "iter_fb2_from_file",
     "load_book_xml",
     "logger",
+    "merge_fb2_books_to_omnibus",
     "normalize_isbn",
     "parse_metadata",
     "patch_epub_title_classes",

@@ -197,5 +197,167 @@ class TestControllers(unittest.TestCase):
                 self.assertIn("fbc exit code 2", str(ctx.exception))
 
 
+    def test_preset_none_option_default_and_resets_settings_and_css(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+        from PyQt6.QtWidgets import QApplication, QComboBox, QPushButton
+        from core.config import get_default_app_settings
+        from core.css_preview import get_default_css_ui_state
+        from core.presets import save_preset
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication([])
+        self.assertIsNotNone(app)
+
+        with tempfile.TemporaryDirectory() as td:
+            presets_dir = os.path.join(td, "presets")
+            css_path = os.path.join(td, "ebook_styles.css")
+            save_preset(presets_dir, "My Kindle", {"output_format": "kfx", "device_profile": "kindle"}, "body {}")
+
+            class _FakePresetHost(PresetsController):
+                def __init__(self):
+                    self.presets_dir = presets_dir
+                    self.bundled_presets_dir = os.path.join(td, "bundled")
+                    self.fonts_dir = ""
+                    self.css_path = css_path
+                    self.app_settings = get_default_app_settings()
+                    self.app_settings["active_user_preset"] = ""
+                    self.user_preset_combo = QComboBox()
+                    self.btn_preset_apply = QPushButton()
+                    self.btn_preset_delete = QPushButton()
+                    self.btn_preset_restore = QPushButton()
+                    self.saved = 0
+                    self.fbc_updated = 0
+
+                def _has_blocking_workers(self):
+                    return False
+
+                def save_app_settings(self):
+                    self.saved += 1
+
+                def update_fbc_config_file(self):
+                    self.fbc_updated += 1
+
+                def create_widgets(self):
+                    pass
+
+                def _update_undo_redo_ui(self):
+                    pass
+
+                def _repopulate_table_from_files_data(self, _sel):
+                    pass
+
+                def load_and_parse_css_to_gui(self):
+                    pass
+
+                def save_visual_css(self, show_alert=False):
+                    pass
+
+                def apply_theme(self, _theme, save=False):
+                    pass
+
+                def switch_page(self, _idx):
+                    pass
+
+                def refresh_preview(self):
+                    pass
+
+            host = _FakePresetHost()
+            host.refresh_user_presets_combo()
+
+            # 1. Пункт «Нет» первый и выбран по умолчанию; кнопки «Удалить» и «Сбросить» неактивны
+            self.assertEqual(host.user_preset_combo.currentIndex(), 0)
+            self.assertEqual(host.user_preset_combo.itemData(0), PresetsController._PRESET_NONE_DATA)
+            self.assertEqual(host.user_preset_combo.count(), 2)
+            self.assertTrue(host.btn_preset_apply.isEnabled())
+            self.assertFalse(host.btn_preset_delete.isEnabled())
+            self.assertFalse(host.btn_preset_restore.isEnabled())
+
+            # 2. Имитируем применённый пресет и пользовательские правки, затем выбираем «Нет»
+            host.app_settings["active_user_preset"] = "My Kindle"
+            host.app_settings["output_format"] = "kfx"
+            host.app_settings["device_profile"] = "kindle"
+            host.app_settings["filename_mode"] = "custom"
+            host.app_settings["css_ui_state"] = {"h1_cl": "black", "drop_color": "black"}
+            host.app_settings["smtp_host"] = "smtp.keep.me"
+            host.app_settings["custom_output_dir"] = "/keep/my/dir"
+            host.user_preset_combo.setCurrentIndex(0)
+
+            with patch("ui.controllers.presets_controller.show_themed_message") as mock_msg:
+                host.on_user_preset_activated(0)
+                mock_msg.assert_called_once()
+
+            defaults = get_default_app_settings()
+            self.assertEqual(host.app_settings["active_user_preset"], "")
+            self.assertEqual(host.app_settings["output_format"], defaults["output_format"])
+            self.assertEqual(host.app_settings["device_profile"], defaults["device_profile"])
+            self.assertEqual(host.app_settings["filename_mode"], defaults["filename_mode"])
+            self.assertEqual(host.app_settings["css_ui_state"], get_default_css_ui_state())
+            self.assertEqual(host.app_settings["smtp_host"], "smtp.keep.me")
+            self.assertEqual(host.app_settings["custom_output_dir"], "/keep/my/dir")
+            self.assertTrue(os.path.isfile(css_path))
+            self.assertEqual(host.user_preset_combo.currentIndex(), 0)
+
+
+    def test_single_source_version_and_targeted_preset_ui_refresh(self):
+        import os
+        from unittest.mock import patch
+        from PyQt6.QtWidgets import QApplication
+        import core.fbc_manager as fbc_manager
+        import core.metadata_lookup as metadata_lookup
+        import core.version as version_mod
+        import fbc_gui
+        import update_version_json
+
+        # 1. Единый источник версии core/version.py
+        self.assertEqual(fbc_gui.__version__, version_mod.__version__)
+        self.assertEqual(fbc_gui.__build__, version_mod.__build__)
+        self.assertIn(version_mod.__version__, fbc_manager.FBC_HTTP_USER_AGENT)
+        self.assertIn(version_mod.__version__, metadata_lookup.LOOKUP_USER_AGENT)
+        ver, bld = update_version_json.extract_app_meta(fbc_gui.__file__)
+        self.assertEqual((ver, bld), (version_mod.__version__, version_mod.__build__))
+
+        # 2. При применении пресета не пересоздаются page_converter, table, search_edit и page_preview
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication([])
+        with (
+            patch.object(fbc_gui.MainWindow, "_ensure_fbc_on_startup", lambda self, *a, **kw: None),
+            patch.object(fbc_gui.MainWindow, "_schedule_startup_update_check", lambda self, *a, **kw: None),
+        ):
+            win = fbc_gui.MainWindow()
+            try:
+                orig_converter_page = win.page_converter
+                orig_table = win.table
+                orig_search = win.search_edit
+                orig_preview_page = win.page_preview
+                orig_settings_page = win.page_settings
+                win.search_edit.setText("Толстой")
+                win.switch_page(3)
+
+                with (
+                    patch.object(win, "save_app_settings", lambda: None),
+                    patch.object(win, "update_fbc_config_file", lambda: None),
+                    patch.object(win, "save_visual_css", lambda show_alert=False: True),
+                ):
+                    ok = win._apply_preset_payload(
+                        {"name": "TestPreset", "settings": {"output_format": "kfx", "grayscale": "luma"}},
+                        selected_name="TestPreset",
+                    )
+
+                self.assertTrue(ok)
+                self.assertIs(win.page_converter, orig_converter_page)
+                self.assertIs(win.table, orig_table)
+                self.assertIs(win.search_edit, orig_search)
+                self.assertIs(win.page_preview, orig_preview_page)
+                self.assertIsNot(win.page_settings, orig_settings_page)
+                self.assertEqual(win.search_edit.text(), "Толстой")
+                self.assertEqual(win.format_combo.currentData(), "kfx")
+                self.assertEqual(win.pages.currentIndex(), 3)
+            finally:
+                win.close()
+                app.processEvents()
+
+
 if __name__ == "__main__":
     unittest.main()

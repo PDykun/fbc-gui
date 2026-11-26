@@ -20,7 +20,7 @@ from core.fb2_processor import (
 )
 
 
-from ui.dialogs.common import show_themed_message
+from ui.dialogs.common import show_themed_message, create_segmented_tabs
 from ui.dialogs.metadata_lookup import MetadataLookupDialog
 
 
@@ -69,8 +69,7 @@ class BookEditDialog(QDialog):
         hdr_lbl.setObjectName("SectionHeader")
         left_box.addWidget(hdr_lbl)
 
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
+        self.tabs = create_segmented_tabs(self)
         self.tabs.addTab(self._build_basic_tab(data, meta), tr("converter.edit_tab_basic"))
         self.tabs.addTab(self._build_extra_tab(meta), tr("converter.edit_tab_extra"))
 

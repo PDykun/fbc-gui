@@ -21,67 +21,7 @@
     "cover_generate": "false",
     "no_cover": "false",
     "filename_mode": "default",
-    "filename_tokens": [
-      {
-        "type": "tag",
-        "id": "last"
-      },
-      {
-        "type": "text",
-        "value": " - "
-      },
-      {
-        "type": "text",
-        "value": "("
-      },
-      {
-        "type": "tag",
-        "id": "series_abbr"
-      },
-      {
-        "type": "text",
-        "value": " - "
-      },
-      {
-        "type": "tag",
-        "id": "num"
-      },
-      {
-        "type": "text",
-        "value": ") "
-      },
-      {
-        "type": "tag",
-        "id": "title"
-      }
-    ],
-    "title_template_mode": "default",
-    "title_template_tokens": [
-      {
-        "type": "text",
-        "value": "("
-      },
-      {
-        "type": "tag",
-        "id": "series_abbr"
-      },
-      {
-        "type": "text",
-        "value": " - "
-      },
-      {
-        "type": "tag",
-        "id": "num"
-      },
-      {
-        "type": "text",
-        "value": ") "
-      },
-      {
-        "type": "tag",
-        "id": "title"
-      }
-    ],
+    "title_template_mode": "filename",
     "azw3_compression": "standard",
     "kfx_compression": "none",
     "azw3_apnx": "none",
@@ -147,7 +87,8 @@
       "img_cap_sz": "85%",
       "img_cap_cl": "dimgray",
       "img_cap_st": "italic"
-    }
+    },
+    "image_color_profile": "eink_bw"
   },
   "css_content": "body { font-family: \"paragraph\"; font-weight: normal; font-style: normal; line-height: 100%; }\n@page { margin-left: 10px; margin-right: 10px; margin-top: 10px; margin-bottom: 5px;  }\n\n@font-face { font-family: \"dropcaps\"; src: url(\"fonts/PomorskyUnicode.otf\"); }\n@font-face { font-family: \"paragraph\"; src: url(\"fonts/PT-Astra-Serif_Regular.ttf\"); font-weight: normal; font-style: normal; }\n@font-face { font-family: \"paragraph\"; src: url(\"fonts/PT-Astra-Serif_Italic.ttf\"); font-style: italic; font-weight: normal; }\n@font-face { font-family: \"paragraph\"; src: url(\"fonts/PT-Astra-Serif_Bold.ttf\"); font-style: normal; font-weight: bold; }\n@font-face { font-family: \"paragraph\"; src: url(\"fonts/PT-Astra-Serif_Bold-Italic.ttf\"); font-style: italic; font-weight: bold; }\n@font-face { font-family: \"title-font\"; src: url(\"fonts/PT-Astra-Serif_Regular.ttf\"); font-weight: bold; font-style: normal; }\n@font-face { font-family: \"title-font\"; src: url(\"fonts/PT-Astra-Serif_Regular.ttf\"); font-weight: normal; font-style: normal; }\n@font-face { font-family: \"author-font\"; src: url(\"fonts/PT-Astra-Serif_Regular.ttf\"); font-style: italic; font-weight: normal; }\n@font-face { font-family: \"author-font\"; src: url(\"fonts/PT-Astra-Serif_Regular.ttf\"); font-style: normal; font-weight: normal; }\n@font-face { font-family: \"author-font\"; src: url(\"fonts/PT-Astra-Serif_Regular.ttf\"); font-style: italic; font-weight: bold; }\n@font-face { font-family: \"author-font\"; src: url(\"fonts/PT-Astra-Serif_Regular.ttf\"); font-style: normal; font-weight: bold; }\n\n.body-title { page-break-before: always; margin-top: 2em; margin-bottom: 1.5em; text-indent: 0; text-align: center; }\n\n.book-author, span.book-author, .body-title .book-author, .body-title-header.book-author, .body-title-header .book-author, .text-author, .author {\n    font-family: \"author-font\", \"paragraph\" !important; font-size: 110% !important; font-weight: bold !important;\n    font-style: italic !important; color: dimgray !important; text-align: center !important;\n    margin-top: 0.4em !important; margin-bottom: 0.4em !important; page-break-before: avoid;\n}\n\n.book-title, span.book-title, .body-title .book-title, .body-title-header.book-title, .body-title-header .book-title {\n    font-family: \"title-font\", \"paragraph\" !important; font-size: 150% !important; font-weight: bold !important;\n    font-style: normal !important; color: black !important; text-align: center !important;\n    margin-top: 0.8em !important; margin-bottom: 0.5em !important;\n}\n\n.body-title-header, .body-title h1, h1.body-title-header { font-family: \"title-font\", \"paragraph\"; font-size: 150%; font-weight: bold; color: black; text-align: center; }\n\n.chapter-title { page-break-before: always; margin-top: 2em; margin-bottom: 1em; text-indent: 0; }\n.chapter-title-header, .chapter-title h1, .chapter-title h2, h1.chapter-title-header { font-family: \"paragraph\"; font-size: 130%; font-weight: bold; color: black; text-align: center; margin-top: 1em; margin-bottom: 0.8em; }\n\n.section-title-h2 { page-break-before: always; margin-top: 1.5em; margin-bottom: 0.8em; text-indent: 0; }\n.section-title-h2 .section-title-header, .section-title-h2 h2, .section-title-h2 h3 { font-family: \"paragraph\"; font-size: 120%; font-weight: bold; color: dimgray; text-align: center; }\n\n.section-title-h3 .section-title-header, .section-title-h3 h3, .section-title-h3 h4 { font-family: \"paragraph\"; font-size: 120%; font-weight: bold; color: black; text-align: center; }\n\n.section-title-h4 .section-title-header, .section-title-h4 h4, .section-title-h4 h5 { font-family: \"paragraph\"; font-size: 120%; font-weight: bold; color: dimgray; text-align: center; }\n\n.section-subtitle, .subtitle, p.subtitle { font-family: \"paragraph\"; page-break-after: avoid; text-align: center; font-weight: bold; font-style: italic; margin-bottom: 0.8em; margin-top: 0.5em; text-indent: 0em; }\n\np { font-family: \"paragraph\"; font-weight: normal; font-style: normal; text-indent: 1em; margin-bottom: 0pt; margin-top: 0pt; text-align: justify; }\n.emptyline { margin-top: 1em; }\n\n.dropcap, span.dropcaps, span.dropcap {\n    font-family: \"dropcaps\"; float: left; font-weight: bold; color: black; font-size: 4em;\n    line-height: 0.85; margin-top: 0em; margin-bottom: -0.2em; margin-right: 0.08em; padding-right: .1em;\n}\n.has-dropcap, p.has-dropcap { text-indent: 0 !important; text-align: justify; }\n\n.annotation { font-family: \"paragraph\"; margin: 1.5em; font-size: 70%; text-align: center; font-style: normal; color: dimgray; }\n\n.epigraph { font-family: \"paragraph\"; margin-left: 35%; text-align: right; margin-top: 0.5em; margin-bottom: 0.3em; font-style: italic; font-size: 100%; color: dimgray; }\n\n.poem { font-family: \"paragraph\"; text-indent: 0em; margin: 0.8em 0 0.8em 2.5em; font-style: italic; font-size: 70%; color: black; text-align: left; }\n\n.footnote, .blocknote { font-family: \"paragraph\"; font-style: italic; font-size: 70%; border-radius: 4px; background: #f4f4f4; padding: 6px 10px; border: 1px #505050 solid; color: black; margin-top: 1em; margin-bottom: 1em; }\n\n.image, .image-block, div.image { text-align: center; text-indent: 0; margin: 0.8em 0; page-break-inside: avoid; }\n.image img, .image svg, img.image-inline, svg { max-width: 100%; height: auto; }\n.image-caption, p.image-caption { font-family: \"paragraph\"; font-size: 85%; color: dimgray; font-style: italic; text-align: center; text-indent: 0; margin-top: 0.3em; margin-bottom: 0.8em; }\n"
 }

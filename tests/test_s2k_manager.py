@@ -524,6 +524,34 @@ class TestS2kManager(unittest.TestCase):
                     download_and_install_s2k(td)
                 self.assertIn("контрольной суммы", str(ctx.exception))
 
+    def test_detect_mounted_readers_usb_and_kobo_cloud(self):
+        from core.s2k_manager import detect_mounted_readers
+
+        with tempfile.TemporaryDirectory() as td:
+            vols = os.path.join(td, "Volumes")
+            home = os.path.join(td, "Home")
+            os.makedirs(os.path.join(vols, "KOBOeReader", ".kobo"))
+            os.makedirs(os.path.join(vols, "Kindle", "documents"))
+            os.makedirs(os.path.join(vols, "Kindle", "system"))
+            os.makedirs(os.path.join(vols, "PB740", "system", "config"))
+            os.makedirs(os.path.join(vols, "PB740", "books"))
+            os.makedirs(os.path.join(home, "Dropbox", "Apps", "Rakuten Kobo"))
+
+            detected = detect_mounted_readers(
+                platform_name="darwin",
+                volumes_roots=[vols],
+                home_dir=home,
+            )
+            by_kind = {d["kind"]: d for d in detected}
+            self.assertIn("kobo", by_kind)
+            self.assertEqual(by_kind["kobo"]["recommended_format"], "kepub3")
+            self.assertIn("kindle", by_kind)
+            self.assertTrue(by_kind["kindle"]["path"].endswith("documents"))
+            self.assertIn("pocketbook", by_kind)
+            self.assertTrue(by_kind["pocketbook"]["path"].endswith("books"))
+            self.assertIn("kobo_cloud", by_kind)
+            self.assertTrue(by_kind["kobo_cloud"]["path"].endswith("Rakuten Kobo"))
+
 
 if __name__ == "__main__":
     unittest.main()

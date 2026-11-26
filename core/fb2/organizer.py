@@ -71,12 +71,13 @@ def plan_organize_fb2_files(items, dest_root, pattern_mode="author_series", file
             "item_id": data.get("item_id", ""),
             "src_path": os.path.abspath(src_path),
             "dst_path": os.path.abspath(dst_path),
+            "dest_root": os.path.abspath(dest_root),
             "display_name": data.get("display_name") or os.path.basename(src_path),
         })
     return plan
 
 
-def execute_organize_fb2_plan(plan, copy_mode=True):
+def execute_organize_fb2_plan(plan, copy_mode=True, dest_root=None):
     """Выполняет план копирования или перемещения исходных FB2/ZIP, возвращая (count, errors, path_map)."""
     succeeded = 0
     errors = []
@@ -85,6 +86,12 @@ def execute_organize_fb2_plan(plan, copy_mode=True):
         src = entry["src_path"]
         dst = entry["dst_path"]
         try:
+            root_guard = dest_root or entry.get("dest_root")
+            if root_guard:
+                abs_root = os.path.abspath(root_guard)
+                abs_dst = os.path.abspath(dst)
+                if os.path.commonpath([abs_root, abs_dst]) != abs_root:
+                    raise ValueError(f"Destination path escapes target root: {dst}")
             if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dst)):
                 succeeded += 1
                 path_map[src] = dst

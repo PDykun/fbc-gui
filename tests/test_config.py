@@ -388,5 +388,116 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(mock_run.call_args.kwargs.get("timeout"), 5)
 
 
+    def test_load_app_settings_migrates_legacy_default_filename_tokens_and_preserves_custom(self):
+        from core.fb2_processor import LEGACY_DEFAULT_FILENAME_TOKENS
+
+        with tempfile.TemporaryDirectory() as td:
+            # 1. Пользователь ещё не включал «Пользовательский» (filename_mode == "default") и имел старый дефолт -> обновляем
+            sp_legacy = os.path.join(td, "legacy.json")
+            with open(sp_legacy, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "language": "ru",
+                        "filename_mode": "default",
+                        "filename_tokens": LEGACY_DEFAULT_FILENAME_TOKENS,
+                    },
+                    f,
+                )
+            st_legacy = get_default_app_settings()
+            with patch("core.config._load_smtp_password_secure", return_value=""), patch(
+                "core.config._save_smtp_password_secure", return_value=True
+            ):
+                load_app_settings(sp_legacy, st_legacy)
+            self.assertEqual(st_legacy["filename_tokens"], DEFAULT_FILENAME_TOKENS)
+
+            # 2. Пользователь сам настроил свой вариант -> должен сохраниться без изменений
+            custom_tokens = [
+                {"type": "tag", "id": "title"},
+                {"type": "text", "value": " - "},
+                {"type": "tag", "id": "last"},
+            ]
+            for mode in ("custom", "default"):
+                sp_custom = os.path.join(td, f"custom_{mode}.json")
+                with open(sp_custom, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {
+                            "language": "ru",
+                            "filename_mode": mode,
+                            "filename_tokens": custom_tokens,
+                        },
+                        f,
+                    )
+                st_custom = get_default_app_settings()
+                with patch("core.config._load_smtp_password_secure", return_value=""), patch(
+                    "core.config._save_smtp_password_secure", return_value=True
+                ):
+                    load_app_settings(sp_custom, st_custom)
+                self.assertEqual(st_custom["filename_tokens"], custom_tokens)
+
+            # 3. Пользователь уже в режиме custom со старым вариантом -> не перезаписываем
+            sp_old_custom = os.path.join(td, "old_custom.json")
+            with open(sp_old_custom, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "language": "ru",
+                        "filename_mode": "custom",
+                        "filename_tokens": LEGACY_DEFAULT_FILENAME_TOKENS,
+                    },
+                    f,
+                )
+            st_old_custom = get_default_app_settings()
+            with patch("core.config._load_smtp_password_secure", return_value=""), patch(
+                "core.config._save_smtp_password_secure", return_value=True
+            ):
+                load_app_settings(sp_old_custom, st_old_custom)
+            self.assertEqual(st_old_custom["filename_tokens"], LEGACY_DEFAULT_FILENAME_TOKENS)
+
+
+    def test_title_template_filename_mode_mirrors_filename_template(self):
+        from core.fb2_processor import build_fbc_output_name_template
+        from ruamel.yaml import YAML
+
+        with tempfile.TemporaryDirectory() as td:
+            cfg = os.path.join(td, "config.yaml")
+            shutil.copy2(BASE_CONFIG_YAML, cfg)
+
+            st = get_default_app_settings()
+            self.assertEqual(st["title_template_mode"], "filename")
+
+            # 1. filename_mode == "default" -> title_template повторяет дефолтный шаблон имени файла (без замены слешей)
+            st["filename_mode"] = "default"
+            update_fbc_config_file(cfg, BASE_CSS_PATH, st)
+            yaml = YAML()
+            with open(cfg, "r", encoding="utf-8") as fh:
+                doc = yaml.load(fh)["document"]
+            expected_default_title = build_fbc_output_name_template(DEFAULT_FILENAME_TOKENS, for_metadata_title=True).strip()
+            self.assertEqual(doc["metainformation"]["title_template"].strip(), expected_default_title)
+
+            # 2. Меняем filename_mode на "custom" и меняем токены имени файла -> title_template обновляется точно так же
+            custom_fn_tokens = [
+                {"type": "tag", "id": "title"},
+                {"type": "text", "value": " — "},
+                {"type": "tag", "id": "last"},
+            ]
+            st["filename_mode"] = "custom"
+            st["filename_tokens"] = custom_fn_tokens
+            update_fbc_config_file(cfg, BASE_CSS_PATH, st)
+            with open(cfg, "r", encoding="utf-8") as fh:
+                doc2 = yaml.load(fh)["document"]
+            expected_custom_title = build_fbc_output_name_template(custom_fn_tokens, for_metadata_title=True).strip()
+            self.assertEqual(doc2["metainformation"]["title_template"].strip(), expected_custom_title)
+
+            # 3. Старый settings.json с title_template_mode == "default" мигрируется в "filename"
+            sp = os.path.join(td, "legacy_title_mode.json")
+            with open(sp, "w", encoding="utf-8") as f:
+                json.dump({"language": "ru", "title_template_mode": "default"}, f)
+            loaded = get_default_app_settings()
+            with patch("core.config._load_smtp_password_secure", return_value=""), patch(
+                "core.config._save_smtp_password_secure", return_value=True
+            ):
+                load_app_settings(sp, loaded)
+            self.assertEqual(loaded["title_template_mode"], "filename")
+
+
 if __name__ == "__main__":
     unittest.main()

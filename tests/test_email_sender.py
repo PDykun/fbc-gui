@@ -144,6 +144,29 @@ class TestEmailSender(unittest.TestCase):
                     )
             self.assertEqual(sent_count, 1)
 
+    def test_oversized_single_attachment_rejected_before_smtp_and_none_warns(self):
+        from core.email_sender import find_oversized_email_files
+
+        with tempfile.TemporaryDirectory() as td:
+            big_fp = os.path.join(td, "huge.epub")
+            with open(big_fp, "wb") as fh:
+                fh.write(b"x" * 2048)
+
+            self.assertEqual(len(find_oversized_email_files([big_fp], max_bytes=1024)), 1)
+            with patch("core.email_sender.MAX_EMAIL_ATTACHMENTS_BYTES", 1024), \
+                 patch("core.email_sender.smtplib.SMTP_SSL") as mock_ssl:
+                with self.assertRaises(ValueError) as ctx:
+                    send_converted_files_via_email(self._valid_settings(), [big_fp], "FBC GUI", "2.11")
+            self.assertIn("huge.epub", str(ctx.exception))
+            mock_ssl.assert_not_called()
+
+        mock_srv = MagicMock()
+        with patch("core.email_sender.smtplib.SMTP") as mock_smtp, \
+             patch("core.email_sender.logger.warning") as warn_mock:
+            mock_smtp.return_value.__enter__.return_value = mock_srv
+            send_test_email(self._valid_settings(smtp_port="25", smtp_security="none"), "FBC GUI", "2.11")
+        warn_mock.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 import re
 
 from core.fb2.common import (
+    DEFAULT_FILENAME_TOKENS,
     DEFAULT_OUTPUT_FORMAT,
     FILENAME_TAG_IDS,
     FORMAT_EXT_MAP,
@@ -86,25 +87,38 @@ def _join_items_smart(items, eval_fn):
     """Соединяет непустые элементы, автоматически скрывая разделители вокруг пустых тегов."""
     out_parts = []
     pending_sep = ""
+    post_empty_sep = ""
     has_any = False
     skipped_empty = False
     for it in items:
         if it["type"] == "text":
-            pending_sep += it["value"]
+            if skipped_empty:
+                post_empty_sep += it["value"]
+            else:
+                pending_sep += it["value"]
         else:
             val = eval_fn(it)
             if val:
-                if has_any and pending_sep:
-                    sep = _MULTI_SPACE_RE.sub(' ', pending_sep) if skipped_empty else pending_sep
-                    out_parts.append(sep)
+                if has_any:
+                    use_sep = pending_sep
+                    if skipped_empty and post_empty_sep.strip():
+                        use_sep = post_empty_sep
+                    if use_sep:
+                        out_parts.append(_MULTI_SPACE_RE.sub(' ', use_sep) if skipped_empty else use_sep)
                 out_parts.append(val)
                 pending_sep = ""
+                post_empty_sep = ""
                 has_any = True
                 skipped_empty = False
             else:
-                skipped_empty = True
-                if not has_any:
+                if has_any:
+                    if skipped_empty and not pending_sep.strip() and post_empty_sep.strip():
+                        pending_sep = post_empty_sep
+                    post_empty_sep = ""
+                    skipped_empty = True
+                else:
                     pending_sep = ""
+                    post_empty_sep = ""
     return "".join(out_parts)
 
 
@@ -120,7 +134,7 @@ def render_filename_from_tokens(tokens, meta, output_format=DEFAULT_OUTPUT_FORMA
             return f"{seg['open']}{inner_txt}{seg['close']}" if inner_txt else ""
         return ""
 
-    rendered = _join_items_smart(segments, _eval_seg).strip()
+    rendered = _MULTI_SPACE_RE.sub(' ', _join_items_smart(segments, _eval_seg).strip())
     if not rendered:
         rendered = values["title"] or "book"
     if for_metadata_title:
@@ -167,19 +181,44 @@ def build_fbc_output_name_template(tokens, for_metadata_title=False):
 
     def _emit_join(items, out_var, val_expr_fn):
         sep_var = f"{out_var}_sep"
+        post_var = f"{out_var}_post"
         has_var = f"{out_var}_has"
-        lines.append(f'{{{{- {out_var} := "" -}}}}{{{{- {sep_var} := "" -}}}}{{{{- {has_var} := false -}}}}')
+        skip_var = f"{out_var}_skip"
+        use_var = f"{out_var}_use"
+        lines.append(
+            f'{{{{- {out_var} := "" -}}}}{{{{- {sep_var} := "" -}}}}{{{{- {post_var} := "" -}}}}'
+            f'{{{{- {has_var} := false -}}}}{{{{- {skip_var} := false -}}}}'
+        )
         for it in items:
             if it["type"] == "text":
-                lines.append(f'{{{{- {sep_var} = printf "%s%s" {sep_var} {_go_quote(it["value"])} -}}}}')
+                quoted = _go_quote(it["value"])
+                lines.append(
+                    f'{{{{- if {skip_var} -}}}}{{{{- {post_var} = printf "%s%s" {post_var} {quoted} -}}}}'
+                    f'{{{{- else -}}}}{{{{- {sep_var} = printf "%s%s" {sep_var} {quoted} -}}}}{{{{- end -}}}}'
+                )
             else:
                 v_expr = val_expr_fn(it)
                 lines.append(f'{{{{- if {v_expr} -}}}}')
-                lines.append(f'{{{{-   if and {has_var} {sep_var} -}}}}{{{{- {out_var} = printf "%s%s" {out_var} {sep_var} -}}}}{{{{- end -}}}}')
+                lines.append(f'{{{{-   if {has_var} -}}}}')
+                lines.append(f'{{{{-     {use_var} := {sep_var} -}}}}')
+                lines.append(f'{{{{-     if and {skip_var} (trim {post_var}) -}}}}{{{{- {use_var} = {post_var} -}}}}{{{{- end -}}}}')
+                lines.append(f'{{{{-     if {use_var} -}}}}{{{{- {out_var} = printf "%s%s" {out_var} {use_var} -}}}}{{{{- end -}}}}')
+                lines.append('{{-   end -}}')
                 lines.append(f'{{{{-   {out_var} = printf "%s%s" {out_var} {v_expr} -}}}}')
-                lines.append(f'{{{{-   {sep_var} = "" -}}}}{{{{- {has_var} = true -}}}}')
+                lines.append(
+                    f'{{{{-   {sep_var} = "" -}}}}{{{{- {post_var} = "" -}}}}'
+                    f'{{{{- {has_var} = true -}}}}{{{{- {skip_var} = false -}}}}'
+                )
                 lines.append('{{- else -}}')
-                lines.append(f'{{{{-   if not {has_var} -}}}}{{{{- {sep_var} = "" -}}}}{{{{- end -}}}}')
+                lines.append(f'{{{{-   if {has_var} -}}}}')
+                lines.append(
+                    f'{{{{-     if and {skip_var} (not (trim {sep_var})) (trim {post_var}) -}}}}'
+                    f'{{{{- {sep_var} = {post_var} -}}}}{{{{- end -}}}}'
+                )
+                lines.append(f'{{{{-     {post_var} = "" -}}}}{{{{- {skip_var} = true -}}}}')
+                lines.append('{{-   else -}}')
+                lines.append(f'{{{{-     {sep_var} = "" -}}}}{{{{- {post_var} = "" -}}}}')
+                lines.append('{{-   end -}}')
                 lines.append('{{- end -}}')
 
     top_items = []
@@ -211,16 +250,7 @@ def build_fbc_output_name_template(tokens, for_metadata_title=False):
 
 
 def simulate_fbc_target(meta, output_format=DEFAULT_OUTPUT_FORMAT, filename_mode="default", filename_tokens=None):
-    if filename_mode == "custom" and filename_tokens:
-        target_name = render_filename_from_tokens(filename_tokens, meta, output_format)
-        return target_name + FORMAT_EXT_MAP.get(output_format, ".epub")
-
-    title, series, num = meta.get('title', ''), meta.get('series', ''), meta.get('num', '')
-    prefix = ""
-    if series:
-        abbr = "".join([w[0].upper() for w in series.split() if w])
-        if abbr:
-            prefix = f"({abbr}" + (f" - {int(num):02d}" if num and num.isdigit() else "") + ") "
-    target_name = (prefix + title).replace("/", "\u2215").replace("\\", "\u2215")
+    tokens = filename_tokens if (filename_mode == "custom" and filename_tokens) else DEFAULT_FILENAME_TOKENS
+    target_name = render_filename_from_tokens(tokens, meta, output_format)
     return target_name + FORMAT_EXT_MAP.get(output_format, ".epub")
 

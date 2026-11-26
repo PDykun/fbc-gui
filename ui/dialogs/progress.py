@@ -1,9 +1,28 @@
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QProgressBar, QDialog,
+    QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QProgressBar, QDialog, QSizePolicy,
 )
 
 from core.i18n import tr
+
+
+def _configure_status_label(label):
+    """Настраивает многострочный статус-лейбл так, чтобы он не обрезался при длинных именах файлов."""
+    label.setObjectName("RowDesc")
+    label.setWordWrap(True)
+    label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
+    label.setMinimumHeight(36)
+
+
+def _grow_dialog_to_fit(dialog):
+    """Увеличивает высоту диалога, если длинный многострочный текст перестал помещаться."""
+    lay = dialog.layout()
+    if lay is not None:
+        lay.activate()
+    hint = dialog.sizeHint()
+    if hint.height() > dialog.height():
+        dialog.resize(max(dialog.width(), hint.width()), hint.height())
 
 
 class ConversionProgressDialog(QDialog):
@@ -26,7 +45,7 @@ class ConversionProgressDialog(QDialog):
         self.setWindowTitle(title)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setModal(True)
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(520)
         self._allow_close = False
         self._cancelling = False
 
@@ -58,8 +77,7 @@ class ConversionProgressDialog(QDialog):
         self.pb_convert = None
         if show_convert:
             self.lbl_convert = QLabel(tr("converter.progress_convert_prep"))
-            self.lbl_convert.setObjectName("RowDesc")
-            self.lbl_convert.setWordWrap(True)
+            _configure_status_label(self.lbl_convert)
             c_layout.addWidget(self.lbl_convert)
 
             self.pb_convert = QProgressBar()
@@ -78,8 +96,7 @@ class ConversionProgressDialog(QDialog):
                 else (tr("settings.sync_status_running") if sec_mode == "sync" else tr("converter.progress_email_wait"))
             )
             self.lbl_email = QLabel(wait_text)
-            self.lbl_email.setObjectName("RowDesc")
-            self.lbl_email.setWordWrap(True)
+            _configure_status_label(self.lbl_email)
             c_layout.addWidget(self.lbl_email)
 
             self.pb_email = QProgressBar()
@@ -115,6 +132,7 @@ class ConversionProgressDialog(QDialog):
             self.pb_convert.setValue(value)
         if self.lbl_convert is not None and not self._cancelling:
             self.lbl_convert.setText(status_text)
+            _grow_dialog_to_fit(self)
 
     def update_email(self, value, status_text):
         if self.pb_email is not None and self.lbl_email is not None:
@@ -126,6 +144,7 @@ class ConversionProgressDialog(QDialog):
                 self.pb_email.setValue(max(0, min(100, int(value))))
             if not self._cancelling:
                 self.lbl_email.setText(status_text)
+                _grow_dialog_to_fit(self)
 
     def update_secondary(self, value, status_text):
         self.update_email(value, status_text)
@@ -159,7 +178,7 @@ class ImportProgressDialog(QDialog):
         self.setWindowTitle(title)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setModal(True)
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(520)
         self._allow_close = False
         self._cancelling = False
 
@@ -188,8 +207,7 @@ class ImportProgressDialog(QDialog):
         c_layout.addLayout(hdr_row)
 
         self.lbl_status = QLabel(tr("converter.import_scanning"))
-        self.lbl_status.setObjectName("RowDesc")
-        self.lbl_status.setWordWrap(True)
+        _configure_status_label(self.lbl_status)
         c_layout.addWidget(self.lbl_status)
 
         self.pb_import = QProgressBar()
@@ -225,6 +243,7 @@ class ImportProgressDialog(QDialog):
             self.lbl_status.setText(
                 tr("converter.import_progress", cur=min(current, max(1, total)), total=max(1, total), name=filename)
             )
+            _grow_dialog_to_fit(self)
 
     def finish_and_close(self):
         self._allow_close = True
@@ -242,4 +261,3 @@ class ImportProgressDialog(QDialog):
         else:
             self._on_cancel_clicked()
             event.ignore()
-

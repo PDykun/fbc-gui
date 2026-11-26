@@ -35,8 +35,15 @@ MAX_UPDATE_FILE_BYTES = 512 * 1024 * 1024
 DEFAULT_GITHUB_REPO = "PDykun/fbc-gui"
 DEFAULT_MANIFEST_URL = f"https://github.com/{DEFAULT_GITHUB_REPO}/releases/latest/download/version.json"
 DEFAULT_RELEASES_URL = f"https://github.com/{DEFAULT_GITHUB_REPO}/releases/latest"
+DEFAULT_ALLOWED_UPDATE_HOSTS = (
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "github-releases.githubusercontent.com",
+)
 
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+_UNSAFE_WIN_BAT_CHARS = frozenset('"\r\n\x00')
 
 
 class UpdateCancelledError(Exception):
@@ -57,6 +64,17 @@ def is_safe_http_url(url, allow_relative=False, require_https=False):
         allowed = ("https",) if require_https else ("http", "https")
         return parsed.scheme.lower() in allowed and bool(parsed.netloc)
     return bool(allow_relative and not raw.startswith("//"))
+
+
+def is_allowed_update_host(url, allowed_hosts=DEFAULT_ALLOWED_UPDATE_HOSTS):
+    """Проверяет, что хост URL обновления принадлежит доверенному списку доменов."""
+    if not allowed_hosts:
+        return True
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    return any(host == h.lower() or host.endswith("." + h.lower()) for h in allowed_hosts)
 
 
 def normalize_update_platform_arch(sys_platform=None, machine=None):
@@ -423,6 +441,7 @@ def download_and_verify_update(
     cancel_event=None,
     timeout=30,
     user_agent="FBC-GUI",
+    allowed_hosts=None,
 ):
     """Скачивает файл обновления во временную папку и проверяет его SHA-256 перед установкой."""
     if cancel_event is not None and cancel_event.is_set():
@@ -430,6 +449,8 @@ def download_and_verify_update(
 
     if not is_safe_http_url(download_url, allow_relative=False, require_https=True):
         raise ValueError(f"Unsupported download URL scheme: {download_url}")
+    if allowed_hosts is not None and not is_allowed_update_host(download_url, allowed_hosts):
+        raise ValueError(f"Untrusted update download host: {download_url}")
 
     expected_clean = str(expected_sha256 or "").strip().lower()
     if not _SHA256_RE.fullmatch(expected_clean):
@@ -496,17 +517,26 @@ def download_and_verify_update(
 
 def create_windows_portable_update_script(current_exe, new_exe, pid, script_dir=None):
     """Создаёт временный .bat-скрипт для безопасной подмены портативного .exe после закрытия приложения."""
-    out_dir = script_dir or os.path.dirname(os.path.abspath(new_exe))
-    os.makedirs(out_dir, exist_ok=True)
-    bat_path = os.path.join(out_dir, "fbc_gui_portable_update.bat")
+    cur_raw = os.path.abspath(current_exe)
+    new_raw = os.path.abspath(new_exe)
+    for label, pval in (("current_exe", cur_raw), ("new_exe", new_raw)):
+        if any(ch in pval for ch in _UNSAFE_WIN_BAT_CHARS):
+            raise ValueError(f"Unsafe character in {label} path for Windows batch updater")
 
-    cur_abs = os.path.abspath(current_exe).replace("%", "%%")
-    new_abs = os.path.abspath(new_exe).replace("%", "%%")
     safe_pid = int(pid)
+    if safe_pid <= 0:
+        raise ValueError(f"Invalid process ID: {pid}")
+
+    out_dir = script_dir or os.path.dirname(new_raw)
+    os.makedirs(out_dir, exist_ok=True)
+    fd, bat_path = tempfile.mkstemp(prefix="fbc_gui_portable_update_", suffix=".bat", dir=out_dir)
+
+    cur_abs = cur_raw.replace("%", "%%")
+    new_abs = new_raw.replace("%", "%%")
 
     script = (
         "@echo off\r\n"
-        "setlocal\r\n"
+        "setlocal DisableDelayedExpansion\r\n"
         "chcp 65001 >NUL\r\n"
         f"set \"TARGET_PID={safe_pid}\"\r\n"
         f"set \"CURRENT_EXE={cur_abs}\"\r\n"
@@ -529,7 +559,7 @@ def create_windows_portable_update_script(current_exe, new_exe, pid, script_dir=
         "start \"\" \"%CURRENT_EXE%\"\r\n"
         "del \"%~f0\"\r\n"
     )
-    with open(bat_path, "w", encoding="utf-8", newline="") as fh:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
         fh.write(script)
     return bat_path
 
@@ -682,6 +712,7 @@ if HAS_PYQT:
                     status_callback=lambda st: self.status_changed.emit(str(st)),
                     cancel_event=self._cancel_event,
                     user_agent=f"FBC-GUI/{self.app_version or 'update'}",
+                    allowed_hosts=DEFAULT_ALLOWED_UPDATE_HOSTS,
                 )
                 self.status_changed.emit("installing")
                 apply_res = apply_downloaded_update(path, kind=self.kind)

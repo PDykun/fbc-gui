@@ -189,7 +189,7 @@ class TestFb2Processor(unittest.TestCase):
         meta_full = {"last": "Толстой", "first": "Лев", "mid": "", "series": "Война и мир", "num": "1", "title": "Том 1/2"}
         self.assertEqual(
             render_filename_from_tokens(DEFAULT_FILENAME_TOKENS, meta_full, "epub3"),
-            "Толстой - (ВИМ - 01) Том 1\u22152",
+            "Толстой - (ВИМ-01) - Том 1\u22152",
         )
         meta_no_series = {**meta_full, "series": "", "num": ""}
         self.assertEqual(
@@ -198,7 +198,7 @@ class TestFb2Processor(unittest.TestCase):
         )
         self.assertEqual(
             simulate_fbc_target(meta_full, "kepub3", "default"),
-            "(ВИМ - 01) Том 1\u22152.kepub.epub",
+            "Толстой - (ВИМ-01) - Том 1\u22152.kepub.epub",
         )
 
         tpl = build_fbc_output_name_template(DEFAULT_FILENAME_TOKENS)
@@ -494,10 +494,28 @@ class TestFb2Processor(unittest.TestCase):
                 fbc_bin, cfg_path, project_root, data, out_dir, "epub3", title_style_params
             )
             self.assertEqual(len(created), 1)
-            self.assertEqual(os.path.basename(created[0]), "Толстой - (РК - 02) Война и мир.epub")
+            self.assertEqual(os.path.basename(created[0]), "Толстой - (РК-02) - Война и мир.epub")
             with zipfile.ZipFile(created[0], "r") as z:
                 opf = z.read("OEBPS/content.opf").decode("utf-8")
                 self.assertIn("(РК - 02) Война и мир", opf)
+
+            # Проверка книги без серии: двойной разделитель «-» не должен дублироваться
+            fb2_no_ser = os.path.join(td, "no_series.fb2")
+            xml_no_ser = VALID_FB2.replace('<sequence name="Русская классика" number="2"/>'.encode("utf-8"), b"")
+            with open(fb2_no_ser, "wb") as fh:
+                fh.write(xml_no_ser)
+            out_dir_ns = os.path.join(td, "out_ns")
+            created_ns = convert_book_file(
+                fbc_bin,
+                cfg_path,
+                project_root,
+                {"path": fb2_no_ser, "display_name": "no_series.fb2", "meta": parse_metadata(xml_no_ser)},
+                out_dir_ns,
+                "epub3",
+                title_style_params,
+            )
+            self.assertEqual(len(created_ns), 1)
+            self.assertEqual(os.path.basename(created_ns[0]), "Толстой - Война и мир.epub")
 
     def test_parse_fb2_root_hardens_lxml_parser_flags(self):
         broken_xml = b"<FictionBook><body><p>unclosed"
@@ -1034,6 +1052,244 @@ class TestFb2Processor(unittest.TestCase):
                 self.assertEqual(len(_read_zip_entry_limited(zf, "book.fb2", max_bytes=4096)), 2048)
                 with self.assertRaises(ValueError):
                     _read_zip_entry_limited(zf, "book.fb2", max_bytes=512)
+
+    def test_xml_io_rejects_utf16_and_offset_doctype_xxe(self):
+        utf16_xxe = (
+            '<?xml version="1.0" encoding="utf-16"?>'
+            '<!DOCTYPE foo [<!ENTITY xxe "secret">]>'
+            '<FictionBook><description><title-info><book-title>&xxe;</book-title></title-info></description></FictionBook>'
+        ).encode("utf-16")
+        self.assertIsNone(_parse_fb2_root(utf16_xxe))
+
+        padded_xxe = (
+            b'<?xml version="1.0" encoding="utf-8"?>'
+            + b"<!-- " + b"A" * 70000 + b" -->"
+            + b'<!DOCTYPE foo [<!ENTITY xxe "secret">]>'
+            + b"<FictionBook/>"
+        )
+        self.assertIsNone(_parse_fb2_root(padded_xxe))
+
+    def test_patch_epub_title_classes_sanitizes_css_injection(self):
+        from core.fb2.converter import patch_epub_title_classes
+
+        with tempfile.TemporaryDirectory() as td:
+            epub_path = os.path.join(td, "test.epub")
+            with zipfile.ZipFile(epub_path, "w") as zf:
+                zf.writestr("mimetype", "application/epub+zip")
+                zf.writestr(
+                    "OEBPS/title.xhtml",
+                    '<html><body><p class="body-title-header">Author</p><h1 class="body-title-header">Title</h1></body></html>',
+                )
+
+            malicious_style = {
+                "h1_sz": '150%" onclick="alert(1)',
+                "h1_cl": "red; background: url(https://evil.invalid/x)",
+                "h1_al": "center",
+                "auth_sz": "110%",
+                "auth_cl": 'green" onmouseover="x()',
+                "auth_al": "center",
+                "auth_style": "italic",
+            }
+            self.assertTrue(patch_epub_title_classes(epub_path, malicious_style))
+            with zipfile.ZipFile(epub_path, "r") as zf:
+                patched_html = zf.read("OEBPS/title.xhtml").decode("utf-8")
+            self.assertNotIn("onclick", patched_html)
+            self.assertNotIn("onmouseover", patched_html)
+            self.assertNotIn("evil.invalid", patched_html)
+            self.assertIn("color: black !important;", patched_html)
+
+    def test_convert_book_file_preserves_existing_output_on_atomic_copy_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            fb2_path = os.path.join(td, "book.fb2")
+            out_dir = os.path.join(td, "out")
+            os.makedirs(out_dir, exist_ok=True)
+            with open(fb2_path, "wb") as fh:
+                fh.write(VALID_FB2)
+
+            existing_out = os.path.join(out_dir, "Existing.epub")
+            with open(existing_out, "wb") as fh:
+                fh.write(b"ORIGINAL_GOOD_EPUB")
+
+            def _fake_fbc(cmd, cwd, cancel_event=None):
+                tmp_out_dir = cmd[-1]
+                ep = os.path.join(tmp_out_dir, "Existing.epub")
+                with zipfile.ZipFile(ep, "w") as z:
+                    z.writestr("mimetype", "application/epub+zip")
+                return "", ""
+
+            data = {"path": fb2_path, "display_name": "book.fb2", "meta": parse_metadata(VALID_FB2)}
+            style_params = {
+                "h1_sz": "150%", "h1_cl": "red", "h1_al": "center",
+                "auth_sz": "110%", "auth_cl": "green", "auth_al": "center", "auth_style": "italic",
+            }
+            with patch("core.fb2_processor._run_cancellable_process", side_effect=_fake_fbc), \
+                 patch("core.fb2.converter.shutil.copy2", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    convert_book_file("fbc", "config.yaml", td, data, out_dir, "epub3", style_params)
+
+            with open(existing_out, "rb") as fh:
+                self.assertEqual(fh.read(), b"ORIGINAL_GOOD_EPUB")
+
+    def test_convert_book_file_skips_update_xml_for_unmodified_plain_fb2(self):
+        with tempfile.TemporaryDirectory() as td:
+            fb2_path = os.path.join(td, "unmodified.fb2")
+            out_dir = os.path.join(td, "out")
+            os.makedirs(out_dir, exist_ok=True)
+            with open(fb2_path, "wb") as fh:
+                fh.write(VALID_FB2)
+
+            meta = parse_metadata(VALID_FB2)
+            captured_cmds = []
+
+            def _fake_fbc(cmd, cwd, cancel_event=None):
+                captured_cmds.append(list(cmd))
+                tmp_out_dir = cmd[-1]
+                ep = os.path.join(tmp_out_dir, "Book.epub")
+                with zipfile.ZipFile(ep, "w") as z:
+                    z.writestr("mimetype", "application/epub+zip")
+                return "", ""
+
+            data = {
+                "path": fb2_path,
+                "archive_entry": None,
+                "display_name": "unmodified.fb2",
+                "meta": dict(meta),
+                "orig_meta": dict(meta),
+                "cover_modified": False,
+            }
+            style_params = {
+                "h1_sz": "150%", "h1_cl": "red", "h1_al": "center",
+                "auth_sz": "110%", "auth_cl": "green", "auth_al": "center", "auth_style": "italic",
+            }
+            with patch("core.fb2_processor._run_cancellable_process", side_effect=_fake_fbc), \
+                 patch("core.fb2.converter.update_fb2_xml", side_effect=AssertionError("should not rewrite unmodified FB2")):
+                created = convert_book_file("fbc", "config.yaml", td, data, out_dir, "epub3", style_params)
+
+            self.assertEqual(len(created), 1)
+            self.assertEqual(captured_cmds[0][-2], fb2_path)
+            self.assertTrue(os.path.isfile(fb2_path))
+
+    def test_format_ext_map_includes_pdf_and_txt_and_omnibus_merges_with_isolated_ids(self):
+        from core.fb2_processor import FORMAT_EXT_MAP, merge_fb2_books_to_omnibus
+
+        self.assertEqual(FORMAT_EXT_MAP.get("pdf"), ".pdf")
+        self.assertEqual(FORMAT_EXT_MAP.get("txt"), ".txt")
+
+        book1_xml = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">'
+            '<description><title-info>'
+            '<genre>sf_fantasy</genre>'
+            '<author><first-name>Анджей</first-name><last-name>Сапковский</last-name></author>'
+            '<book-title>Последнее желание</book-title>'
+            '<coverpage><image l:href="#cover.jpg"/></coverpage>'
+            '<lang>ru</lang>'
+            '<sequence name="Ведьмак" number="1"/>'
+            '</title-info></description>'
+            '<body><section id="ch1"><p>Текст первой книги <a l:href="#n1" type="note">[1]</a></p></section></body>'
+            '<body name="notes"><section id="n1"><p>Сноска книги 1</p></section></body>'
+            f'<binary id="cover.jpg" content-type="image/jpeg">{FAKE_JPG_B64}</binary>'
+            '</FictionBook>'
+        ).encode("utf-8")
+        book2_xml = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">'
+            '<description><title-info>'
+            '<genre>sf_epic</genre>'
+            '<author><first-name>Анджей</first-name><last-name>Сапковский</last-name></author>'
+            '<book-title>Меч предназначения</book-title>'
+            '<lang>ru</lang>'
+            '<sequence name="Ведьмак" number="2"/>'
+            '</title-info></description>'
+            '<body><section id="ch1"><p>Текст второй книги <a l:href="#n1" type="note">[1]</a></p></section></body>'
+            '<body name="notes"><section id="n1"><p>Сноска книги 2</p></section></body>'
+            f'<binary id="cover.jpg" content-type="image/jpeg">{FAKE_JPG_B64}</binary>'
+            '</FictionBook>'
+        ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as td:
+            p1 = os.path.join(td, "b1.fb2")
+            p2 = os.path.join(td, "b2.fb2")
+            out_fb2 = os.path.join(td, "witcher_omnibus.fb2")
+            with open(p1, "wb") as fh:
+                fh.write(book1_xml)
+            with open(p2, "wb") as fh:
+                fh.write(book2_xml)
+
+            items = [
+                {"path": p1, "archive_entry": None, "display_name": "b1.fb2", "meta": parse_metadata(book1_xml)},
+                {"path": p2, "archive_entry": None, "display_name": "b2.fb2", "meta": parse_metadata(book2_xml)},
+            ]
+            res = merge_fb2_books_to_omnibus(items, out_fb2)
+            self.assertEqual(res["books_count"], 2)
+            self.assertEqual(res["series"], "Ведьмак")
+            self.assertTrue(os.path.isfile(out_fb2))
+
+            merged_bytes = load_book_xml(out_fb2)
+            merged_meta = parse_metadata(merged_bytes)
+            self.assertEqual(merged_meta["last"], "Сапковский")
+            self.assertEqual(merged_meta["series"], "Ведьмак")
+            self.assertIn("sf_fantasy", merged_meta["genres"])
+            self.assertIn("sf_epic", merged_meta["genres"])
+
+            merged_str = merged_bytes.decode("utf-8")
+            self.assertIn('id="b1_n1"', merged_str)
+            self.assertIn('id="b2_n1"', merged_str)
+            self.assertIn('href="#b1_n1"', merged_str)
+            self.assertIn('href="#b2_n1"', merged_str)
+            self.assertIn('id="b1_cover.jpg"', merged_str)
+            self.assertIn('id="b2_cover.jpg"', merged_str)
+            cov, _ = extract_cover_from_fb2(merged_bytes)
+            self.assertEqual(cov, FAKE_JPG)
+
+            # Обложка берётся из 2-й книги, если у 1-й нет обложки, + проверка max_xml_bytes и локализованных дефолтов
+            no_cov_book1 = book1_xml.replace(b'<coverpage><image l:href="#cover.jpg"/></coverpage>', b"")
+            with_cov_book2 = book2_xml.replace(
+                b"<lang>ru</lang>",
+                b'<coverpage><image l:href="#cover.jpg"/></coverpage><lang>ru</lang>',
+            )
+            p1_nc = os.path.join(td, "b1_nc.fb2")
+            p2_wc = os.path.join(td, "b2_wc.fb2")
+            out_fb2_en = os.path.join(td, "en_omnibus.fb2")
+            with open(p1_nc, "wb") as fh:
+                fh.write(no_cov_book1)
+            with open(p2_wc, "wb") as fh:
+                fh.write(with_cov_book2)
+            items_nc = [
+                {"path": p1_nc, "archive_entry": None, "display_name": "b1_nc.fb2", "meta": parse_metadata(no_cov_book1)},
+                {"path": p2_wc, "archive_entry": None, "display_name": "b2_wc.fb2", "meta": parse_metadata(with_cov_book2)},
+            ]
+            res_en = merge_fb2_books_to_omnibus(items_nc, out_fb2_en, default_omnibus_suffix="Omnibus")
+            self.assertEqual(res_en["title"], "Ведьмак (Omnibus)")
+            cov_fallback, _ = extract_cover_from_fb2(load_book_xml(out_fb2_en))
+            self.assertEqual(cov_fallback, FAKE_JPG)
+
+            with self.assertRaises(ValueError):
+                merge_fb2_books_to_omnibus(items_nc, os.path.join(td, "too_big.fb2"), max_xml_bytes=128)
+
+    def test_execute_organize_fb2_plan_blocks_dest_root_escape(self):
+        from core.fb2_processor import execute_organize_fb2_plan
+
+        with tempfile.TemporaryDirectory() as td:
+            root_dir = os.path.join(td, "library")
+            outside_dir = os.path.join(td, "outside")
+            os.makedirs(root_dir)
+            os.makedirs(outside_dir)
+            src = os.path.join(td, "book.fb2")
+            with open(src, "wb") as fh:
+                fh.write(VALID_FB2)
+
+            bad_plan = [{
+                "item_id": "1",
+                "src_path": src,
+                "dst_path": os.path.join(outside_dir, "escaped.fb2"),
+                "dest_root": root_dir,
+                "display_name": "book.fb2",
+            }]
+            cnt, errs, _ = execute_organize_fb2_plan(bad_plan, copy_mode=True)
+            self.assertEqual(cnt, 0)
+            self.assertEqual(len(errs), 1)
+            self.assertFalse(os.path.exists(os.path.join(outside_dir, "escaped.fb2")))
 
 
 if __name__ == "__main__":

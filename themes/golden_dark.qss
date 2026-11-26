@@ -682,3 +682,55 @@ QPushButton#TokenResetBtn:hover {
     border-color: #fbce58;
     color: #f2f3f8;
 }
+
+/* Вкладки в модальных диалогах (сегментированная капсула) */
+QTabWidget::pane {
+    border: none;
+    background: transparent;
+    margin-top: 10px;
+}
+
+QTabWidget::tab-bar {
+    alignment: left;
+}
+
+QTabBar {
+    background: transparent;
+    border: none;
+    qproperty-drawBase: 0;
+    qproperty-trackColor: #1c1d34;
+    qproperty-trackBorderColor: #303258;
+}
+
+QTabBar::tab {
+    background-color: transparent;
+    color: #9a9cb8;
+    border: 1px solid transparent;
+    border-radius: 13px;
+    min-height: 26px;
+    max-height: 26px;
+    padding: 0px 14px;
+    margin: 3px 1px;
+    font-weight: 500;
+    font-size: 12px;
+}
+
+QTabBar::tab:first {
+    margin-left: 3px;
+}
+
+QTabBar::tab:last {
+    margin-right: 3px;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #34375c;
+    color: #f2f3f8;
+}
+
+QTabBar::tab:selected {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #fbce58, stop:1 #f5b73b);
+    border: 1px solid #ffd970;
+    color: #151525;
+    font-weight: 700;
+}

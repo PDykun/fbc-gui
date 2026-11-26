@@ -440,12 +440,29 @@ def _build_images_section(win, colors_list, sizes_list, style_options):
     )
     win.cover_resize_cb.currentIndexChanged.connect(win.on_cover_resize_changed)
 
+    from core.image_optimizer import get_image_display_profile_choices
+
+    win.image_color_profile_cb = QComboBox()
+    win._populate_data_combo(
+        win.image_color_profile_cb,
+        get_image_display_profile_choices(translator=tr),
+        win.app_settings.get("image_color_profile", "none"),
+    )
+    img_prof_tip = tr("styles.tooltip_img_profile")
+    win.image_color_profile_cb.setToolTip(img_prof_tip)
+    win.image_color_profile_cb.currentIndexChanged.connect(win.on_image_color_profile_changed)
+
     g_img.addWidget(QLabel(tr("styles.lbl_grayscale")), 2, 0)
     g_img.addWidget(win.grayscale_cb, 2, 1, 1, 2)
     g_img.addWidget(QLabel(tr("styles.lbl_fit_to_screen")), 2, 3)
     g_img.addWidget(win.fit_to_screen_cb, 2, 4)
     g_img.addWidget(QLabel(tr("styles.lbl_cover_resize")), 2, 5)
     g_img.addWidget(win.cover_resize_cb, 2, 6)
+
+    lbl_img_prof = QLabel(tr("styles.lbl_img_profile"))
+    lbl_img_prof.setToolTip(img_prof_tip)
+    g_img.addWidget(lbl_img_prof, 3, 0)
+    g_img.addWidget(win.image_color_profile_cb, 3, 1, 1, 4)
 
     l_img.addLayout(g_img)
     return c_img

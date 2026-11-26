@@ -7,6 +7,28 @@ from core.config import atomic_write_text
 
 PRESET_SCHEMA_VERSION = 1
 PRESET_FILE_EXT = ".fbcpreset.json"
+MAX_PRESET_FILE_BYTES = 2 * 1024 * 1024  # 2 MB
+
+_DANGEROUS_CSS_IMPORT_RE = re.compile(r"@import\b[^;{}]*(?:;|$)", re.IGNORECASE)
+_DANGEROUS_CSS_EXPR_RE = re.compile(r"expression\s*\([^)]*\)", re.IGNORECASE)
+_DANGEROUS_CSS_BEHAVIOR_RE = re.compile(r"(?:behavior|-moz-binding)\s*:[^;{}]*(?:;|$)", re.IGNORECASE)
+_DANGEROUS_CSS_REMOTE_URL_RE = re.compile(
+    r"url\(\s*['\"]?\s*(?:https?:|javascript:|vbscript:)[^)]*\)",
+    re.IGNORECASE,
+)
+
+
+def sanitize_preset_css(css_text):
+    """Удаляет потенциально опасные директивы (@import, expression, remote/script url) из CSS пресета."""
+    raw = str(css_text or "")
+    if not raw:
+        return ""
+    cleaned = _DANGEROUS_CSS_IMPORT_RE.sub("", raw)
+    cleaned = _DANGEROUS_CSS_EXPR_RE.sub("", cleaned)
+    cleaned = _DANGEROUS_CSS_BEHAVIOR_RE.sub("", cleaned)
+    cleaned = _DANGEROUS_CSS_REMOTE_URL_RE.sub("none", cleaned)
+    return cleaned
+
 
 # Только переносимые настройки конвертации и стилей (без SMTP, паролей, путей и UI-предпочтений)
 PRESET_SETTING_KEYS = (
@@ -52,6 +74,8 @@ PRESET_SETTING_KEYS = (
     "baseline_jpeg",
     "fit_to_screen",
     "grayscale",
+    "image_color_profile",
+    "image_color_profile_custom",
     "cover_resize",
     "css_ui_state",
 )
@@ -70,12 +94,21 @@ def extract_preset_settings(app_settings):
     result = {}
     if not isinstance(app_settings, dict):
         return result
+    fn_mode = app_settings.get("filename_mode")
+    title_mode = app_settings.get("title_template_mode")
     for key in PRESET_SETTING_KEYS:
         if key not in app_settings:
+            continue
+        if key == "filename_tokens" and fn_mode != "custom":
+            continue
+        if key == "title_template_tokens" and title_mode != "custom":
             continue
         val = app_settings[key]
         if key == "css_ui_state" and not isinstance(val, dict):
             continue
+        if key == "image_color_profile_custom":
+            if not isinstance(val, dict) or not val:
+                continue
         if key in ("filename_tokens", "title_template_tokens") and not isinstance(val, list):
             continue
         result[key] = copy.deepcopy(val)
@@ -88,12 +121,14 @@ def build_preset_payload(name, app_settings, css_content=""):
         "schema_version": PRESET_SCHEMA_VERSION,
         "name": clean_name,
         "settings": extract_preset_settings(app_settings),
-        "css_content": str(css_content or ""),
+        "css_content": sanitize_preset_css(css_content),
     }
 
 
 def load_preset_file(filepath):
     """Загружает и валидирует файл пресета .fbcpreset.json."""
+    if os.path.getsize(filepath) > MAX_PRESET_FILE_BYTES:
+        raise ValueError(f"Preset file exceeds maximum allowed size ({MAX_PRESET_FILE_BYTES} bytes)")
     with open(filepath, "r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
@@ -114,7 +149,7 @@ def load_preset_file(filepath):
         "schema_version": int(data.get("schema_version") or PRESET_SCHEMA_VERSION),
         "name": str(data.get("name") or fallback_name).strip() or "Preset",
         "settings": extract_preset_settings(settings or {}),
-        "css_content": str(data.get("css_content") or ""),
+        "css_content": sanitize_preset_css(data.get("css_content") or ""),
     }
 
 
@@ -184,13 +219,20 @@ def import_preset_from_file(src_path, presets_dir):
     return payload["name"], saved_path, payload
 
 
-def apply_preset_to_settings(app_settings, payload):
+def apply_preset_to_settings(app_settings, payload, *, reset_default_tokens=False):
     """Применяет переносимые настройки пресета к app_settings, не затрагивая приватные поля."""
     if not isinstance(app_settings, dict) or not isinstance(payload, dict):
         return
-    clean = extract_preset_settings(payload.get("settings") or {})
+    raw_settings = payload.get("settings") or {}
+    clean = extract_preset_settings(raw_settings)
     for key, val in clean.items():
+        if key == "title_template_mode" and val not in ("filename", "custom"):
+            val = "filename"
         app_settings[key] = copy.deepcopy(val)
+    if reset_default_tokens and isinstance(raw_settings, dict):
+        for tok_key in ("filename_tokens", "title_template_tokens"):
+            if isinstance(raw_settings.get(tok_key), list):
+                app_settings[tok_key] = copy.deepcopy(raw_settings[tok_key])
 
 
 def sync_bundled_presets(bundled_dir, presets_dir):

@@ -20,7 +20,9 @@ from core.updater import _build_ssl_context, is_safe_http_url, parse_version_tup
 
 MAX_HTTP_META_BYTES = 2 * 1024 * 1024
 MAX_ARCHIVE_BIN_BYTES = 256 * 1024 * 1024
-FBC_HTTP_USER_AGENT = "FBC-GUI/2.10"
+from core.version import __version__ as _APP_VERSION
+
+FBC_HTTP_USER_AGENT = f"FBC-GUI/{_APP_VERSION}"
 
 try:
     from PyQt6.QtCore import QThread, pyqtSignal
@@ -490,12 +492,12 @@ def verify_binary_against_github(info, user_data_dir=None, check_github=True, ti
         except Exception as close_err:
             logger.debug("Не удалось закрыть HTTP-ответ ошибки: %s", close_err)
         if code == 404:
-            return {"verified": False, "source": "github", "reason": "unknown_release"}
-        logger.warning("GitHub API недоступен при проверке fbc v%s (HTTP %s)", version, code)
-        return {"verified": True, "source": "offline_version_only", "reason": ""}
+            return {"verified": False, "unverified": False, "source": "github", "reason": "unknown_release"}
+        logger.warning("GitHub API недоступен при проверке fbc v%s (HTTP %s); бинарник не подтверждён", version, code)
+        return {"verified": False, "unverified": True, "source": "offline_version_only", "reason": "github_unavailable"}
     except Exception as e:
-        logger.warning("Не удалось связаться с GitHub для проверки fbc v%s: %s", version, e)
-        return {"verified": True, "source": "offline_version_only", "reason": ""}
+        logger.warning("Не удалось связаться с GitHub для проверки fbc v%s: %s; бинарник не подтверждён", version, e)
+        return {"verified": False, "unverified": True, "source": "offline_version_only", "reason": "github_unavailable"}
 
     checksums = fetch_release_checksums(release, timeout=timeout)
     bin_name = get_fbc_binary_name(os_name).lower()
@@ -509,12 +511,12 @@ def verify_binary_against_github(info, user_data_dir=None, check_github=True, ti
             user_data_dir,
             {"version": version, "md5": md5_hex, "sha256": sha256_hex, "tag": release.get("tag_name", "")},
         )
-        return {"verified": True, "source": "github_checksum", "reason": ""}
+        return {"verified": True, "unverified": False, "source": "github_checksum", "reason": ""}
 
     # Релиз v{version} существует на GitHub, но публикует только архивы без отдельного хэша бинарника:
-    # допускаем запуск, но НЕ кэшируем хэш как криптографически подтверждённый.
+    # допускаем запуск, но помечаем как unverified и НЕ кэшируем хэш как криптографически подтверждённый.
     if select_release_asset(release, os_name=os_name, arch=arch) is not None:
-        return {"verified": True, "source": "github_release_unhashed", "reason": ""}
+        return {"verified": True, "unverified": True, "source": "github_release_unhashed", "reason": "no_binary_checksum"}
 
     return {"verified": False, "source": "github", "reason": "no_matching_asset"}
 
@@ -778,11 +780,18 @@ def ensure_fbc_available(
             status_callback("verifying")
 
         ver_res = verify_binary_against_github(info, user_data_dir=user_data_dir, check_github=check_github)
-        if ver_res.get("verified"):
-            logger.info(
-                "Обнаружен и проверен fb2cng v%s: %s (md5=%s, source=%s)",
-                info["version"], cand, info["md5"], ver_res.get("source"),
-            )
+        if ver_res.get("verified") or ver_res.get("unverified"):
+            is_unverified = bool(ver_res.get("unverified"))
+            if is_unverified:
+                logger.warning(
+                    "Обнаружен fb2cng v%s без криптографического подтверждения (%s): %s",
+                    info["version"], ver_res.get("reason") or ver_res.get("source"), cand,
+                )
+            else:
+                logger.info(
+                    "Обнаружен и проверен fb2cng v%s: %s (md5=%s, source=%s)",
+                    info["version"], cand, info["md5"], ver_res.get("source"),
+                )
             return {
                 "ok": True,
                 "path": cand,
@@ -790,8 +799,10 @@ def ensure_fbc_available(
                 "md5": info["md5"],
                 "sha256": info["sha256"],
                 "source": ver_res.get("source", ""),
+                "verified": bool(ver_res.get("verified")),
+                "unverified": is_unverified,
                 "downloaded": False,
-                "reason": "",
+                "reason": ver_res.get("reason", ""),
                 "error": "",
             }
 

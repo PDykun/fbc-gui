@@ -28,7 +28,9 @@ if HAS_PIL:
 
 logger = get_logger("metadata_lookup")
 
-LOOKUP_USER_AGENT = "FBC-GUI/2.10 (Book Metadata Lookup)"
+from core.version import __version__ as _APP_VERSION
+
+LOOKUP_USER_AGENT = f"FBC-GUI/{_APP_VERSION} (Book Metadata Lookup)"
 MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_COVER_IMAGE_BYTES = 12 * 1024 * 1024
 DEFAULT_TIMEOUT_SEC = 8.0
@@ -584,7 +586,7 @@ class FantLabProvider:
         if not isinstance(matches, list):
             return []
 
-        candidates = []
+        pending = []
         for item in matches[:limit]:
             if cancel_event is not None and cancel_event.is_set():
                 break
@@ -594,15 +596,38 @@ class FantLabProvider:
             if not work_id:
                 continue
             cand = self._candidate_from_search_item(item, str(work_id))
+            pending.append((str(work_id), cand))
+
+        if not pending:
+            return []
+
+        def _fetch_details(work_id):
+            if cancel_event is not None and cancel_event.is_set():
+                return None
+            details_url = _https_url(self.API_HOST, f"/work/{work_id}/extended")
+            return _http_get_json(details_url, timeout=timeout)
+
+        if len(pending) == 1:
+            wid, cand = pending[0]
             try:
-                details_url = _https_url(self.API_HOST, f"/work/{work_id}/extended")
-                details = _http_get_json(details_url, timeout=timeout)
+                details = _fetch_details(wid)
                 if isinstance(details, dict):
                     self._enrich_from_work_details(cand, details)
             except Exception as e:
-                logger.debug("FantLab work/%s details skipped: %s", work_id, e)
-            candidates.append(cand)
-        return candidates
+                logger.debug("FantLab work/%s details skipped: %s", wid, e)
+            return [cand]
+
+        with ThreadPoolExecutor(max_workers=min(4, len(pending))) as pool:
+            fut_map = {pool.submit(_fetch_details, wid): (wid, cand) for wid, cand in pending}
+            for fut in as_completed(fut_map):
+                wid, cand = fut_map[fut]
+                try:
+                    details = fut.result()
+                    if isinstance(details, dict):
+                        self._enrich_from_work_details(cand, details)
+                except Exception as e:
+                    logger.debug("FantLab work/%s details skipped: %s", wid, e)
+        return [cand for _, cand in pending]
 
     def _candidate_from_search_item(self, item, work_id):
         title = str(item.get("rusname") or item.get("name") or item.get("work_name") or "").strip()
@@ -999,11 +1024,18 @@ class OpdsProvider:
         self.username = str(username or "").strip()
         self.password = str(password or "")
         self._search_template = None
+        self._warned_insecure_http_auth = False
 
     def _headers_for(self, url):
         hdrs = {"Accept": "application/atom+xml, application/opensearchdescription+xml, application/xml, text/xml, */*;q=0.5"}
         auth = _basic_auth_header(self.username, self.password)
         if auth and _same_origin(url, self.opds_url):
+            if str(url or "").lower().startswith("http://") and not self._warned_insecure_http_auth:
+                self._warned_insecure_http_auth = True
+                logger.warning(
+                    "OPDS Basic Auth передаётся по незашифрованному HTTP (%s); рекомендуется HTTPS",
+                    urllib.parse.urlsplit(str(url)).netloc,
+                )
             hdrs.update(auth)
         return hdrs
 

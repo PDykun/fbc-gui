@@ -368,6 +368,27 @@ class TestFbcManager(unittest.TestCase):
                     fbc_manager.download_and_install_fbc(td, target_version="2.2.0")
             self.assertIn("size limit", str(ctx.exception))
 
+    def test_verify_binary_marks_unverified_on_github_rate_limit_or_offline(self):
+        info = {
+            "is_fb2cng": True,
+            "compatible": True,
+            "version": "2.99.5",
+            "md5": "c" * 32,
+            "sha256": "d" * 64,
+        }
+        err_403 = urllib.error.HTTPError("https://api.github.com/test", 403, "Rate Limit", {}, None)
+        with mock.patch.object(fbc_manager, "fetch_github_release", side_effect=err_403):
+            res_403 = fbc_manager.verify_binary_against_github(info, check_github=True)
+        self.assertFalse(res_403["verified"])
+        self.assertTrue(res_403["unverified"])
+        self.assertEqual(res_403["reason"], "github_unavailable")
+
+        with mock.patch.object(fbc_manager, "fetch_github_release", side_effect=OSError("offline")):
+            res_off = fbc_manager.verify_binary_against_github(info, check_github=True)
+        self.assertFalse(res_off["verified"])
+        self.assertTrue(res_off["unverified"])
+        self.assertEqual(res_off["reason"], "github_unavailable")
+
 
 if __name__ == "__main__":
     unittest.main()

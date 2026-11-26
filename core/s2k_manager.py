@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import urllib.request
 import zipfile
 
@@ -33,6 +34,9 @@ S2K_BOOK_EXTENSIONS = (".kfx", ".azw3", ".mobi", ".pdf")
 S2K_SIDECAR_EXTENSIONS = (".apnx",)
 S2K_KINDLE_FORMATS = ("kfx", "azw3", "pdf")
 FOLDER_READER_FORMATS = ("epub2", "epub3", "kepub", "kepub3", "azw3", "kfx", "azw8", "pdf")
+
+# Общий мьютекс для исключения конфликтов при одновременной доставке на ридер через s2k (MTP/USB)
+DEVICE_SYNC_EXEC_LOCK = threading.Lock()
 
 
 def _s2k_exe_name():
@@ -253,12 +257,19 @@ def download_and_install_s2k(user_data_dir, cancel_event=None, progress_callback
             status_callback("verifying")
 
         expected = checksums.get(asset_name.lower())
+        hash_verified = False
         if isinstance(expected, dict) and expected:
             actual_hashes = compute_file_hashes(archive_path)
             for algo, exp_hex in expected.items():
                 actual_hex = actual_hashes.get(algo, "")
                 if actual_hex and actual_hex.lower() != str(exp_hex).lower():
                     raise RuntimeError(f"Ошибка проверки контрольной суммы {asset_name} ({algo})")
+            hash_verified = True
+        else:
+            logger.warning(
+                "Релиз sync2kindle не содержит контрольной суммы для %s; целостность архива не подтверждена",
+                asset_name,
+            )
 
         fd_tmp, extracted_tmp = tempfile.mkstemp(prefix=f".{exe_name}.", suffix=".tmp", dir=user_data_dir)
         os.close(fd_tmp)
@@ -298,8 +309,13 @@ def download_and_install_s2k(user_data_dir, cancel_event=None, progress_callback
             raise
 
     info = probe_s2k_binary(dst_bin)
-    logger.info("sync2kindle установлен: %s (ver=%s)", dst_bin, info["version"] if info else "unknown")
-    return info or {"path": dst_bin, "version": str(rel.get("tag_name") or "").lstrip("vV") or "unknown"}
+    result = dict(info) if info else {
+        "path": dst_bin,
+        "version": str(rel.get("tag_name") or "").lstrip("vV") or "unknown",
+    }
+    result["verified"] = hash_verified
+    logger.info("sync2kindle установлен: %s (ver=%s, verified=%s)", dst_bin, result["version"], hash_verified)
+    return result
 
 
 def check_directory_access(dir_path):
@@ -539,3 +555,119 @@ def sync_folder_to_mounted_device(source_dir, target_dir, dry_run=False, explici
         if progress_callback is not None:
             progress_callback(idx, total, fname)
     return {"copied": copied, "skipped": skipped, "dry_run": bool(dry_run)}
+
+
+def _classify_mounted_volume(vol_path, vol_name):
+    """Определяет тип смонтированного USB-ридера по имени тома и служебным папкам."""
+    low = str(vol_name or "").lower()
+    if os.path.isdir(os.path.join(vol_path, ".kobo")) or "kobo" in low:
+        books_dir = os.path.join(vol_path, "Books")
+        return {
+            "name": f"Kobo ({vol_name})",
+            "kind": "kobo",
+            "path": books_dir if os.path.isdir(books_dir) else vol_path,
+            "recommended_format": "kepub3",
+        }
+    if "kindle" in low or (
+        os.path.isdir(os.path.join(vol_path, "documents"))
+        and os.path.isdir(os.path.join(vol_path, "system"))
+    ):
+        docs_dir = os.path.join(vol_path, "documents")
+        return {
+            "name": f"Kindle ({vol_name})",
+            "kind": "kindle",
+            "path": docs_dir if os.path.isdir(docs_dir) else vol_path,
+            "recommended_format": "azw3",
+        }
+    if "pocketbook" in low or (
+        os.path.isdir(os.path.join(vol_path, "system", "config"))
+        and os.path.isdir(os.path.join(vol_path, "books"))
+    ):
+        pb_books = os.path.join(vol_path, "books")
+        return {
+            "name": f"PocketBook ({vol_name})",
+            "kind": "pocketbook",
+            "path": pb_books if os.path.isdir(pb_books) else vol_path,
+            "recommended_format": "epub3",
+        }
+    if "boox" in low or "onyx" in low:
+        boox_books = os.path.join(vol_path, "Books")
+        return {
+            "name": f"ONYX BOOX ({vol_name})",
+            "kind": "onyx_boox",
+            "path": boox_books if os.path.isdir(boox_books) else vol_path,
+            "recommended_format": "epub3",
+        }
+    return None
+
+
+def detect_mounted_readers(platform_name=None, volumes_roots=None, home_dir=None):
+    """Ищет подключённые по USB ридеры (Kobo, Kindle, PocketBook, BOOX) и облачные папки Kobo (Dropbox/Google Drive)."""
+    plat = (platform_name or sys.platform).lower()
+    home = os.path.abspath(home_dir or os.path.expanduser("~"))
+    found = []
+    seen_paths = set()
+
+    def _add(entry):
+        if not entry:
+            return
+        norm = os.path.normcase(os.path.abspath(entry["path"]))
+        if norm not in seen_paths:
+            seen_paths.add(norm)
+            found.append(entry)
+
+    if volumes_roots is not None:
+        roots = list(volumes_roots)
+    elif plat == "darwin":
+        roots = ["/Volumes"]
+    elif plat.startswith("win"):
+        roots = [f"{chr(c)}:\\" for c in range(ord("D"), ord("Z") + 1) if os.path.isdir(f"{chr(c)}:\\")]
+    else:
+        user = os.path.basename(home)
+        roots = [p for p in (f"/media/{user}", f"/run/media/{user}", "/media", "/mnt") if os.path.isdir(p)]
+
+    for root in roots:
+        if not root or not os.path.isdir(root):
+            continue
+        if plat.startswith("win") and len(root) <= 3 and root.endswith("\\"):
+            _add(_classify_mounted_volume(root, root.rstrip("\\")))
+            continue
+        try:
+            entries = sorted(os.listdir(root))
+        except OSError:
+            continue
+        for name in entries:
+            if name.startswith(".") or name in ("Macintosh HD", "Recovery", "Preboot", "VM"):
+                continue
+            vol_path = os.path.join(root, name)
+            if not os.path.isdir(vol_path):
+                continue
+            _add(_classify_mounted_volume(vol_path, name))
+
+    cloud_candidates = [
+        ("Kobo Cloud (Dropbox)", os.path.join(home, "Dropbox", "Apps", "Rakuten Kobo")),
+        ("Kobo Cloud (Dropbox)", os.path.join(home, "Library", "CloudStorage", "Dropbox", "Apps", "Rakuten Kobo")),
+        ("Kobo Cloud (Google Drive)", os.path.join(home, "Google Drive", "Rakuten Kobo")),
+        ("Kobo Cloud (Google Drive)", os.path.join(home, "Google Drive", "My Drive", "Rakuten Kobo")),
+    ]
+    cloud_storage_dir = os.path.join(home, "Library", "CloudStorage")
+    if os.path.isdir(cloud_storage_dir):
+        try:
+            for item in sorted(os.listdir(cloud_storage_dir)):
+                if item.startswith("GoogleDrive-"):
+                    cloud_candidates.append(
+                        ("Kobo Cloud (Google Drive)", os.path.join(cloud_storage_dir, item, "My Drive", "Rakuten Kobo"))
+                    )
+        except OSError:
+            pass
+
+    for label, cpath in cloud_candidates:
+        if os.path.isdir(cpath):
+            _add({
+                "name": label,
+                "kind": "kobo_cloud",
+                "path": cpath,
+                "recommended_format": "kepub3",
+            })
+
+    return found

@@ -137,6 +137,12 @@ In **Settings → Device Delivery** (or via the **To Reader** button on the Conv
 - **Reader Folder** copies converted e-books (`.epub`, `.azw3`, `.kfx`, `.azw8`, `.pdf`, `.mobi`) directly to a mounted Kobo / PocketBook folder while skipping already up-to-date files.
 - Use **Dry Run** to preview changes safely; **Keep local books** prevents deleting local files on your computer.
 
+### Watch Folder Mode & System Tray / macOS Menu Bar
+In **Settings → Auto-Conversion (Watch Folders) & Tray**:
+- Add **multiple watched folders simultaneously** (e.g., `ToKindle` and `ToKobo`), linking each to its own conversion preset, delivery method (**Folder**, **Email**, or **Reader**), and source post-action (**Move to Processed folder**, **Keep in place**, or **Move to Trash**).
+- Incoming `.fb2` and `.zip` files are converted in an isolated background environment (without modifying the main window's active settings or queue), with partial-download protection (`.crdownload`, `.part`, `.tmp`) and coalesced OS notifications.
+- Enable **System tray / Menu Bar icon** for background status, pause/resume, folder shortcuts, and recent history; macOS includes an optional **Hide Dock icon when minimized** toggle, and both macOS and Windows support opt-in **Launch at system login** (disabled by default).
+
 ## 8. Auto-Updates, Themes & Keyboard Shortcuts
 
 - **Auto-Updates:** checks GitHub Releases automatically (or via **Help → Check for Updates...** / **About**), downloads the exact build for your OS & CPU architecture, and verifies **SHA-256** before installation.

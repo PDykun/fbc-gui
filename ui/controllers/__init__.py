@@ -5,6 +5,7 @@ from ui.controllers.presets_controller import PresetsController
 from ui.controllers.preview_controller import PreviewController
 from ui.controllers.queue_controller import QueueController
 from ui.controllers.settings_controller import SettingsController
+from ui.controllers.tray_controller import TrayWatchController
 from ui.controllers.updates_controller import UpdatesController
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "PreviewController",
     "QueueController",
     "SettingsController",
+    "TrayWatchController",
     "UpdatesController",
 ]

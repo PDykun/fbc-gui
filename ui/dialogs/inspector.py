@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 from core.i18n import tr
 
 
-from ui.dialogs.common import _format_bytes_human
+from ui.dialogs.common import _format_bytes_human, create_segmented_tabs
 
 
 class BookInspectorDialog(QDialog):
@@ -45,8 +45,7 @@ class BookInspectorDialog(QDialog):
         hdr.setObjectName("SectionHeader")
         c_layout.addWidget(hdr)
 
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
+        self.tabs = create_segmented_tabs(self)
 
         # --- Вкладка 1: Сводка и предупреждения ---
         tab_summary = QWidget()

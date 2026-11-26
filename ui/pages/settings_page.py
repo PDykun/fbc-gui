@@ -1,9 +1,13 @@
 import os
+import sys
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QComboBox, QScrollArea, QLineEdit, QCheckBox
+    QLabel, QComboBox, QScrollArea, QLineEdit, QCheckBox,
+    QTableWidget, QAbstractItemView
 )
+
+from core.autostart import is_autostart_supported
 
 from core.i18n import LOCALE, tr, get_theme_choices
 from core.config import DEFAULT_OUTPUT_FORMAT, is_secure_password_storage_available
@@ -66,6 +70,8 @@ def _build_presets_section(win, s_layout):
     s_layout.addWidget(card_presets)
     if hasattr(win, "_update_preset_buttons_state"):
         win.user_preset_combo.currentIndexChanged.connect(lambda _idx: win._update_preset_buttons_state())
+    if hasattr(win, "on_user_preset_activated"):
+        win.user_preset_combo.activated.connect(win.on_user_preset_activated)
     if hasattr(win, "refresh_user_presets_combo"):
         win.refresh_user_presets_combo()
 
@@ -243,10 +249,12 @@ def _build_text_layout_section(win, s_layout):
         win.meta_translit_selector
     )
 
-    title_mode = win.app_settings.get("title_template_mode", "default")
+    title_mode = win.app_settings.get("title_template_mode", "filename")
+    if title_mode not in ("filename", "custom"):
+        title_mode = "filename"
     win.title_mode_selector = PillSelector(
         [
-            (tr("settings.opt_fn_default"), "default"),
+            (tr("settings.opt_title_filename"), "filename"),
             (tr("settings.opt_fn_custom"), "custom"),
         ],
         default=title_mode,
@@ -847,6 +855,11 @@ def _build_device_sync_section(win, s_layout):
     win.btn_choose_sync_target.clicked.connect(win.choose_device_sync_target_dir)
     sync_tgt_layout.addWidget(win.btn_choose_sync_target)
 
+    win.btn_detect_sync_target = QPushButton(tr("settings.btn_detect_reader"))
+    win.btn_detect_sync_target.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_detect_sync_target.clicked.connect(win.detect_device_sync_target_clicked)
+    sync_tgt_layout.addWidget(win.btn_detect_sync_target)
+
     add_setting_row(
         l_sync,
         tr("settings.lbl_sync_target"),
@@ -975,6 +988,124 @@ def _build_metadata_lookup_section(win, s_layout):
     s_layout.addWidget(card_lookup)
 
 
+def _build_watch_folder_section(win, s_layout):
+    card_watch, l_watch = create_section_card(tr("watch.sec_watch_tray"))
+
+    win.tray_enabled_selector = PillSelector(
+        [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+        default=str(win.app_settings.get("tray_enabled", "false")),
+        callback=win.on_tray_enabled_changed,
+    )
+    add_setting_row(
+        l_watch,
+        tr("watch.lbl_tray_enabled"),
+        tr("watch.desc_tray_enabled"),
+        win.tray_enabled_selector,
+    )
+
+    win.tray_minimize_selector = PillSelector(
+        [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+        default=str(win.app_settings.get("tray_minimize_on_close", "false")),
+        callback=win.on_tray_minimize_on_close_changed,
+    )
+    add_setting_row(
+        l_watch,
+        tr("watch.lbl_tray_minimize"),
+        tr("watch.desc_tray_minimize"),
+        win.tray_minimize_selector,
+    )
+
+    if sys.platform == "darwin":
+        win.tray_hide_dock_selector = PillSelector(
+            [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+            default=str(win.app_settings.get("tray_hide_dock_macos", "false")),
+            callback=win.on_tray_hide_dock_changed,
+        )
+        add_setting_row(
+            l_watch,
+            tr("watch.lbl_hide_dock"),
+            tr("watch.desc_hide_dock"),
+            win.tray_hide_dock_selector,
+        )
+
+    if is_autostart_supported():
+        win.autostart_selector = PillSelector(
+            [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+            default=str(win.app_settings.get("autostart_enabled", "false")),
+            callback=win.on_autostart_changed,
+        )
+        add_setting_row(
+            l_watch,
+            tr("watch.lbl_autostart"),
+            tr("watch.desc_autostart"),
+            win.autostart_selector,
+        )
+
+    win.watch_notify_selector = PillSelector(
+        [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+        default=str(win.app_settings.get("watch_notifications_enabled", "true")),
+        callback=win.on_watch_notifications_changed,
+    )
+    add_setting_row(
+        l_watch,
+        tr("watch.lbl_notifications"),
+        tr("watch.desc_notifications"),
+        win.watch_notify_selector,
+    )
+
+    watch_btn_row = QWidget()
+    watch_btn_lay = QHBoxLayout(watch_btn_row)
+    watch_btn_lay.setContentsMargins(0, 0, 0, 0)
+    watch_btn_lay.setSpacing(8)
+
+    win.btn_watch_add = QPushButton(tr("watch.btn_add"))
+    win.btn_watch_add.setObjectName("AccentButton")
+    win.btn_watch_add.setProperty("variant", "primary")
+    win.btn_watch_add.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_watch_add.clicked.connect(win.add_watch_folder_clicked)
+    watch_btn_lay.addWidget(win.btn_watch_add)
+
+    win.btn_watch_edit = QPushButton(tr("watch.btn_edit"))
+    win.btn_watch_edit.setObjectName("SecondaryButton")
+    win.btn_watch_edit.setProperty("variant", "secondary")
+    win.btn_watch_edit.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_watch_edit.clicked.connect(win.edit_watch_folder_clicked)
+    watch_btn_lay.addWidget(win.btn_watch_edit)
+
+    win.btn_watch_delete = QPushButton(tr("watch.btn_delete"))
+    win.btn_watch_delete.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_watch_delete.clicked.connect(win.delete_watch_folder_clicked)
+    watch_btn_lay.addWidget(win.btn_watch_delete)
+
+    add_setting_row(
+        l_watch,
+        tr("watch.lbl_folders_list"),
+        tr("watch.desc_folders_list"),
+        watch_btn_row,
+    )
+
+    win.watch_table = QTableWidget(0, 6)
+    win.watch_table.setHorizontalHeaderLabels([
+        tr("watch.col_enabled"),
+        tr("watch.col_name"),
+        tr("watch.col_folder"),
+        tr("watch.col_preset"),
+        tr("watch.col_delivery"),
+        tr("watch.col_status"),
+    ])
+    win.watch_table.verticalHeader().setVisible(False)
+    win.watch_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    win.watch_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+    win.watch_table.setMinimumHeight(130)
+    win.watch_table.setMaximumHeight(220)
+    win.watch_table.doubleClicked.connect(lambda _idx: win.edit_watch_folder_clicked())
+    l_watch.addWidget(win.watch_table)
+
+    s_layout.addWidget(card_watch)
+    if hasattr(win, "refresh_watch_folders_table"):
+        win.refresh_watch_folders_table()
+
+
 def build_settings_page(win, parent):
     layout = QVBoxLayout(parent)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -999,6 +1130,7 @@ def build_settings_page(win, parent):
     _build_email_section(win, s_layout)
     _build_device_sync_section(win, s_layout)
     _build_metadata_lookup_section(win, s_layout)
+    _build_watch_folder_section(win, s_layout)
 
     s_layout.addStretch()
     scroll.setWidget(scroll_content)

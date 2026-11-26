@@ -1,3 +1,4 @@
+import html
 import os
 import re
 import shutil
@@ -56,17 +57,30 @@ def patch_html_title_elements(html_text, author_css, title_css, meta=None):
     return html_text
 
 
+_SAFE_INLINE_CSS_TOKEN_RE = re.compile(r"^[#a-zA-Z0-9.%_-]+$")
+
+
+def _sanitize_inline_css_param(style_params, key, fallback):
+    from core.css_preview import _sanitize_css_value
+
+    raw = style_params.get(key, fallback) if isinstance(style_params, dict) else fallback
+    clean = _sanitize_css_value(raw, "")
+    if not clean or not _SAFE_INLINE_CSS_TOKEN_RE.fullmatch(clean):
+        clean = fallback
+    return html.escape(clean, quote=True)
+
+
 def patch_epub_title_classes(epub_path, style_params, meta=None):
     if not os.path.exists(epub_path):
         return False
 
-    h1_sz = style_params["h1_sz"]
-    h1_cl = style_params["h1_cl"]
-    h1_al = style_params["h1_al"]
-    auth_sz = style_params["auth_sz"]
-    auth_cl = style_params["auth_cl"]
-    auth_al = style_params["auth_al"]
-    auth_style = style_params["auth_style"]
+    h1_sz = _sanitize_inline_css_param(style_params, "h1_sz", "150%")
+    h1_cl = _sanitize_inline_css_param(style_params, "h1_cl", "black")
+    h1_al = _sanitize_inline_css_param(style_params, "h1_al", "center")
+    auth_sz = _sanitize_inline_css_param(style_params, "auth_sz", "110%")
+    auth_cl = _sanitize_inline_css_param(style_params, "auth_cl", "dimgray")
+    auth_al = _sanitize_inline_css_param(style_params, "auth_al", "center")
+    auth_style = _sanitize_inline_css_param(style_params, "auth_style", "italic")
 
     author_css = (
         f"font-family: 'author-font', 'paragraph', serif !important; font-size: {auth_sz} !important; "
@@ -289,28 +303,60 @@ def convert_book_file(
     cancel_event=None,
     debug=False,
     no_cover=False,
-    claimed_outputs=None
+    claimed_outputs=None,
+    image_color_profile="none",
+    jpeg_quality=95,
+    image_color_profile_custom=None,
 ):
     """Конвертирует одну книгу через fbc в изолированной временной папке и при необходимости патчит заголовки EPUB."""
     if cancel_event is not None and cancel_event.is_set():
         raise ConversionCancelledError("Conversion cancelled")
 
     is_epub_format = selected_format in EPUB_BASED_FORMATS
-    xml_bytes = get_book_xml(data)
-    if not xml_bytes:
-        src_label = data.get("display_name") or data.get("path") or "unknown"
-        raise RuntimeError(f"Не удалось прочитать исходный файл FB2: {src_label}")
-
-    new_xml_bytes = update_fb2_xml(
-        xml_bytes, data['meta'],
-        cover_bytes=data.get('cover_bytes'),
-        cover_mime=data.get('cover_mime', 'image/jpeg'),
-        cover_modified=data.get('cover_modified', False),
-        orig_meta=data.get('orig_meta'),
+    has_img_opt = bool((image_color_profile and image_color_profile != "none") or image_color_profile_custom)
+    src_path = data.get("path") or ""
+    orig_meta = data.get("orig_meta")
+    can_use_source_directly = (
+        not has_img_opt
+        and data.get("archive_entry") is None
+        and not data.get("xml")
+        and not data.get("cover_modified", False)
+        and isinstance(orig_meta, dict)
+        and data.get("meta") == orig_meta
+        and bool(src_path)
+        and src_path.lower().endswith(".fb2")
+        and os.path.isfile(src_path)
     )
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".fb2") as tmp:
-        tmp.write(new_xml_bytes)
-        tmp_path = tmp.name
+
+    created_tmp_fb2 = False
+    if can_use_source_directly:
+        tmp_path = src_path
+    else:
+        xml_bytes = get_book_xml(data)
+        if not xml_bytes:
+            src_label = data.get("display_name") or src_path or "unknown"
+            raise RuntimeError(f"Не удалось прочитать исходный файл FB2: {src_label}")
+
+        new_xml_bytes = update_fb2_xml(
+            xml_bytes, data['meta'],
+            cover_bytes=data.get('cover_bytes'),
+            cover_mime=data.get('cover_mime', 'image/jpeg'),
+            cover_modified=data.get('cover_modified', False),
+            orig_meta=orig_meta,
+        )
+        if has_img_opt:
+            from core.image_optimizer import optimize_fb2_binaries_for_profile
+
+            new_xml_bytes = optimize_fb2_binaries_for_profile(
+                new_xml_bytes,
+                profile_id=image_color_profile,
+                jpeg_quality=jpeg_quality,
+                custom_profile=image_color_profile_custom,
+            )
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".fb2") as tmp:
+            tmp.write(new_xml_bytes)
+            tmp_path = tmp.name
+        created_tmp_fb2 = True
 
     try:
         with tempfile.TemporaryDirectory() as tmp_root:
@@ -388,9 +434,22 @@ def convert_book_file(
                                 norm_dst = os.path.normcase(os.path.abspath(dst_fp))
                                 suffix_n += 1
                             claimed_outputs.add(norm_dst)
-                        if os.path.exists(dst_fp):
-                            os.remove(dst_fp)
-                        shutil.move(src_fp, dst_fp)
+                        fd_tmp, tmp_dst = tempfile.mkstemp(prefix=".fbc_out_", suffix=".tmp", dir=dest_dir)
+                        os.close(fd_tmp)
+                        try:
+                            shutil.copy2(src_fp, tmp_dst)
+                            os.replace(tmp_dst, dst_fp)
+                        except Exception:
+                            if os.path.exists(tmp_dst):
+                                try:
+                                    os.remove(tmp_dst)
+                                except OSError:
+                                    pass
+                            raise
+                        try:
+                            os.remove(src_fp)
+                        except OSError:
+                            pass
                         created_final.append(dst_fp)
 
                 return created_final
@@ -402,7 +461,7 @@ def convert_book_file(
                         except OSError:
                             pass
     finally:
-        if os.path.exists(tmp_path):
+        if created_tmp_fb2 and os.path.exists(tmp_path):
             os.remove(tmp_path)
 
 

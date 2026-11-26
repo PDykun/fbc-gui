@@ -1,3 +1,4 @@
+import copy
 import getpass
 import json
 import os
@@ -5,7 +6,7 @@ import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
 try:
     from PyQt6.QtNetwork import QLocalServer, QLocalSocket
@@ -125,10 +126,10 @@ class ConversionWorker(QThread):
         self.selected_format = selected_format
         self.save_mode = save_mode
         self.custom_dir = custom_dir
-        self.title_style_params = title_style_params
+        self.title_style_params = copy.deepcopy(title_style_params)
         self.compression = compression
         self.email_enabled = email_enabled
-        self.app_settings = app_settings
+        self.app_settings = copy.deepcopy(app_settings or {})
         self.debug = bool(debug)
         self.no_cover = bool(no_cover)
         self.skip_existing = bool(skip_existing)
@@ -179,6 +180,10 @@ class ConversionWorker(QThread):
 
         t0 = time.monotonic()
         try:
+            try:
+                jpeg_q = int(self.app_settings.get("jpeg_quality_level", "95"))
+            except (TypeError, ValueError):
+                jpeg_q = 95
             created = convert_book_file(
                 self.fbc_cmd,
                 self.fbc_config,
@@ -192,6 +197,9 @@ class ConversionWorker(QThread):
                 debug=self.debug,
                 no_cover=self.no_cover,
                 claimed_outputs=self._claimed_outputs,
+                image_color_profile=self.app_settings.get("image_color_profile", "none"),
+                jpeg_quality=jpeg_q,
+                image_color_profile_custom=self.app_settings.get("image_color_profile_custom"),
             )
             elapsed = time.monotonic() - t0
             logger.info(
@@ -355,7 +363,7 @@ class TestEmailWorker(QThread):
 
     def __init__(self, app_settings, app_name="FBC GUI", app_version="", parent=None):
         super().__init__(parent)
-        self.app_settings = app_settings
+        self.app_settings = copy.deepcopy(app_settings or {})
         self.app_name = app_name
         self.app_version = app_version
 
@@ -414,6 +422,8 @@ class SingleInstanceManager(QObject):
             return False
         QLocalServer.removeServer(self.server_name)
         self._server = QLocalServer(self)
+        if hasattr(self._server, "setSocketOptions") and hasattr(QLocalServer, "SocketOption"):
+            self._server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         self._server.newConnection.connect(self._on_new_connection)
         if not self._server.listen(self.server_name):
             logger.warning(
@@ -425,6 +435,30 @@ class SingleInstanceManager(QObject):
             return False
         return True
 
+    def _finalize_ipc_payload(self, conn, raw):
+        try:
+            conn.disconnectFromServer()
+        except Exception:
+            pass
+        try:
+            conn.deleteLater()
+        except Exception:
+            pass
+        paths = []
+        if len(raw) > self.MAX_IPC_PAYLOAD_BYTES:
+            logger.warning(
+                "IPC-сообщение отклонено: превышен лимит размера (%d байт)",
+                self.MAX_IPC_PAYLOAD_BYTES,
+            )
+        elif raw:
+            try:
+                data = json.loads(raw.decode("utf-8", errors="replace"))
+                if isinstance(data, dict) and isinstance(data.get("paths"), list):
+                    paths = [p for p in data["paths"] if self._is_allowed_ipc_path(p)]
+            except Exception as e:
+                logger.warning("Некорректный JSON в IPC-сообщении: %s", e)
+        self.activation_requested.emit(paths)
+
     def _on_new_connection(self):
         if self._server is None:
             return
@@ -432,11 +466,46 @@ class SingleInstanceManager(QObject):
             conn = self._server.nextPendingConnection()
             if conn is None:
                 continue
+            limit = self.MAX_IPC_PAYLOAD_BYTES + 1
+            if hasattr(conn, "readyRead") and hasattr(conn, "disconnected"):
+                state = {"chunks": [], "total": 0, "done": False}
+                deadline_timer = QTimer(self)
+                deadline_timer.setSingleShot(True)
+
+                def _finish(c=conn, st=state, tm=deadline_timer):
+                    if st["done"]:
+                        return
+                    st["done"] = True
+                    tm.stop()
+                    tm.deleteLater()
+                    self._finalize_ipc_payload(c, b"".join(st["chunks"]))
+
+                def _drain(c=conn, st=state, lim=limit, fin=_finish):
+                    if st["done"]:
+                        return
+                    while st["total"] < lim and c.bytesAvailable() > 0:
+                        part = bytes(c.read(lim - st["total"]))
+                        if not part:
+                            break
+                        st["chunks"].append(part)
+                        st["total"] += len(part)
+                    if st["total"] >= lim:
+                        fin()
+
+                conn.readyRead.connect(_drain)
+                conn.disconnected.connect(_finish)
+                deadline_timer.timeout.connect(_finish)
+                deadline_timer.start(500)
+                if conn.bytesAvailable() > 0:
+                    _drain()
+                continue
+
+            # Резервный путь для синхронных mock-соединений без Qt-сигналов (ограничен общим дедлайном 0.5 с)
             chunks = []
             total_len = 0
-            limit = self.MAX_IPC_PAYLOAD_BYTES + 1
+            deadline = time.monotonic() + 0.5
             if conn.bytesAvailable() > 0 or conn.waitForReadyRead(300):
-                while total_len < limit:
+                while total_len < limit and time.monotonic() < deadline:
                     part = bytes(conn.read(limit - total_len))
                     if part:
                         chunks.append(part)
@@ -447,23 +516,7 @@ class SingleInstanceManager(QObject):
                         continue
                     if not conn.waitForReadyRead(50):
                         break
-            raw = b"".join(chunks)
-            conn.disconnectFromServer()
-            conn.deleteLater()
-            paths = []
-            if len(raw) > self.MAX_IPC_PAYLOAD_BYTES:
-                logger.warning(
-                    "IPC-сообщение отклонено: превышен лимит размера (%d байт)",
-                    self.MAX_IPC_PAYLOAD_BYTES,
-                )
-            elif raw:
-                try:
-                    data = json.loads(raw.decode("utf-8", errors="replace"))
-                    if isinstance(data, dict) and isinstance(data.get("paths"), list):
-                        paths = [p for p in data["paths"] if self._is_allowed_ipc_path(p)]
-                except Exception as e:
-                    logger.warning("Некорректный JSON в IPC-сообщении: %s", e)
-            self.activation_requested.emit(paths)
+            self._finalize_ipc_payload(conn, b"".join(chunks))
 
     def close(self):
         if self._server is not None:
@@ -516,6 +569,7 @@ class DeviceSyncWorker(QThread):
         import tempfile
         from core.fb2_processor import _run_cancellable_process
         from core.s2k_manager import (
+            DEVICE_SYNC_EXEC_LOCK,
             S2kMissingLibraryError,
             S2kPermissionError,
             build_s2k_sync_command,
@@ -530,6 +584,47 @@ class DeviceSyncWorker(QThread):
             write_s2k_sync_config,
         )
 
+        with DEVICE_SYNC_EXEC_LOCK:
+            self._run_device_sync_locked(
+                _run_cancellable_process,
+                S2kMissingLibraryError,
+                S2kPermissionError,
+                build_s2k_sync_command,
+                download_and_install_s2k,
+                is_missing_libmtp_stderr,
+                is_no_books_in_source_stderr,
+                parse_s2k_copy_action,
+                resolve_local_s2k,
+                stage_books_for_s2k,
+                summarize_s2k_output,
+                sync_folder_to_mounted_device,
+                write_s2k_sync_config,
+                inspect,
+                shutil,
+                subprocess,
+                tempfile,
+            )
+
+    def _run_device_sync_locked(
+        self,
+        _run_cancellable_process,
+        S2kMissingLibraryError,
+        S2kPermissionError,
+        build_s2k_sync_command,
+        download_and_install_s2k,
+        is_missing_libmtp_stderr,
+        is_no_books_in_source_stderr,
+        parse_s2k_copy_action,
+        resolve_local_s2k,
+        stage_books_for_s2k,
+        summarize_s2k_output,
+        sync_folder_to_mounted_device,
+        write_s2k_sync_config,
+        inspect,
+        shutil,
+        subprocess,
+        tempfile,
+    ):
         tmp_cfg_path = None
         staging_dir = None
         try:

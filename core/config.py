@@ -37,7 +37,8 @@ _KEYCHAIN_ACCOUNT_RE = re.compile(r"^[a-z0-9_]+$")
 
 from core.i18n import LOCALE, get_theme_choices
 from core.fb2_processor import (
-    DEFAULT_FILENAME_TOKENS, DEFAULT_TITLE_TOKENS, build_fbc_output_name_template
+    DEFAULT_FILENAME_TOKENS, DEFAULT_TITLE_TOKENS, LEGACY_DEFAULT_FILENAME_TOKENS,
+    build_fbc_output_name_template
 )
 from core.logger import get_logger
 from core.metadata_lookup import DEFAULT_ENABLED_PROVIDERS
@@ -46,48 +47,12 @@ logger = get_logger("config")
 
 DEFAULT_OUTPUT_FORMAT = "epub3"
 
-DEFAULT_OUTPUT_NAME_TEMPLATE = """    {{- $prefix := "" -}}
-    {{- if gt (len .Series) 0 -}}
-    {{-   $s := index .Series 0 -}}
-    {{-   $letters := list -}}
-    {{-   range $w := splitList " " $s.Name -}}
-    {{-     if $w -}}
-    {{-       $letters = append $letters (upper (first (splitList "" $w))) -}}
-    {{-     end -}}
-    {{-   end -}}
-    {{-   $abbr := join "" $letters -}}
-    {{-   if $abbr -}}
-    {{-     if gt $s.Number 0 -}}
-    {{-       $prefix = printf "(%s - %02d) " $abbr $s.Number -}}
-    {{-     else -}}
-    {{-       $prefix = printf "(%s) " $abbr -}}
-    {{-     end -}}
-    {{-   end -}}
-    {{- end -}}
-    {{- $out := printf "%s%s" $prefix .Title -}}
-    {{- $out = replace "/" "\u2215" $out -}}
-    {{- $out = replace "\\\\" "\u2215" $out -}}
-    {{  $out -}}"""
+DEFAULT_OUTPUT_NAME_TEMPLATE = build_fbc_output_name_template(DEFAULT_FILENAME_TOKENS)
 
-DEFAULT_TITLE_META_TEMPLATE = """    {{- $prefix := "" -}}
-    {{- if gt (len .Series) 0 -}}
-    {{-   $s := index .Series 0 -}}
-    {{-   $letters := list -}}
-    {{-   range $w := splitList " " $s.Name -}}
-    {{-     if $w -}}
-    {{-       $letters = append $letters (upper (first (splitList "" $w))) -}}
-    {{-     end -}}
-    {{-   end -}}
-    {{-   $abbr := join "" $letters -}}
-    {{-   if $abbr -}}
-    {{-     if gt $s.Number 0 -}}
-    {{-       $prefix = printf "(%s - %02d) " $abbr $s.Number -}}
-    {{-     else -}}
-    {{-       $prefix = printf "(%s) " $abbr -}}
-    {{-     end -}}
-    {{-   end -}}
-    {{- end -}}
-    {{  printf "%s%s" $prefix .Title -}}"""
+DEFAULT_TITLE_META_TEMPLATE = build_fbc_output_name_template(
+    DEFAULT_FILENAME_TOKENS,
+    for_metadata_title=True,
+)
 
 LEGACY_THEME_MAP = {
     "Tuck Midnight": "Golden",
@@ -111,6 +76,7 @@ DEVICE_PROFILES = {
         "rasterize_svg": "false",
         "kfx_compression": "none",
         "grayscale": "none",
+        "image_color_profile": "eink_bw",
     },
     "kindle_scribe_2024": {
         "output_format": "kfx",
@@ -122,6 +88,7 @@ DEVICE_PROFILES = {
         "rasterize_svg": "false",
         "kfx_compression": "none",
         "grayscale": "none",
+        "image_color_profile": "eink_bw",
         "fit_to_screen": "true",
         "cover_resize": "keepAR",
         "optimize_images": "true",
@@ -137,6 +104,7 @@ DEVICE_PROFILES = {
         "rasterize_svg": "false",
         "kfx_compression": "none",
         "grayscale": "none",
+        "image_color_profile": "eink_bw",
         "fit_to_screen": "true",
         "cover_resize": "keepAR",
         "optimize_images": "true",
@@ -152,6 +120,7 @@ DEVICE_PROFILES = {
         "rasterize_svg": "false",
         "kfx_compression": "none",
         "grayscale": "none",
+        "image_color_profile": "eink_kaleido3",
         "fit_to_screen": "true",
         "cover_resize": "keepAR",
         "optimize_images": "true",
@@ -164,6 +133,7 @@ DEVICE_PROFILES = {
         "screen_dpi": "300",
         "footnotes_mode": "float",
         "grayscale": "none",
+        "image_color_profile": "eink_kaleido3",
         "fit_to_screen": "true",
         "cover_resize": "keepAR",
         "optimize_images": "true",
@@ -176,6 +146,7 @@ DEVICE_PROFILES = {
         "screen_dpi": "300",
         "footnotes_mode": "float",
         "grayscale": "none",
+        "image_color_profile": "eink_bw",
         "fit_to_screen": "true",
         "cover_resize": "keepAR",
         "optimize_images": "true",
@@ -188,6 +159,7 @@ DEVICE_PROFILES = {
         "screen_dpi": "300",
         "footnotes_mode": "float",
         "grayscale": "none",
+        "image_color_profile": "eink_bw",
         "fit_to_screen": "true",
         "cover_resize": "keepAR",
         "optimize_images": "true",
@@ -200,6 +172,7 @@ DEVICE_PROFILES = {
         "screen_dpi": "229",
         "footnotes_mode": "floatRenumbered",
         "grayscale": "none",
+        "image_color_profile": "eink_gallery3",
         "rasterize_svg": "false",
         "fit_to_screen": "true",
         "cover_resize": "keepAR",
@@ -212,6 +185,7 @@ DEVICE_PROFILES = {
         "screen_height": "2480",
         "screen_dpi": "300",
         "footnotes_mode": "floatRenumbered",
+        "image_color_profile": "none",
     },
 }
 
@@ -251,7 +225,7 @@ def get_default_app_settings():
         "skip_existing": "false",
         "filename_mode": "default",
         "filename_tokens": [dict(t) for t in DEFAULT_FILENAME_TOKENS],
-        "title_template_mode": "default",
+        "title_template_mode": "filename",
         "title_template_tokens": [dict(t) for t in DEFAULT_TITLE_TOKENS],
         "azw3_compression": "standard",
         "kfx_compression": "none",
@@ -269,6 +243,8 @@ def get_default_app_settings():
         "baseline_jpeg": "false",
         "fit_to_screen": "false",
         "grayscale": "none",
+        "image_color_profile": "none",
+        "preview_simulate_eink": "true",
         "cover_resize": "keepAR",
         "email_auto_send": "false",
         "smtp_host": "",
@@ -286,6 +262,12 @@ def get_default_app_settings():
         "opds_url": "",
         "opds_username": "",
         "opds_password": "",
+        "tray_enabled": "false",
+        "tray_minimize_on_close": "false",
+        "tray_hide_dock_macos": "false",
+        "autostart_enabled": "false",
+        "watch_notifications_enabled": "true",
+        "watch_folders": [],
         "last_update_check": 0
     }
 
@@ -365,10 +347,13 @@ def atomic_write_text(filepath, text, encoding="utf-8"):
     os.makedirs(parent_dir, exist_ok=True)
     target_mode = None
     if os.name != "nt":
-        try:
-            target_mode = stat.S_IMODE(os.stat(abs_path).st_mode)
-        except OSError:
-            target_mode = 0o600 if os.path.basename(abs_path) == "settings.json" else 0o644
+        if os.path.basename(abs_path) == "settings.json":
+            target_mode = 0o600
+        else:
+            try:
+                target_mode = stat.S_IMODE(os.stat(abs_path).st_mode)
+            except OSError:
+                target_mode = 0o644
     fd, tmp_path = tempfile.mkstemp(prefix=".fbc_tmp_", suffix=".tmp", dir=parent_dir)
     try:
         with os.fdopen(fd, "w", encoding=encoding) as fh:
@@ -594,23 +579,37 @@ def is_secure_password_storage_available():
     return False
 
 
+_LAST_PLAINTEXT_SECRET_FIELDS = ()
+
+
+def get_last_plaintext_secret_fields():
+    """Возвращает кортеж имён секретных полей, сохранённых в settings.json в открытом виде при последнем сохранении."""
+    return _LAST_PLAINTEXT_SECRET_FIELDS
+
+
 def save_app_settings(settings_path, app_settings):
+    global _LAST_PLAINTEXT_SECRET_FIELDS
     data_to_save = dict(app_settings)
+    plaintext_fields = []
     pwd = data_to_save.get("smtp_password", "")
     if _save_smtp_password_secure(pwd):
         data_to_save["smtp_password"] = ""
     elif pwd:
+        plaintext_fields.append("smtp_password")
         logger.warning("Защищённое хранилище паролей (keyring) недоступно; SMTP-пароль сохранён в settings.json")
     gb_key = data_to_save.get("google_books_api_key", "")
     if _save_google_books_key_secure(gb_key):
         data_to_save["google_books_api_key"] = ""
     elif gb_key:
+        plaintext_fields.append("google_books_api_key")
         logger.warning("Защищённое хранилище (keyring) недоступно; API-ключ Google Books сохранён в settings.json")
     opds_pwd = data_to_save.get("opds_password", "")
     if _save_opds_password_secure(opds_pwd):
         data_to_save["opds_password"] = ""
     elif opds_pwd:
+        plaintext_fields.append("opds_password")
         logger.warning("Защищённое хранилище (keyring) недоступно; пароль OPDS сохранён в settings.json")
+    _LAST_PLAINTEXT_SECRET_FIELDS = tuple(plaintext_fields)
     try:
         payload = json.dumps(data_to_save, ensure_ascii=False, indent=2)
         atomic_write_text(settings_path, payload)
@@ -662,6 +661,19 @@ def load_app_settings(settings_path, app_settings):
         raw_provs = app_settings.get("metadata_providers")
         if not isinstance(raw_provs, list):
             app_settings["metadata_providers"] = list(DEFAULT_ENABLED_PROVIDERS)
+            changed = True
+        raw_watch = app_settings.get("watch_folders")
+        if not isinstance(raw_watch, list):
+            app_settings["watch_folders"] = []
+            changed = True
+        if (
+            app_settings.get("filename_mode", "default") == "default"
+            and app_settings.get("filename_tokens") == LEGACY_DEFAULT_FILENAME_TOKENS
+        ):
+            app_settings["filename_tokens"] = [dict(t) for t in DEFAULT_FILENAME_TOKENS]
+            changed = True
+        if app_settings.get("title_template_mode") not in ("filename", "custom"):
+            app_settings["title_template_mode"] = "filename"
             changed = True
         valid_keys = {val for _, val in get_theme_choices()}
         raw_theme = app_settings.get("theme", "Modern")
@@ -886,6 +898,11 @@ def update_fbc_config_file(fbc_config_path, css_path, app_settings):
         if app_settings.get("title_template_mode") == "custom" and app_settings.get("title_template_tokens"):
             title_tpl_body = build_fbc_output_name_template(
                 app_settings.get("title_template_tokens"),
+                for_metadata_title=True,
+            )
+        elif app_settings.get("filename_mode") == "custom" and app_settings.get("filename_tokens"):
+            title_tpl_body = build_fbc_output_name_template(
+                app_settings.get("filename_tokens"),
                 for_metadata_title=True,
             )
         else:

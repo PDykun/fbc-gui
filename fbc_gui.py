@@ -12,12 +12,14 @@ from PyQt6.QtWidgets import (
 )
 
 # --- Метаинформация и версия программы ---
-__app_name__ = "FBC GUI"
-__version__ = "2.10"
-__build__ = 103
-__author__ = "Paul Dykoun"
-__email__ = "me@pashka.eu"
-__url__ = "www.pashka.eu/fbc_gui"
+from core.version import (
+    __app_name__,
+    __author__,
+    __build__,
+    __email__,
+    __url__,
+    __version__,
+)
 
 APP_NAME = __app_name__
 BUILD_NUMBER = __build__
@@ -39,6 +41,7 @@ from core.fb2_processor import collect_startup_paths
 from core.fbc_manager import resolve_local_fbc
 from core.i18n import LOCALE, get_theme_choices, init_locale, tr
 from core.logger import get_logger, init_logging
+from core.notifier import set_windows_app_user_model_id
 from core.presets import sync_bundled_presets
 from core.updater import DEFAULT_RELEASES_URL, is_safe_http_url
 from core.workers import SingleInstanceManager
@@ -48,6 +51,7 @@ from ui.controllers import (
     PreviewController,
     QueueController,
     SettingsController,
+    TrayWatchController,
     UpdatesController,
 )
 from ui.dialogs import show_themed_message
@@ -70,7 +74,7 @@ from ui.theme import (
 logger = get_logger("app")
 _RUNTIME_INITIALIZED = False
 BASE_DIR = FBC_CMD = FBC_DETECTED_VERSION = FBC_CONFIG = CSS_PATH = BUNDLED_CSS_PATH = ""
-FONTS_DIR = SETTINGS_PATH = LOCALES_DIR = BUNDLED_LOCALES_DIR = ""
+FONTS_DIR = ICONS_DIR = SETTINGS_PATH = LOCALES_DIR = BUNDLED_LOCALES_DIR = ""
 THEMES_DIR = BUNDLED_THEMES_DIR = PRESETS_DIR = BUNDLED_PRESETS_DIR = LOG_PATH = ""
 
 
@@ -101,7 +105,7 @@ def setup_app_environment():
             if os.path.exists(src_f) and not os.path.exists(dst_f):
                 shutil.copy2(src_f, dst_f)
 
-        for sub_dir in ("fonts", "locales", "themes"):
+        for sub_dir in ("fonts", "locales", "themes", "icons"):
             src_sub = os.path.join(bundle_dir, sub_dir)
             dst_sub = os.path.join(user_data_dir, sub_dir)
             if os.path.exists(src_sub):
@@ -109,7 +113,7 @@ def setup_app_environment():
                 for f in os.listdir(src_sub):
                     s_fp = os.path.join(src_sub, f)
                     d_fp = os.path.join(dst_sub, f)
-                    if os.path.isfile(s_fp) and (not os.path.exists(d_fp) or sub_dir in ("themes", "locales")):
+                    if os.path.isfile(s_fp) and (not os.path.exists(d_fp) or sub_dir in ("themes", "locales", "icons")):
                         shutil.copy2(s_fp, d_fp)
 
     # Дистрибутив не включает сторонний бинарник fbc: ищем локально в PATH ОС и user_data_dir
@@ -130,6 +134,7 @@ def setup_app_environment():
         css_path,
         bundled_css_path,
         os.path.join(user_data_dir, "fonts"),
+        os.path.join(user_data_dir, "icons"),
         os.path.join(user_data_dir, "settings.json"),
         os.path.join(user_data_dir, "locales"),
         os.path.join(bundle_dir, "locales"),
@@ -143,12 +148,12 @@ def setup_app_environment():
 def init_app_runtime():
     """Инициализирует рабочую среду, логирование, локали и темы один раз при запуске приложения."""
     global _RUNTIME_INITIALIZED, BASE_DIR, FBC_CMD, FBC_DETECTED_VERSION, FBC_CONFIG
-    global CSS_PATH, BUNDLED_CSS_PATH, FONTS_DIR, SETTINGS_PATH, LOCALES_DIR, BUNDLED_LOCALES_DIR
+    global CSS_PATH, BUNDLED_CSS_PATH, FONTS_DIR, ICONS_DIR, SETTINGS_PATH, LOCALES_DIR, BUNDLED_LOCALES_DIR
     global THEMES_DIR, BUNDLED_THEMES_DIR, PRESETS_DIR, BUNDLED_PRESETS_DIR, LOG_PATH
     if _RUNTIME_INITIALIZED:
         return
     (
-        BASE_DIR, FBC_CMD, FBC_DETECTED_VERSION, FBC_CONFIG, CSS_PATH, BUNDLED_CSS_PATH, FONTS_DIR,
+        BASE_DIR, FBC_CMD, FBC_DETECTED_VERSION, FBC_CONFIG, CSS_PATH, BUNDLED_CSS_PATH, FONTS_DIR, ICONS_DIR,
         SETTINGS_PATH, LOCALES_DIR, BUNDLED_LOCALES_DIR,
         THEMES_DIR, BUNDLED_THEMES_DIR, PRESETS_DIR, BUNDLED_PRESETS_DIR,
     ) = setup_app_environment()
@@ -173,6 +178,7 @@ class MainWindow(
     PreviewController,
     QueueController,
     ConversionController,
+    TrayWatchController,
     UpdatesController,
     QMainWindow,
 ):
@@ -190,6 +196,7 @@ class MainWindow(
         self.css_path = CSS_PATH
         self.bundled_css_path = BUNDLED_CSS_PATH
         self.fonts_dir = FONTS_DIR
+        self.icons_dir = ICONS_DIR
         self.settings_path = SETTINGS_PATH
         self.presets_dir = PRESETS_DIR
         self.bundled_presets_dir = BUNDLED_PRESETS_DIR
@@ -259,6 +266,7 @@ class MainWindow(
         self.setAcceptDrops(True)
         self._setup_shortcuts()
         self.refresh_preview()
+        self.init_tray_and_watch()
         QTimer.singleShot(150, self._ensure_fbc_on_startup)
         QTimer.singleShot(2500, self._schedule_startup_update_check)
 
@@ -347,8 +355,25 @@ class MainWindow(
                 pass
 
     def closeEvent(self, event):
+        if (
+            not getattr(self, "_force_quit", False)
+            and hasattr(self, "should_minimize_to_tray_on_close")
+            and self.should_minimize_to_tray_on_close()
+        ):
+            event.ignore()
+            self.hide_to_tray()
+            return
         self._closing = True
         self._flush_pending_settings()
+        watch_mgr = getattr(self, "watch_manager", None)
+        if watch_mgr is not None:
+            watch_mgr.stop()
+        tray = getattr(self, "_tray_icon", None)
+        if tray is not None:
+            try:
+                tray.hide()
+            except RuntimeError:
+                pass
         self._stop_background_workers()
         self._detach_preview_native_view()
         self.save_app_settings()
@@ -509,6 +534,8 @@ class MainWindow(
             self.apply_theme(self.app_settings.get("theme", "Modern"), save=False)
             self.switch_page(cur_page)
             self.refresh_preview()
+            if hasattr(self, "refresh_tray_menu"):
+                self.refresh_tray_menu()
         finally:
             self._applying_language = False
 
@@ -747,6 +774,8 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V"):
         print(APP_VERSION)
         sys.exit(0)
+    start_minimized = any(a in ("--minimized", "--background") for a in sys.argv[1:])
+    set_windows_app_user_model_id()
     init_app_runtime()
     app = FbcApplication(sys.argv)
     startup_paths = collect_startup_paths(sys.argv)
@@ -762,7 +791,10 @@ def main():
     window = MainWindow()
     app.files_opened.connect(window.activate_and_import)
     single_instance.activation_requested.connect(window.activate_and_import)
-    window.show()
+    if start_minimized and window.is_tray_active() and not startup_paths:
+        window.hide_to_tray()
+    else:
+        window.show()
     if startup_paths:
         QTimer.singleShot(0, lambda p=startup_paths: window.enqueue_import_paths(p))
     if app._pending_open_files:

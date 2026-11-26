@@ -117,6 +117,11 @@ class PreviewController:
         self.preview_source_mode = "sample" if mode == "sample" else "book"
         self.refresh_preview()
 
+    def on_preview_simulate_eink_toggled(self, checked):
+        self.app_settings["preview_simulate_eink"] = "true" if checked else "false"
+        self.save_app_settings()
+        self.refresh_preview()
+
     def _get_selected_book_data(self):
         if not hasattr(self, "table") or not self.files_data:
             return None
@@ -167,6 +172,9 @@ class PreviewController:
             book_preview=book_preview,
             dropcaps_enable=(str(self.app_settings.get("dropcaps_enable", "true")).lower() == "true"),
             use_web_engine=bool(getattr(self, "preview_is_webengine", False)),
+            image_color_profile=self.app_settings.get("image_color_profile", "none"),
+            simulate_eink=(str(self.app_settings.get("preview_simulate_eink", "true")).lower() == "true"),
+            image_color_profile_custom=self.app_settings.get("image_color_profile_custom"),
         )
 
     def refresh_preview(self):

@@ -5,6 +5,7 @@ import os
 import re
 import zipfile
 import xml.etree.ElementTree as ET
+from xml.parsers import expat as _xml_expat
 
 from core.fb2.common import (
     COVER_TARGET_SIZE,
@@ -290,9 +291,38 @@ def _sanitize_fb2_xml_text(text):
     return clean
 
 
+MAX_COVER_IMAGE_PIXELS = 40_000_000
+
+
+class _DisallowedXmlDeclarationError(ValueError):
+    pass
+
+
 def _has_disallowed_xml_declarations(raw_bytes):
-    head = raw_bytes[:65536].lower() if isinstance(raw_bytes, (bytes, bytearray)) else str(raw_bytes)[:65536].lower().encode('utf-8', errors='ignore')
-    return b'<!doctype' in head or b'<!entity' in head
+    """Проверяет наличие запрещённых DOCTYPE/ENTITY (включая UTF-16/UTF-32 и смещения >64 КБ)."""
+    if not raw_bytes:
+        return False
+    raw = raw_bytes if isinstance(raw_bytes, (bytes, bytearray)) else str(raw_bytes).encode('utf-8', errors='ignore')
+    head = raw[:65536].lower()
+    if b'<!doctype' in head or b'<!entity' in head:
+        return True
+    def _reject(*_args):
+        raise _DisallowedXmlDeclarationError("DOCTYPE/ENTITY")
+    parser = _xml_expat.ParserCreate()
+    parser.StartDoctypeDeclHandler = _reject
+    parser.EntityDeclHandler = _reject
+    try:
+        parser.Parse(raw, True)
+    except _DisallowedXmlDeclarationError:
+        return True
+    except _xml_expat.ExpatError:
+        try:
+            decoded_low = _decode_fb2_text(raw).lower()
+            if '<!doctype' in decoded_low or '<!entity' in decoded_low:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def _parse_fb2_root(xml_bytes):
@@ -431,6 +461,9 @@ def fit_image_to_cover_size(image_path, target_size=COVER_TARGET_SIZE):
     target_w, target_h = target_size
     if get_facade_attr("HAS_PIL", HAS_PIL) and Image is not None and ImageOps is not None:
         with Image.open(image_path) as im:
+            w, h = im.size
+            if w * h > MAX_COVER_IMAGE_PIXELS:
+                raise ValueError(f"Cover image exceeds pixel limit ({w}x{h} > {MAX_COVER_IMAGE_PIXELS})")
             im = im.convert("RGB")
             fitted = ImageOps.fit(im, (target_w, target_h), method=Image.Resampling.LANCZOS)
             out = io.BytesIO()

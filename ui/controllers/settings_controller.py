@@ -3,7 +3,7 @@ import sys
 
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog, QInputDialog
 
 from core.config import (
     DEFAULT_OUTPUT_FORMAT,
@@ -21,7 +21,7 @@ from core.fb2_processor import should_skip_existing_conversion, simulate_fbc_tar
 from core.i18n import tr
 from core.logger import get_log_file_path, get_logger
 from core.metadata_lookup import DEFAULT_ENABLED_PROVIDERS, DEFAULT_PROVIDER_ORDER
-from core.s2k_manager import check_directory_access, check_sync_format_compatibility
+from core.s2k_manager import check_directory_access, check_sync_format_compatibility, detect_mounted_readers
 from core.workers import DeviceSyncWorker, TestEmailWorker
 from ui.dialogs import ConversionProgressDialog, show_themed_confirm, show_themed_message
 
@@ -117,6 +117,15 @@ class SettingsController:
 
     def on_grayscale_changed(self, idx=None):
         self._set_setting("grayscale", self._get_combo_data(self.grayscale_cb, "none"), refresh_preview=True)
+
+    def on_image_color_profile_changed(self, idx=None):
+        self.app_settings.pop("image_color_profile_custom", None)
+        self._set_setting(
+            "image_color_profile",
+            self._get_combo_data(self.image_color_profile_cb, "none"),
+            update_fbc=False,
+            refresh_preview=True,
+        )
 
     def on_fit_to_screen_changed(self, idx=None):
         self._set_setting("fit_to_screen", self._get_combo_data(self.fit_to_screen_cb, "false"))
@@ -234,6 +243,7 @@ class SettingsController:
 
             for attr, skey in (
                 ("grayscale_cb", "grayscale"),
+                ("image_color_profile_cb", "image_color_profile"),
                 ("fit_to_screen_cb", "fit_to_screen"),
                 ("cover_resize_cb", "cover_resize"),
             ):
@@ -284,7 +294,7 @@ class SettingsController:
         self._refresh_all_target_filenames()
 
     def on_title_template_mode_changed(self, mode_val):
-        mode = "custom" if mode_val == "custom" else "default"
+        mode = "custom" if mode_val == "custom" else "filename"
         self.app_settings["title_template_mode"] = mode
         self.save_app_settings()
         self.update_fbc_config_file()
@@ -420,6 +430,42 @@ class SettingsController:
             if hasattr(self, "device_sync_target_edit"):
                 self.device_sync_target_edit.setText(folder)
             self.save_app_settings()
+
+    def detect_device_sync_target_clicked(self):
+        """Автоматически находит подключённые USB-ридеры (Kobo, Kindle, PocketBook, BOOX) и облачные папки Kobo."""
+        found = detect_mounted_readers()
+        if not found:
+            show_themed_message(self, tr("settings.sync_title"), tr("settings.msg_detect_reader_none"), "info")
+            return
+        if len(found) == 1:
+            chosen = found[0]
+        else:
+            labels = [f"{d['name']} — {d['path']}" for d in found]
+            label, ok = QInputDialog.getItem(
+                self,
+                tr("settings.dlg_detect_reader_title"),
+                tr("settings.dlg_detect_reader_prompt"),
+                labels,
+                0,
+                False,
+            )
+            if not ok or label not in labels:
+                return
+            chosen = found[labels.index(label)]
+
+        self.on_device_sync_mode_changed("folder")
+        if hasattr(self, "device_sync_mode_selector"):
+            self.device_sync_mode_selector.set("folder")
+        self.app_settings["device_sync_target"] = chosen["path"]
+        if hasattr(self, "device_sync_target_edit"):
+            self.device_sync_target_edit.setText(chosen["path"])
+        self.save_app_settings()
+        show_themed_message(
+            self,
+            tr("settings.sync_title"),
+            tr("settings.msg_detect_reader_ok", name=chosen["name"], path=chosen["path"]),
+            "info",
+        )
 
     def _resolve_device_sync_source_dir(self):
         if self.app_settings.get("save_mode") == "custom":

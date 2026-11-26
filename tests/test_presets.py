@@ -273,5 +273,77 @@ class TestPresets(unittest.TestCase):
         self.assertEqual(target["image_scale_factor"], "1.5")
 
 
+    def test_default_mode_presets_omit_redundant_template_tokens_and_preserve_user_tokens(self):
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        bundled_dir = os.path.join(project_root, "presets_defaults")
+
+        # 1. Встроенные пресеты с режимом по умолчанию не дублируют filename_tokens / title_template_tokens
+        for it in list_presets(bundled_dir):
+            with open(it["path"], "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+            st = raw.get("settings") or {}
+            self.assertEqual(st.get("filename_mode"), "default")
+            self.assertNotIn("filename_tokens", st, f"{it['name']} should not duplicate filename_tokens")
+            self.assertEqual(st.get("title_template_mode"), "filename")
+            self.assertNotIn("title_template_tokens", st, f"{it['name']} should not duplicate title_template_tokens")
+
+        # 2. extract_preset_settings опускает токены для non-custom и сохраняет для custom
+        base = get_default_app_settings()
+        extracted_def = extract_preset_settings(base)
+        self.assertNotIn("filename_tokens", extracted_def)
+        self.assertNotIn("title_template_tokens", extracted_def)
+
+        custom_fn = [{"type": "tag", "id": "title"}]
+        custom_tt = [{"type": "tag", "id": "last"}]
+        base["filename_mode"] = "custom"
+        base["filename_tokens"] = custom_fn
+        base["title_template_mode"] = "custom"
+        base["title_template_tokens"] = custom_tt
+        extracted_custom = extract_preset_settings(base)
+        self.assertEqual(extracted_custom["filename_tokens"], custom_fn)
+        self.assertEqual(extracted_custom["title_template_tokens"], custom_tt)
+
+        # 3. Применение пресета с filename_mode='default' не затирает пользовательские filename_tokens,
+        #    а reset_default_tokens=True (пункт «Нет») сбрасывает их
+        target = get_default_app_settings()
+        target["filename_tokens"] = custom_fn
+        apply_preset_to_settings(
+            target,
+            {"settings": {"filename_mode": "default", "filename_tokens": [{"type": "tag", "id": "last"}]}},
+        )
+        self.assertEqual(target["filename_tokens"], custom_fn)
+
+        defaults = get_default_app_settings()
+        apply_preset_to_settings(target, {"settings": defaults}, reset_default_tokens=True)
+        self.assertEqual(target["filename_tokens"], defaults["filename_tokens"])
+
+    def test_load_preset_enforces_size_limit_and_sanitizes_css(self):
+        from core.presets import MAX_PRESET_FILE_BYTES, sanitize_preset_css
+
+        dirty_css = (
+            '@import url("https://evil.invalid/a.css");\n'
+            'body { width: expression(alert(1)); background: url("https://evil.invalid/bg.png"); }\n'
+            '@font-face { src: url("fonts/PT-Astra-Serif_Regular.ttf"); }\n'
+        )
+        cleaned = sanitize_preset_css(dirty_css)
+        self.assertNotIn("@import", cleaned.lower())
+        self.assertNotIn("expression(", cleaned.lower())
+        self.assertNotIn("evil.invalid", cleaned.lower())
+        self.assertIn("PT-Astra-Serif_Regular.ttf", cleaned)
+
+        with tempfile.TemporaryDirectory() as td:
+            p_dirty = os.path.join(td, "dirty.fbcpreset.json")
+            with open(p_dirty, "w", encoding="utf-8") as fh:
+                json.dump({"name": "Dirty", "settings": {"output_format": "epub3"}, "css_content": dirty_css}, fh)
+            loaded = load_preset_file(p_dirty)
+            self.assertNotIn("evil.invalid", loaded["css_content"])
+
+            p_huge = os.path.join(td, "huge.fbcpreset.json")
+            with open(p_huge, "wb") as fh:
+                fh.write(b"{" + b" " * (MAX_PRESET_FILE_BYTES + 16) + b"}")
+            with self.assertRaises(ValueError):
+                load_preset_file(p_huge)
+
+
 if __name__ == "__main__":
     unittest.main()

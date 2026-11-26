@@ -1,10 +1,10 @@
 import os
 
-from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QGuiApplication, QDesktopServices
+from PyQt6.QtCore import Qt, QUrl, QRectF, pyqtProperty
+from PyQt6.QtGui import QGuiApplication, QDesktopServices, QColor, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,
-    QInputDialog, QDialog, QPlainTextEdit,
+    QInputDialog, QDialog, QPlainTextEdit, QTabWidget, QTabBar,
 )
 
 from core.i18n import tr
@@ -278,4 +278,58 @@ def _format_bytes_human(num_bytes):
     if n >= 1024:
         return f"{n / 1024:.1f} KB"
     return f"{n} B"
+
+
+class SegmentedTabBar(QTabBar):
+    """QTabBar с векторной скруглённой капсулой-треком (цвета задаются через QSS)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._track_color = QColor("#E6EBF2")
+        self._track_border_color = QColor("#CBD5E1")
+        self.setDrawBase(False)
+        self.setExpanding(False)
+        self.setUsesScrollButtons(False)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    @pyqtProperty(QColor)
+    def trackColor(self):
+        return self._track_color
+
+    @trackColor.setter
+    def trackColor(self, col):
+        self._track_color = QColor(col)
+        self.update()
+
+    @pyqtProperty(QColor)
+    def trackBorderColor(self):
+        return self._track_border_color
+
+    @trackBorderColor.setter
+    def trackBorderColor(self, col):
+        self._track_border_color = QColor(col)
+        self.update()
+
+    def paintEvent(self, event):
+        if self.count() > 0:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+            radius = rect.height() / 2.0
+            path = QPainterPath()
+            path.addRoundedRect(rect, radius, radius)
+            painter.fillPath(path, self._track_color)
+            painter.setPen(QPen(self._track_border_color, 1.0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(path)
+            painter.end()
+        super().paintEvent(event)
+
+
+def create_segmented_tabs(parent=None):
+    """Создаёт QTabWidget с сегментированной капсулой вкладок."""
+    tabs = QTabWidget(parent)
+    tabs.setDocumentMode(False)
+    tabs.setTabBar(SegmentedTabBar(tabs))
+    return tabs
 

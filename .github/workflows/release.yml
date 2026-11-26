@@ -47,8 +47,8 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          APP_VER=$(python -c "import re; s=open('fbc_gui.py',encoding='utf-8').read(); print(re.search(r'^__version__\s*=\s*[\"\x27]([^\"\x27]+)', s, re.M).group(1))")
-          APP_BUILD=$(python -c "import re; s=open('fbc_gui.py',encoding='utf-8').read(); m=re.search(r'^__build__\s*=\s*(\d+)', s, re.M); print(m.group(1) if m else '1')")
+          APP_VER=$(python -c "from core.version import __version__; print(__version__)")
+          APP_BUILD=$(python -c "from core.version import __build__; print(__build__)")
           echo "Building FBC GUI v${APP_VER} (build ${APP_BUILD}) for macOS (${TARGET_ARCH})..."
 
           python -m PyInstaller \
@@ -69,6 +69,7 @@ jobs:
             --add-data "locales:locales" \
             --add-data "themes:themes" \
             --add-data "presets_defaults:presets_defaults" \
+            --add-data "icons:icons" \
             --collect-data certifi \
             fbc_gui.py
 
@@ -168,8 +169,8 @@ jobs:
           if ("${{ matrix.arch }}" -eq "arm64") {
             pip install -r requirements.txt
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "Pinned wheel unavailable on win_arm64, installing latest compatible packages..."
-              pip install "PyQt6>=6.6,<7" "Pillow>=10.0,<12" "pyinstaller>=6.0,<7" "ruamel.yaml>=0.18,<1" "keyring>=25.0,<27" "certifi>=2024.8.30" "packaging>=24.0,<27"
+              Write-Host "Pinned wheel unavailable on win_arm64, installing compatible patch versions..."
+              pip install "PyQt6~=6.10.2" "Pillow~=11.3.0" "pyinstaller~=6.22.3" "ruamel.yaml~=0.19.1" "keyring>=25.0.0,<27" "certifi>=2024.8.30" "packaging~=26.3"
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
           } else {
@@ -196,12 +197,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path build_win | Out-Null
 
           $metaJson = python -c @"
-          import json, re
-          s = open('fbc_gui.py', encoding='utf-8').read()
-          ver = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', s, re.M).group(1)
-          bld = int(re.search(r'^__build__\s*=\s*(\d+)', s, re.M).group(1))
-          name = re.search(r'^__app_name__\s*=\s*["\']([^"\']+)["\']', s, re.M).group(1)
-          auth = re.search(r'^__author__\s*=\s*["\']([^"\']+)["\']', s, re.M).group(1)
+          import json
+          from core.version import __version__ as ver, __build__ as bld, __app_name__ as name, __author__ as auth
           parts = [int(x) for x in ver.split('.') if x.isdigit()]
           vt = tuple((parts + [0, 0, 0])[:3] + [bld])
           ver_txt = f'''VSVersionInfo(
@@ -247,6 +244,7 @@ jobs:
             --add-data "locales;locales" `
             --add-data "themes;themes" `
             --add-data "presets_defaults;presets_defaults" `
+            --add-data "icons;icons" `
             fbc_gui.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -391,12 +389,9 @@ jobs:
           repo = os.environ.get("GITHUB_REPOSITORY", "PDykun/fbc-gui")
           tag = os.environ.get("GITHUB_REF_NAME", "")
 
-          with open("fbc_gui.py", "r", encoding="utf-8") as fh:
-              src = fh.read()
-          m_ver = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', src, re.M)
-          m_bld = re.search(r'^__build__\s*=\s*(\d+)', src, re.M)
-          version = (tag.lstrip("vV") if tag else "") or (m_ver.group(1) if m_ver else "1.0")
-          build = int(m_bld.group(1)) if m_bld else 1
+          from core.version import __version__ as _app_ver, __build__ as _app_bld
+          version = (tag.lstrip("vV") if tag else "") or _app_ver
+          build = int(_app_bld)
           release_base = f"https://github.com/{repo}/releases/download/v{version}"
 
           def sha256_file(path):

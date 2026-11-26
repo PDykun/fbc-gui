@@ -291,6 +291,37 @@ class TestCssPreview(unittest.TestCase):
             )
             self.assertNotIn("<bad>", html_doc)
             self.assertNotIn("untrusted.example", html_doc)
+            self.assertIn("Content-Security-Policy", html_doc)
+            self.assertIn("default-src 'none'", html_doc)
+
+    def test_native_webview_isolated_preview_staging_excludes_non_fonts(self):
+        from pathlib import Path
+        from ui.native_webview import _stage_isolated_preview
+
+        with tempfile.TemporaryDirectory() as base_dir, tempfile.TemporaryDirectory() as temp_dir:
+            fonts_dir = os.path.join(base_dir, "fonts")
+            os.makedirs(fonts_dir, exist_ok=True)
+            with open(os.path.join(base_dir, "settings.json"), "w", encoding="utf-8") as fh:
+                fh.write('{"secret": "do_not_expose"}')
+            with open(os.path.join(fonts_dir, "TestFont.ttf"), "wb") as fh:
+                fh.write(b"\x00\x01\x00\x00FONT")
+            with open(os.path.join(fonts_dir, "readme.txt"), "w", encoding="utf-8") as fh:
+                fh.write("ignore")
+
+            src_uri = Path(fonts_dir).resolve().as_uri().rstrip("/")
+            html_in = f'<style>@font-face {{ src: url("{src_uri}/TestFont.ttf"); }}</style>'
+            render_path, read_root = _stage_isolated_preview(temp_dir, html_in, base_dir)
+
+            self.assertEqual(read_root, temp_dir)
+            self.assertTrue(os.path.isfile(render_path))
+            self.assertFalse(os.path.exists(os.path.join(base_dir, ".preview_render.html")))
+            self.assertFalse(os.path.exists(os.path.join(temp_dir, "settings.json")))
+            self.assertTrue(os.path.isfile(os.path.join(temp_dir, "fonts", "TestFont.ttf")))
+            self.assertFalse(os.path.exists(os.path.join(temp_dir, "fonts", "readme.txt")))
+            with open(render_path, "r", encoding="utf-8") as fh:
+                staged = fh.read()
+            self.assertNotIn(src_uri, staged)
+            self.assertIn(Path(os.path.join(temp_dir, "fonts")).resolve().as_uri().rstrip("/"), staged)
 
 
 if __name__ == "__main__":

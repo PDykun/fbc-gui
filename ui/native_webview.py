@@ -1,13 +1,49 @@
 import os
+import shutil
 import sys
+import tempfile
+from pathlib import Path
 
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit
 
 from core.config import atomic_write_text
+from core.css_preview import VALID_FONT_EXTENSIONS
 from core.logger import get_logger
 
 logger = get_logger("native_webview")
+
+
+def _stage_isolated_preview(temp_dir, html_text, base_dir=""):
+    """Пишет HTML-превью и копирует только файлы шрифтов в изолированный временный каталог."""
+    os.makedirs(temp_dir, exist_ok=True)
+    staged_html = html_text
+    if base_dir and os.path.isdir(base_dir):
+        fonts_src = os.path.join(base_dir, "fonts")
+        if not os.path.isdir(fonts_src) and os.path.basename(os.path.normpath(base_dir)) == "fonts":
+            fonts_src = base_dir
+        if os.path.isdir(fonts_src):
+            fonts_dst = os.path.join(temp_dir, "fonts")
+            os.makedirs(fonts_dst, exist_ok=True)
+            for fname in os.listdir(fonts_src):
+                if not fname.lower().endswith(VALID_FONT_EXTENSIONS):
+                    continue
+                src_fp = os.path.join(fonts_src, fname)
+                dst_fp = os.path.join(fonts_dst, fname)
+                if not os.path.isfile(src_fp):
+                    continue
+                try:
+                    if (not os.path.isfile(dst_fp)) or os.path.getsize(dst_fp) != os.path.getsize(src_fp):
+                        shutil.copy2(src_fp, dst_fp)
+                except OSError:
+                    continue
+            src_uri = Path(fonts_src).resolve().as_uri().rstrip("/")
+            dst_uri = Path(fonts_dst).resolve().as_uri().rstrip("/")
+            if src_uri != dst_uri:
+                staged_html = staged_html.replace(src_uri, dst_uri)
+    render_path = os.path.join(temp_dir, "preview.html")
+    atomic_write_text(render_path, staged_html)
+    return render_path, temp_dir
 
 
 class FallbackTextPreviewWidget(QTextEdit):
@@ -45,6 +81,7 @@ class MacOSWKWebViewWidget(QWidget):
         self._pending_html = None
         self._pending_base_dir = ""
         self._render_path = None
+        self._preview_temp_dir = None
 
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
@@ -66,7 +103,6 @@ class MacOSWKWebViewWidget(QWidget):
             cfg,
         )
         self._wk_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
-        self.destroyed.connect(self._detach_native_view)
 
     def _get_host_nsview(self):
         wid = int(self.winId())
@@ -94,13 +130,11 @@ class MacOSWKWebViewWidget(QWidget):
             except Exception as e:
                 logger.debug("Ошибка отсоединения WKWebView от superview: %s", e)
             self._attached = False
-        render_path = getattr(self, "_render_path", None)
-        if render_path and os.path.isfile(render_path):
-            try:
-                os.remove(render_path)
-            except OSError:
-                pass
-            self._render_path = None
+        self._render_path = None
+        temp_dir = getattr(self, "_preview_temp_dir", None)
+        if temp_dir and os.path.isdir(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        self._preview_temp_dir = None
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -138,20 +172,19 @@ class MacOSWKWebViewWidget(QWidget):
             self._pending_html = html_text
             self._pending_base_dir = base_dir
             return
-        if base_dir and os.path.isdir(base_dir):
-            render_path = os.path.join(base_dir, ".preview_render.html")
-            try:
-                atomic_write_text(render_path, html_text)
-                self._render_path = render_path
-                file_url = self._NSURL.fileURLWithPath_(os.path.abspath(render_path))
-                dir_url = self._NSURL.fileURLWithPath_isDirectory_(os.path.abspath(base_dir), True)
-                self._wk_view.loadFileURL_allowingReadAccessToURL_(file_url, dir_url)
-                return
-            except Exception as e:
-                logger.warning("WKWebView loadFileURL fallback: %s", e)
+        try:
+            if not self._preview_temp_dir or not os.path.isdir(self._preview_temp_dir):
+                self._preview_temp_dir = tempfile.mkdtemp(prefix="fbc_preview_")
+            render_path, read_root = _stage_isolated_preview(self._preview_temp_dir, html_text, base_dir)
+            self._render_path = render_path
+            file_url = self._NSURL.fileURLWithPath_(os.path.abspath(render_path))
+            dir_url = self._NSURL.fileURLWithPath_isDirectory_(os.path.abspath(read_root), True)
+            self._wk_view.loadFileURL_allowingReadAccessToURL_(file_url, dir_url)
+            return
+        except Exception as e:
+            logger.warning("WKWebView loadFileURL fallback: %s", e)
 
-        base_url = self._NSURL.fileURLWithPath_isDirectory_(os.path.abspath(base_dir or os.getcwd()), True)
-        self._wk_view.loadHTMLString_baseURL_(html_text, base_url)
+        self._wk_view.loadHTMLString_baseURL_(html_text, None)
 
 
 class WindowsWebView2Widget(QWidget):
@@ -170,13 +203,13 @@ class WindowsWebView2Widget(QWidget):
 
         super().__init__(parent)
         self._render_path = None
+        self._preview_temp_dir = None
         self._wv = widget_cls(self)
         self._disable_javascript()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self._wv)
-        self.destroyed.connect(self._detach_native_view)
 
     def _detach_native_view(self, *args):
         wv = getattr(self, "_wv", None)
@@ -186,13 +219,11 @@ class WindowsWebView2Widget(QWidget):
                     wv.close()
             except Exception as e:
                 logger.debug("Ошибка закрытия встроенного webview: %s", e)
-        render_path = getattr(self, "_render_path", None)
-        if render_path and os.path.isfile(render_path):
-            try:
-                os.remove(render_path)
-            except OSError:
-                pass
-            self._render_path = None
+        self._render_path = None
+        temp_dir = getattr(self, "_preview_temp_dir", None)
+        if temp_dir and os.path.isdir(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        self._preview_temp_dir = None
 
     def closeEvent(self, event):
         self._detach_native_view()
@@ -220,23 +251,23 @@ class WindowsWebView2Widget(QWidget):
 
     def set_preview_html(self, html_text, base_dir=""):
         self._disable_javascript()
-        if base_dir and os.path.isdir(base_dir):
-            render_path = os.path.join(base_dir, ".preview_render.html")
-            try:
-                atomic_write_text(render_path, html_text)
-                self._render_path = render_path
-                file_url = QUrl.fromLocalFile(os.path.abspath(render_path)).toString()
-                if hasattr(self._wv, "load"):
-                    self._wv.load(QUrl.fromLocalFile(os.path.abspath(render_path)))
-                    return
-                if hasattr(self._wv, "setUrl"):
-                    self._wv.setUrl(QUrl.fromLocalFile(os.path.abspath(render_path)))
-                    return
-                if hasattr(self._wv, "navigate"):
-                    self._wv.navigate(file_url)
-                    return
-            except Exception as e:
-                logger.warning("WebView2 file load fallback: %s", e)
+        try:
+            if not self._preview_temp_dir or not os.path.isdir(self._preview_temp_dir):
+                self._preview_temp_dir = tempfile.mkdtemp(prefix="fbc_preview_")
+            render_path, _read_root = _stage_isolated_preview(self._preview_temp_dir, html_text, base_dir)
+            self._render_path = render_path
+            file_url = QUrl.fromLocalFile(os.path.abspath(render_path)).toString()
+            if hasattr(self._wv, "load"):
+                self._wv.load(QUrl.fromLocalFile(os.path.abspath(render_path)))
+                return
+            if hasattr(self._wv, "setUrl"):
+                self._wv.setUrl(QUrl.fromLocalFile(os.path.abspath(render_path)))
+                return
+            if hasattr(self._wv, "navigate"):
+                self._wv.navigate(file_url)
+                return
+        except Exception as e:
+            logger.warning("WebView2 file load fallback: %s", e)
 
         if hasattr(self._wv, "setHtml"):
             self._wv.setHtml(html_text)

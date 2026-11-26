@@ -11,6 +11,7 @@ from core.fb2_processor import (
     book_matches_filter,
     copy_meta_dict,
     execute_organize_fb2_plan,
+    merge_fb2_books_to_omnibus,
     find_duplicate_item_ids,
     fit_image_to_cover_size,
     get_book_xml,
@@ -86,19 +87,46 @@ class QueueController:
         self.apply_table_filter()
         self.update_header_status()
 
+    def _rebuild_row_index(self):
+        index = {}
+        if hasattr(self, "table"):
+            for r in range(self.table.rowCount()):
+                it0 = self.table.item(r, 0)
+                if it0 is not None:
+                    index[it0.data(Qt.ItemDataRole.UserRole)] = r
+        self._row_by_item_id = index
+        return index
+
+    def _find_table_row_by_item_id(self, item_id):
+        if not hasattr(self, "table"):
+            return None
+        cache = getattr(self, "_row_by_item_id", None)
+        if isinstance(cache, dict):
+            r = cache.get(item_id)
+            if r is not None and 0 <= r < self.table.rowCount():
+                it0 = self.table.item(r, 0)
+                if it0 is not None and it0.data(Qt.ItemDataRole.UserRole) == item_id:
+                    return r
+        return self._rebuild_row_index().get(item_id)
+
     def _refresh_all_target_filenames(self):
         if not hasattr(self, "table"):
             return
         self._updating_table_items = True
+        row_index = {}
         try:
-            for item_id, data in self.files_data.items():
-                for r in range(self.table.rowCount()):
-                    it = self.table.item(r, 0)
-                    if it and it.data(Qt.ItemDataRole.UserRole) == item_id:
-                        it_target = QTableWidgetItem(self.simulate_fbc_target(data['meta']))
-                        it_target.setFlags(it_target.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                        self.table.setItem(r, 7, it_target)
-                        break
+            for r in range(self.table.rowCount()):
+                it = self.table.item(r, 0)
+                if not it:
+                    continue
+                item_id = it.data(Qt.ItemDataRole.UserRole)
+                row_index[item_id] = r
+                data = self.files_data.get(item_id)
+                if data:
+                    it_target = QTableWidgetItem(self.simulate_fbc_target(data['meta']))
+                    it_target.setFlags(it_target.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self.table.setItem(r, 7, it_target)
+            self._row_by_item_id = row_index
         finally:
             self._updating_table_items = False
 
@@ -210,15 +238,13 @@ class QueueController:
             warnings = data.get("warnings")
         if not hasattr(self, "table"):
             return
-        self._updating_table_items = True
-        try:
-            for r in range(self.table.rowCount()):
-                it0 = self.table.item(r, 0)
-                if it0 and it0.data(Qt.ItemDataRole.UserRole) == item_id:
-                    self.table.setItem(r, 8, self._make_status_item(status_code, error_msg, warnings))
-                    break
-        finally:
-            self._updating_table_items = False
+        r = self._find_table_row_by_item_id(item_id)
+        if r is not None:
+            self._updating_table_items = True
+            try:
+                self.table.setItem(r, 8, self._make_status_item(status_code, error_msg, warnings))
+            finally:
+                self._updating_table_items = False
         self.apply_table_filter()
 
     def focus_table_search(self):
@@ -681,6 +707,7 @@ class QueueController:
             act_batch = menu.addAction(tr("converter.ctx_batch_edit", count=cnt))
             act_save_src = menu.addAction(tr("converter.ctx_save_source_multi", count=cnt))
             act_organize = menu.addAction(tr("converter.ctx_organize_fb2"))
+            act_omnibus = menu.addAction(tr("converter.ctx_merge_omnibus", count=cnt))
             act_autonum = menu.addAction(tr("converter.ctx_autonumber_series", count=cnt))
             act_up = menu.addAction(tr("converter.ctx_move_up"))
             act_down = menu.addAction(tr("converter.ctx_move_down"))
@@ -697,6 +724,8 @@ class QueueController:
                 self.save_rows_to_source(selected_rows)
             elif chosen == act_organize:
                 self.organize_fb2_rows(selected_rows)
+            elif chosen == act_omnibus:
+                self.merge_omnibus_rows(selected_rows)
             elif chosen == act_autonum:
                 self.autonumber_series_rows(selected_rows)
             elif chosen == act_up:
@@ -705,6 +734,57 @@ class QueueController:
                 self.move_selected_rows(1)
             elif chosen == act_delete:
                 self.remove_book_rows(selected_rows)
+
+    def merge_omnibus_rows(self, rows):
+        """Объединяет выбранные книги (в порядке таблицы) в один том FB2 (Омнибус) и добавляет его в очередь."""
+        if not rows or len(rows) < 2:
+            return
+        items = []
+        for r in sorted(rows):
+            it0 = self.table.item(r, 0)
+            if not it0:
+                continue
+            item_id = it0.data(Qt.ItemDataRole.UserRole)
+            data = self.files_data.get(item_id)
+            if data:
+                items.append(data)
+        if len(items) < 2:
+            return
+        first_meta = items[0].get("meta") or {}
+        base_dir = os.path.dirname(os.path.abspath(items[0]["path"]))
+        default_stem = (first_meta.get("series") or first_meta.get("title") or "omnibus").strip()
+        safe_stem = "".join(ch for ch in default_stem if ch not in '<>:"/\\|?*').strip() or "omnibus"
+        omnibus_suffix = tr("converter.omnibus_suffix")
+        default_path = os.path.join(base_dir, f"{safe_stem} ({omnibus_suffix}).fb2")
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("converter.dlg_merge_omnibus"),
+            default_path,
+            "FictionBook 2 (*.fb2)",
+        )
+        if not out_path:
+            return
+        if not out_path.lower().endswith(".fb2"):
+            out_path += ".fb2"
+        try:
+            res = merge_fb2_books_to_omnibus(
+                items,
+                out_path,
+                default_omnibus_suffix=omnibus_suffix,
+                default_collection_title=tr("converter.omnibus_default_title"),
+                default_unknown_author=tr("converter.omnibus_unknown_author"),
+                default_book_prefix=tr("converter.omnibus_book_prefix"),
+            )
+            self.process_files([res["path"]])
+            show_themed_message(
+                self,
+                tr("common.success"),
+                tr("converter.msg_merge_omnibus_ok", count=res["books_count"], path=os.path.basename(res["path"])),
+                "info",
+            )
+        except Exception as e:
+            logger.error("Ошибка объединения книг в омнибус: %s", e)
+            show_themed_message(self, tr("common.error"), tr("converter.err_merge_omnibus", e=e), "error")
 
     def organize_fb2_rows(self, rows):
         """Копирует или перемещает исходные .fb2/.zip выбранных строк по папкам Автор/Серия без конвертации."""
@@ -1039,11 +1119,14 @@ class QueueController:
         )
 
     def activate_and_import(self, filepaths):
-        """Поднимает окно на передний план (при вызове из второго экземпляра) и загружает переданные файлы."""
-        if self.isMinimized():
-            self.showNormal()
-        self.raise_()
-        self.activateWindow()
+        """Поднимает окно на передний план (в т.ч. из трея / Dock) и загружает переданные файлы."""
+        if hasattr(self, "restore_from_tray"):
+            self.restore_from_tray()
+        else:
+            if self.isMinimized():
+                self.showNormal()
+            self.raise_()
+            self.activateWindow()
         if filepaths:
             self.enqueue_import_paths(filepaths)
 

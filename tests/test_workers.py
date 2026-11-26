@@ -192,7 +192,7 @@ class TestWorkers(unittest.TestCase):
                 fh.write(b"<FictionBook/>")
 
             meta = {"last": "Толстой", "first": "Лев", "mid": "", "series": "", "num": "", "title": "Война и мир"}
-            target_file = os.path.join(out_dir, "Война и мир.epub")
+            target_file = os.path.join(out_dir, "Толстой - Война и мир.epub")
             with open(target_file, "wb") as fh:
                 fh.write(b"EPUB")
             now = time.time()
@@ -251,6 +251,24 @@ class TestWorkers(unittest.TestCase):
             self.assertTrue(SingleInstanceManager._is_allowed_ipc_path(ttf_p))
             self.assertFalse(SingleInstanceManager._is_allowed_ipc_path(txt_p))
             self.assertFalse(SingleInstanceManager._is_allowed_ipc_path(fb2_p + "\x00.txt"))
+
+    def test_conversion_worker_deepcopies_nested_app_settings(self):
+        src_settings = {
+            "convert_workers": "2",
+            "filename_tokens": [{"type": "author"}],
+        }
+        w = workers.ConversionWorker(
+            items=[],
+            selected_format="epub3",
+            save_mode="source",
+            custom_dir="",
+            title_style_params={"h1_cl": "red"},
+            compression=None,
+            email_enabled=False,
+            app_settings=src_settings,
+        )
+        src_settings["filename_tokens"].append({"type": "title"})
+        self.assertEqual(len(w.app_settings["filename_tokens"]), 1)
 
 
 if __name__ == "__main__":

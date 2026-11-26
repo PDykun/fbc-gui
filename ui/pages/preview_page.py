@@ -1,3 +1,4 @@
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 
 from core.i18n import tr
@@ -23,6 +24,17 @@ def build_preview_page(win, parent):
         segmented=True,
     )
     top_bar.addWidget(win.preview_mode_selector)
+
+    win.btn_preview_simulate_eink = QPushButton(tr("preview.btn_simulate_eink"))
+    win.btn_preview_simulate_eink.setCheckable(True)
+    win.btn_preview_simulate_eink.setProperty("pill", True)
+    win.btn_preview_simulate_eink.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_preview_simulate_eink.setToolTip(tr("preview.tooltip_simulate_eink"))
+    win.btn_preview_simulate_eink.setChecked(
+        str(win.app_settings.get("preview_simulate_eink", "true")).lower() == "true"
+    )
+    win.btn_preview_simulate_eink.toggled.connect(win.on_preview_simulate_eink_toggled)
+    top_bar.addWidget(win.btn_preview_simulate_eink)
 
     win.lbl_preview_source = QLabel(tr("preview.info_bar"))
     win.lbl_preview_source.setObjectName("RowDesc")

@@ -1,9 +1,8 @@
 import os
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFileDialog, QInputDialog
+from PyQt6.QtWidgets import QFileDialog, QInputDialog, QWidget
 
-from core.config import DEFAULT_OUTPUT_FORMAT, atomic_write_text
+from core.config import DEFAULT_OUTPUT_FORMAT, atomic_write_text, get_default_app_settings
 from core.css_preview import generate_css_content as build_css_content, get_default_css_ui_state
 from core.i18n import tr
 from core.logger import get_logger
@@ -28,10 +27,13 @@ logger = get_logger("app")
 class PresetsController:
     """Контроллер управления пользовательскими и встроенными пресетами настроек и CSS."""
 
+    _PRESET_NONE_DATA = "__none__"
+
     def _update_preset_buttons_state(self):
         if not hasattr(self, "user_preset_combo"):
             return
         item = self.user_preset_combo.currentData()
+        is_none = item == self._PRESET_NONE_DATA
         has_item = isinstance(item, dict) and bool(item.get("path"))
         has_builtin = False
         if has_item:
@@ -43,7 +45,7 @@ class PresetsController:
                 )
             )
         if hasattr(self, "btn_preset_apply"):
-            self.btn_preset_apply.setEnabled(has_item)
+            self.btn_preset_apply.setEnabled(has_item or is_none)
         if hasattr(self, "btn_preset_delete"):
             self.btn_preset_delete.setEnabled(has_item)
         if hasattr(self, "btn_preset_restore"):
@@ -53,28 +55,55 @@ class PresetsController:
         if not hasattr(self, "user_preset_combo"):
             return
         cb = self.user_preset_combo
-        prev_name = selected_name
-        if prev_name is None:
-            prev_name = self.app_settings.get("active_user_preset", "") or None
-        if prev_name is None and cb.currentIndex() >= 0:
-            cur_data = cb.currentData()
-            if isinstance(cur_data, dict):
-                prev_name = cur_data.get("name")
+        if selected_name is not None:
+            prev_name = selected_name
+        else:
+            prev_name = self.app_settings.get("active_user_preset", "")
+            if not prev_name and cb.currentIndex() >= 0:
+                cur_data = cb.currentData()
+                if isinstance(cur_data, dict):
+                    prev_name = cur_data.get("name", "")
 
         cb.blockSignals(True)
         cb.clear()
+        cb.addItem(tr("settings.preset_option_none"), self._PRESET_NONE_DATA)
         presets = list_user_presets(self.presets_dir)
-        if not presets:
-            cb.addItem(tr("settings.preset_none"), None)
-        else:
-            target_idx = 0
-            for idx, item in enumerate(presets):
-                cb.addItem(item["name"], item)
-                if prev_name and item["name"] == prev_name:
-                    target_idx = idx
-            cb.setCurrentIndex(target_idx)
+        target_idx = 0
+        for idx, item in enumerate(presets, start=1):
+            cb.addItem(item["name"], item)
+            if prev_name and item["name"] == prev_name:
+                target_idx = idx
+        cb.setCurrentIndex(target_idx)
         cb.blockSignals(False)
         self._update_preset_buttons_state()
+
+    def _build_default_reset_payload(self):
+        default_settings = get_default_app_settings()
+        default_css_state = get_default_css_ui_state()
+        default_settings["css_ui_state"] = default_css_state
+        fonts_dir = getattr(self, "fonts_dir", "")
+        default_css = build_css_content(default_css_state, fonts_dir)
+        return {
+            "name": "",
+            "settings": default_settings,
+            "css_content": default_css,
+        }
+
+    def reset_to_default_preset(self, show_alert=True):
+        payload = self._build_default_reset_payload()
+        if self._apply_preset_payload(payload, selected_name="", reset_default_tokens=True):
+            logger.info("Настройки и стили сброшены к значениям по умолчанию (пресет «Нет»)")
+            if show_alert:
+                show_themed_message(self, tr("common.success"), tr("settings.msg_preset_reset_default"), "info")
+            return True
+        self.refresh_user_presets_combo(selected_name=self.app_settings.get("active_user_preset", ""))
+        return False
+
+    def on_user_preset_activated(self, _idx):
+        if not hasattr(self, "user_preset_combo"):
+            return
+        if self.user_preset_combo.currentData() == self._PRESET_NONE_DATA:
+            self.reset_to_default_preset()
 
     def _current_preset_css_and_settings(self):
         if hasattr(self, "_get_css_ui_state"):
@@ -87,15 +116,66 @@ class PresetsController:
                 css_content = f.read()
         return self.app_settings, css_content
 
-    def _apply_preset_payload(self, payload, selected_name=None):
+    def _sync_ui_after_preset_apply(self, active_name):
+        # 1. Пересобираем только страницу настроек на месте (очередь, поиск и WebView превью не пересоздаются)
+        if hasattr(self, "pages") and hasattr(self, "create_settings_page"):
+            cur_page = self.pages.currentIndex()
+            old_settings_page = getattr(self, "page_settings", None)
+            settings_idx = self.pages.indexOf(old_settings_page) if old_settings_page is not None else -1
+            if settings_idx >= 0:
+                new_settings_page = QWidget()
+                self.create_settings_page(new_settings_page)
+                self.pages.removeWidget(old_settings_page)
+                old_settings_page.deleteLater()
+                self.pages.insertWidget(settings_idx, new_settings_page)
+                self.page_settings = new_settings_page
+                if hasattr(self, "switch_page"):
+                    self.switch_page(cur_page)
+
+        # 2. Обновляем страницу конвертера на месте (без сброса таблицы, поиска, фильтров и выделения)
+        fmt_val = self.app_settings.get("output_format", DEFAULT_OUTPUT_FORMAT)
+        if hasattr(self, "format_combo"):
+            idx = self.format_combo.findData(fmt_val)
+            if idx >= 0 and self.format_combo.currentIndex() != idx:
+                self.format_combo.blockSignals(True)
+                self.format_combo.setCurrentIndex(idx)
+                self.format_combo.blockSignals(False)
+        if hasattr(self, "_refresh_all_target_filenames"):
+            self._refresh_all_target_filenames()
+        if hasattr(self, "update_header_status"):
+            self.update_header_status()
+        if hasattr(self, "update_convert_button_text"):
+            self.update_convert_button_text()
+
+        # 3. Обновляем страницу стилей на месте
+        for attr, skey, default_val in (
+            ("grayscale_cb", "grayscale", "none"),
+            ("image_color_profile_cb", "image_color_profile", "none"),
+            ("fit_to_screen_cb", "fit_to_screen", "false"),
+            ("cover_resize_cb", "cover_resize", "keepAR"),
+        ):
+            cb = getattr(self, attr, None)
+            if cb is not None and hasattr(self, "_set_combo_by_data"):
+                cb.blockSignals(True)
+                self._set_combo_by_data(cb, str(self.app_settings.get(skey, default_val)))
+                cb.blockSignals(False)
+
+        self.load_and_parse_css_to_gui()
+        self.save_visual_css(show_alert=False)
+        if hasattr(self, "_refresh_halos"):
+            self._refresh_halos()
+        self.refresh_user_presets_combo(selected_name=active_name)
+        self.refresh_preview()
+
+    def _apply_preset_payload(self, payload, selected_name=None, *, reset_default_tokens=False):
         if self._has_blocking_workers():
             logger.warning("Применение пресета отклонено: активны фоновые задачи")
             show_themed_message(self, tr("common.warning"), tr("common.busy_workers_warning"), "warning")
             return False
         preset_settings = payload.get("settings") or {}
         has_css_ui_state = isinstance(preset_settings.get("css_ui_state"), dict) and bool(preset_settings.get("css_ui_state"))
-        apply_preset_to_settings(self.app_settings, payload)
-        active_name = selected_name or payload.get("name") or ""
+        apply_preset_to_settings(self.app_settings, payload, reset_default_tokens=reset_default_tokens)
+        active_name = (payload.get("name") or "") if selected_name is None else selected_name
         self.app_settings["active_user_preset"] = active_name
 
         css_content = payload.get("css_content") or ""
@@ -109,30 +189,7 @@ class PresetsController:
 
         self.save_app_settings()
         self.update_fbc_config_file()
-
-        cur_page = self.pages.currentIndex() if hasattr(self, "pages") else 3
-        search_query = self.search_edit.text() if hasattr(self, "search_edit") else ""
-        selected_id = None
-        if hasattr(self, "table"):
-            sel_rows = self.table.selectionModel().selectedRows()
-            if sel_rows:
-                it = self.table.item(sel_rows[0].row(), 0)
-                if it:
-                    selected_id = it.data(Qt.ItemDataRole.UserRole)
-
-        self.create_widgets()
-        self._update_undo_redo_ui()
-        if search_query and hasattr(self, "search_edit"):
-            self.search_edit.blockSignals(True)
-            self.search_edit.setText(search_query)
-            self.search_edit.blockSignals(False)
-        self._repopulate_table_from_files_data(selected_id)
-        self.load_and_parse_css_to_gui()
-        self.save_visual_css(show_alert=False)
-        self.apply_theme(self.app_settings.get("theme", "Modern"), save=False)
-        self.refresh_user_presets_combo(selected_name=active_name)
-        self.switch_page(cur_page)
-        self.refresh_preview()
+        self._sync_ui_after_preset_apply(active_name)
         return True
 
     def save_user_preset_clicked(self):
@@ -169,6 +226,9 @@ class PresetsController:
         if not hasattr(self, "user_preset_combo"):
             return
         item = self.user_preset_combo.currentData()
+        if item == self._PRESET_NONE_DATA:
+            self.reset_to_default_preset()
+            return
         if not isinstance(item, dict) or not item.get("path"):
             return
         try:
@@ -192,7 +252,7 @@ class PresetsController:
             if self.app_settings.get("active_user_preset") == name:
                 self.app_settings["active_user_preset"] = ""
                 self.save_app_settings()
-            self.refresh_user_presets_combo()
+            self.refresh_user_presets_combo(selected_name=self.app_settings.get("active_user_preset", ""))
             logger.info("Удалён пользовательский пресет: %s", name)
             show_themed_message(self, tr("common.info"), tr("settings.msg_preset_deleted", name=name), "info")
         except Exception as e:

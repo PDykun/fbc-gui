@@ -23,6 +23,7 @@ from ui.dialogs.book_edit import (
     BatchEditDialog,
     BookEditDialog,
 )
+from ui.dialogs.watch_folder import WatchFolderRuleDialog
 
 __all__ = [
     "_format_bytes_human",
@@ -40,4 +41,5 @@ __all__ = [
     "MetadataLookupDialog",
     "BatchEditDialog",
     "BookEditDialog",
+    "WatchFolderRuleDialog",
 ]
