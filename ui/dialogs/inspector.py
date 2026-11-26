@@ -2,7 +2,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QLabel, QFrame, QDialog, QPlainTextEdit,
-    QTabWidget, QTreeWidget, QTreeWidgetItem,
+    QTreeWidget, QTreeWidgetItem,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 

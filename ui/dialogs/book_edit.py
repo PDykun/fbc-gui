@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QLabel, QFrame, QCheckBox,
     QDialog, QLineEdit, QFileDialog, QPlainTextEdit,
-    QTabWidget, QComboBox, QTreeWidget, QTreeWidgetItem, QScrollArea,
+    QComboBox, QTreeWidget, QTreeWidgetItem, QScrollArea,
 )
 
 from core.i18n import tr

@@ -1291,6 +1291,34 @@ class TestFb2Processor(unittest.TestCase):
             self.assertEqual(len(errs), 1)
             self.assertFalse(os.path.exists(os.path.join(outside_dir, "escaped.fb2")))
 
+    def test_attach_stylesheet_and_windows_fonts_avoid_symlinks(self):
+        from core.fb2.converter import _attach_fonts_dir, _attach_stylesheet_file
+
+        with tempfile.TemporaryDirectory() as td:
+            src_dir = os.path.join(td, "src")
+            fonts_dir = os.path.join(src_dir, "fonts")
+            work_dir = os.path.join(td, "work")
+            os.makedirs(fonts_dir)
+            os.makedirs(work_dir)
+            css_path = os.path.join(src_dir, "ebook_styles.css")
+            with open(css_path, "w", encoding="utf-8") as fh:
+                fh.write("body { margin: 0; }\n")
+            with open(os.path.join(fonts_dir, "sample.ttf"), "wb") as fh:
+                fh.write(b"FONT")
+
+            with patch("core.fb2.converter.os.symlink", side_effect=AssertionError("symlink must not be called")):
+                dst_css = _attach_stylesheet_file(src_dir, None, work_dir)
+                with patch("core.fb2.converter.os.name", "nt"):
+                    dst_fonts = _attach_fonts_dir(src_dir, None, work_dir)
+
+            self.assertEqual(dst_css, os.path.join(work_dir, "ebook_styles.css"))
+            self.assertTrue(os.path.isfile(dst_css))
+            self.assertFalse(os.path.islink(dst_css))
+            self.assertEqual(dst_fonts, os.path.join(work_dir, "fonts"))
+            self.assertTrue(os.path.isdir(dst_fonts))
+            self.assertFalse(os.path.islink(dst_fonts))
+            self.assertTrue(os.path.isfile(os.path.join(dst_fonts, "sample.ttf")))
+
 
 if __name__ == "__main__":
     unittest.main()

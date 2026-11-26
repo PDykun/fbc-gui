@@ -51,6 +51,7 @@ Importing runs in a background thread with lazy on-demand XML loading so large l
 - **Series auto-numbering:** select books in order → right-click → **Auto-number Series** (`1, 2, 3…`). Reorder rows anytime with `Alt+↑` / `Alt+↓`.
 - **Save back to source FB2:** check the option in the Edit dialog or choose **Save Metadata to Source FB2** from the context menu. Writes are atomic and use minimal-diff FictionBook 2.1 XSD ordering so untouched rich markup is preserved.
 - **Source FB2 Organizer (without conversion):** select one or more books → right-click → **Organize / Rename Source FB2...**. Pick a destination folder, layout (**Author / Series / File**, **Author / File**, or **Flat**), and action (**Copy** or **Move**), review the **Before → After** preview table, and click **Run**.
+- **Merge into Omnibus:** select 2 or more books in the desired order → right-click → **Merge into Omnibus (N)...** to combine them into a single valid `.fb2` volume with a unified table of contents, volume list annotation, and isolated internal IDs, footnotes, and images.
 
 ### Undo / Redo
 Every metadata edit, online lookup, batch update, cover replacement, row reorder, removal, or list clear supports multi-level **Undo / Redo** (`Cmd+Z` / `Ctrl+Z`, `Shift+Cmd+Z` / `Ctrl+Y`, or the **↩ / ↪** buttons).
@@ -88,12 +89,13 @@ Every setting auto-saves to `ebook_styles.css` and updates the live preview imme
 - **2. Title Page & Headings:** size, color, alignment, and font style for book title, author, and `H2–H5`.
 - **3. Body Text & Drop Cap:** paragraph alignment, first-line indent, scene subtitles, drop cap color and size.
 - **4. Annotation, Epigraphs, Poems & Footnotes:** typography, background fill, and border styling.
-- **5. Illustrations & SVG:** alignment, max width, captions, **Grayscale (Luma)**, fit-to-screen, and cover resize mode.
+- **5. Illustrations & SVG:** alignment, max width, captions, **Reader Display** optimization profile (`Off`, `B&W E Ink Carta 1200/1300`, `B&W 16 Gray Levels Dithered`, `Color E Ink Kaleido 3`, `Color E Ink Gallery 3 / Canvas Color`), **Grayscale (Luma)**, fit-to-screen, and cover resize mode.
 
 ## 5. Preview Tab: Live Book Spread
 
 Preview renders either your **currently selected book** (full-bleed cover with spine shadow on the left page, title/annotation/epigraph/opening chapter on the right) or a **comprehensive style sample**.
 - Uses native **WebKit (WKWebView)** on macOS and **Edge WebView2** on Windows.
+- Toggle **Simulate E Ink Display** to preview how covers and pages will render on the selected physical e-ink display type (synced with Styles and device presets).
 - Click **Open in Browser** to export and inspect the preview in your default browser.
 
 ## 6. Settings Tab: Device Profiles, Presets & Template Builders
@@ -134,7 +136,7 @@ Passwords are stored in your OS secret vault (**macOS Keychain** or **Windows Cr
 ### Direct Device Delivery (USB / MTP / sync2kindle)
 In **Settings → Device Delivery** (or via the **To Reader** button on the Converter toolbar):
 - **MTP (Kindle)** for modern Kindles (Scribe, Paperwhite 12, Colorsoft) and **USB (Kindle)** for legacy USB mass-storage Kindles. On first use, FBC GUI automatically downloads `sync2kindle` (`s2k`) from GitHub with checksum verification.
-- **Reader Folder** copies converted e-books (`.epub`, `.azw3`, `.kfx`, `.azw8`, `.pdf`, `.mobi`) directly to a mounted Kobo / PocketBook folder while skipping already up-to-date files.
+- **Reader Folder** copies converted e-books (`.epub`, `.azw3`, `.kfx`, `.azw8`, `.pdf`, `.mobi`) directly to a mounted Kobo / PocketBook / ONYX BOOX folder while skipping already up-to-date files. Click **Detect Reader** to automatically discover connected USB e-readers and local Kobo cloud sync folders.
 - Use **Dry Run** to preview changes safely; **Keep local books** prevents deleting local files on your computer.
 
 ### Watch Folder Mode & System Tray / macOS Menu Bar

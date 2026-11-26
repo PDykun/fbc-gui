@@ -255,6 +255,9 @@ def _attach_fonts_dir(base_dir, fbc_config, tmp_work_dir):
         return None
 
     dst_fonts = os.path.join(tmp_work_dir, "fonts")
+    if os.name == "nt":
+        shutil.copytree(src_fonts, dst_fonts)
+        return dst_fonts
     try:
         os.symlink(src_fonts, dst_fonts, target_is_directory=True)
     except (OSError, NotImplementedError):
@@ -277,10 +280,7 @@ def _attach_stylesheet_file(base_dir, fbc_config, tmp_work_dir):
         return None
 
     dst_css = os.path.join(tmp_work_dir, "ebook_styles.css")
-    try:
-        os.symlink(src_css, dst_css)
-    except (OSError, NotImplementedError):
-        shutil.copy2(src_css, dst_css)
+    shutil.copy2(src_css, dst_css)
     return dst_css
 
 
@@ -360,8 +360,9 @@ def convert_book_file(
 
     try:
         with tempfile.TemporaryDirectory() as tmp_root:
-            tmp_work_dir = os.path.join(tmp_root, "work")
-            tmp_out_dir = os.path.join(tmp_root, "out")
+            tmp_root_real = os.path.realpath(tmp_root)
+            tmp_work_dir = os.path.join(tmp_root_real, "work")
+            tmp_out_dir = os.path.join(tmp_root_real, "out")
             os.makedirs(tmp_work_dir, exist_ok=True)
             os.makedirs(tmp_out_dir, exist_ok=True)
             linked_fonts = _attach_fonts_dir(base_dir, fbc_config, tmp_work_dir)
