@@ -422,6 +422,77 @@ class TestUpdater(unittest.TestCase):
             handler.redirect_request(req2, None, 302, "Found", {}, _u("https", "api.example.org", "/v4/books"))
         cm.exception.close()
 
+    def test_build_only_update_detection_and_manifest_reset(self):
+        import contextlib
+        from core.updater import parse_build_number
+        from update_version_json import update_manifest
+
+        self.assertEqual(parse_build_number(115), 115)
+        self.assertEqual(parse_build_number("115"), 115)
+        self.assertEqual(parse_build_number("2.11.115"), 115)
+        self.assertEqual(parse_build_number("build 115"), 115)
+        self.assertEqual(parse_build_number(None), 0)
+        self.assertEqual(parse_build_number(""), 0)
+
+        self.assertTrue(is_newer_version("2.11", 115, "2.11", 114))
+        self.assertTrue(is_newer_version("2.11", "2.11.115", "2.11", 114))
+        self.assertFalse(is_newer_version("2.11", 115, "2.11", 115))
+        self.assertFalse(is_newer_version("2.11", 114, "2.11", 115))
+
+        seen_headers = {}
+        manifest = {
+            "version": "2.11",
+            "build": 115,
+            "assets": {
+                "macos-arm64": {
+                    "filename": "FBC_GUI_v2.11_macos_arm64.dmg",
+                    "url": "https://example.invalid/releases/download/v2.11/FBC_GUI_v2.11_macos_arm64.dmg",
+                    "sha256": "b" * 64,
+                    "kind": "dmg",
+                }
+            },
+        }
+        manifest_bytes = json.dumps(manifest).encode("utf-8")
+
+        def _fake_urlopen(req, timeout=8, context=None):
+            seen_headers.update({k.lower(): v for k, v in req.header_items()})
+            return _MockResponse(manifest_bytes)
+
+        with mock.patch("core.updater.urllib.request.urlopen", side_effect=_fake_urlopen):
+            info = fetch_update_info(
+                "2.11",
+                114,
+                manifest_url="https://example.invalid/releases/latest/download/version.json",
+                sys_platform="darwin",
+                machine="arm64",
+            )
+        self.assertIsNone(info["error"])
+        self.assertTrue(info["has_update"])
+        self.assertEqual(info["version"], "2.11")
+        self.assertEqual(info["build"], 115)
+        self.assertEqual(seen_headers.get("cache-control"), "no-cache")
+
+        with tempfile.TemporaryDirectory() as td:
+            manifest_path = os.path.join(td, "version.json")
+            with open(manifest_path, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "version": "2.11",
+                        "build": 114,
+                        "assets": {"macos-arm64": {"filename": "old.dmg", "sha256": "a" * 64}},
+                        "downloads": {"macos-arm64": "https://example.invalid/old.dmg"},
+                    },
+                    fh,
+                )
+            with contextlib.redirect_stdout(io.StringIO()):
+                update_manifest(manifest_path, td, "2.11", 115)
+            with open(manifest_path, encoding="utf-8") as fh:
+                updated = json.load(fh)
+            self.assertEqual(updated["version"], "2.11")
+            self.assertEqual(updated["build"], 115)
+            self.assertEqual(updated["assets"], {})
+            self.assertEqual(updated["downloads"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

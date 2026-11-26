@@ -380,10 +380,16 @@ def refresh_widget_halos(window, qss_text="", mode="dark"):
         elif fname == "TokenTagChip":
             _apply_halo_effect(frame, c_pill, blur_radius=10)
 
-    if hasattr(window, "table_row_delegate") and window.table_row_delegate is not None:
-        window.table_row_delegate.set_tokens(tokens)
-        if hasattr(window, "table"):
-            window.table.viewport().update()
+    for delegate_attr, table_attr in (
+        ("table_row_delegate", "table"),
+        ("watch_table_row_delegate", "watch_table"),
+    ):
+        delegate = getattr(window, delegate_attr, None)
+        if delegate is not None:
+            delegate.set_tokens(tokens)
+            tbl = getattr(window, table_attr, None)
+            if tbl is not None:
+                tbl.viewport().update()
 
 
 class RoundedRowDelegate(QStyledItemDelegate):

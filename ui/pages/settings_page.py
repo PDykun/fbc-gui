@@ -13,7 +13,7 @@ from core.i18n import LOCALE, tr, get_theme_choices
 from core.config import DEFAULT_OUTPUT_FORMAT, is_secure_password_storage_available
 from core.fb2_processor import FORMAT_EXT_MAP
 from core.metadata_lookup import DEFAULT_ENABLED_PROVIDERS, DEFAULT_PROVIDER_ORDER, PROVIDER_LABELS
-from ui.theme import PillSelector, FormatComboBox, FilenameTemplateBuilder, create_section_card, add_setting_row
+from ui.theme import PillSelector, FormatComboBox, FilenameTemplateBuilder, RoundedRowDelegate, create_section_card, add_setting_row
 
 
 def _build_presets_section(win, s_layout):
@@ -1085,6 +1085,8 @@ def _build_watch_folder_section(win, s_layout):
     )
 
     win.watch_table = QTableWidget(0, 6)
+    win.watch_table.setAlternatingRowColors(False)
+    win.watch_table.setShowGrid(False)
     win.watch_table.setHorizontalHeaderLabels([
         tr("watch.col_enabled"),
         tr("watch.col_name"),
@@ -1094,8 +1096,14 @@ def _build_watch_folder_section(win, s_layout):
         tr("watch.col_status"),
     ])
     win.watch_table.verticalHeader().setVisible(False)
+    win.watch_table.verticalHeader().setDefaultSectionSize(38)
+    win.watch_table_row_delegate = RoundedRowDelegate(win.watch_table)
+    win.watch_table.setItemDelegate(win.watch_table_row_delegate)
     win.watch_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     win.watch_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+    win.watch_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    win.watch_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    win.watch_table.customContextMenuRequested.connect(win.on_watch_table_context_menu)
     win.watch_table.setMinimumHeight(130)
     win.watch_table.setMaximumHeight(220)
     win.watch_table.doubleClicked.connect(lambda _idx: win.edit_watch_folder_clicked())

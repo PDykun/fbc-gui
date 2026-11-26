@@ -124,8 +124,24 @@ def _parse_semver(ver_str):
         return None
 
 
+def parse_build_number(build_val):
+    """Извлекает целочисленный номер билда из int или строки ('115', '2.11.115', 'build 115')."""
+    if isinstance(build_val, bool) or build_val is None:
+        return 0
+    if isinstance(build_val, int):
+        return max(0, build_val)
+    raw = str(build_val).strip()
+    if not raw:
+        return 0
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        nums = re.findall(r"\d+", raw)
+        return int(nums[-1]) if nums else 0
+
+
 def is_newer_version(remote_ver, remote_build, local_ver, local_build):
-    """Возвращает True, если удалённая версия/сборка новее локальной (через packaging.version)."""
+    """Возвращает True, если удалённая версия или номер билда новее локальных (через packaging.version)."""
     r_sem = _parse_semver(remote_ver)
     l_sem = _parse_semver(local_ver)
 
@@ -141,15 +157,7 @@ def is_newer_version(remote_ver, remote_build, local_ver, local_build):
         if r_ver_padded != l_ver_padded:
             return r_ver_padded > l_ver_padded
 
-    try:
-        r_b = int(remote_build or 0)
-    except (TypeError, ValueError):
-        r_b = 0
-    try:
-        l_b = int(local_build or 0)
-    except (TypeError, ValueError):
-        l_b = 0
-    return r_b > l_b
+    return parse_build_number(remote_build) > parse_build_number(local_build)
 
 
 def compute_file_sha256(filepath):
@@ -359,10 +367,11 @@ def fetch_update_info(
     machine=None,
 ):
     """Загружает version.json (через GitHub Releases latest/download) и проверяет наличие новой версии."""
+    local_build_num = parse_build_number(local_build)
     result = {
         "has_update": False,
         "version": str(local_ver),
-        "build": int(local_build or 0),
+        "build": local_build_num,
         "download_url": fallback_url,
         "filename": "",
         "sha256": "",
@@ -376,7 +385,11 @@ def fetch_update_info(
             raise ValueError(f"Unsupported manifest URL scheme: {manifest_url}")
         req = urllib.request.Request(
             manifest_url,
-            headers={"User-Agent": f"FBC-GUI/{local_ver}"},
+            headers={
+                "User-Agent": f"FBC-GUI/{local_ver}",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+            },
         )
         ctx = _build_ssl_context()
         with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True) as resp:
@@ -388,7 +401,7 @@ def fetch_update_info(
             raise ValueError("Invalid manifest format")
 
         remote_ver = str(manifest.get("version", local_ver)).strip()
-        remote_build = manifest.get("build", 0)
+        remote_build = parse_build_number(manifest.get("build", 0))
         changelog_raw = manifest.get("changelog", "")
         if isinstance(changelog_raw, dict):
             changelog = str(
@@ -401,10 +414,7 @@ def fetch_update_info(
             changelog = str(changelog_raw or "").strip()
 
         result["version"] = remote_ver
-        try:
-            result["build"] = int(remote_build or 0)
-        except (TypeError, ValueError):
-            result["build"] = 0
+        result["build"] = remote_build
 
         asset = select_update_asset(
             manifest,

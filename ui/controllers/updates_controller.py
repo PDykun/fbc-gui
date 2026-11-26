@@ -228,10 +228,12 @@ class UpdatesController:
         if self._update_dl_worker is not None and self._update_dl_worker.isRunning():
             return
         ver = update_info.get("version") or ""
+        build = int(update_info.get("build") or 0)
+        ver_display = f"{ver}.{build}" if (ver == self.app_version and build > 0) else ver
         self._update_dl_dlg = UpdateDownloadDialog(
             self,
-            version_str=ver,
-            initial_status=tr("about.update_dl_preparing", ver=ver),
+            version_str=ver_display,
+            initial_status=tr("about.update_dl_preparing", ver=ver_display),
         )
         worker = UpdateDownloadWorker(
             download_url=update_info["download_url"],

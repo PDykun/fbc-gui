@@ -1,4 +1,4 @@
-# FBC GUI v2.11 (build 115)
+# FBC GUI v2.11 (build 116)
 
 ## Русская версия
 
@@ -15,11 +15,12 @@
   - Исправлено перетаскивание плашек в конструкторах шаблонов имени файла и заголовка: центрирование под курсором, скруглённый силуэт капсулы, курсор сжатой руки и вертикальный индикатор точного места вставки.
 
 *_Исправления ошибок и техническое обслуживание_*
-- *Исправлено падение приложения при удалении наблюдаемой папки (Watch Folder): в диалог подтверждения `show_themed_confirm` передан текст кнопки подтверждения и добавлено безопасное значение по умолчанию.*
+- *Улучшена таблица наблюдаемых папок (Watch Folder): добавлено выделение выбранной строки в стиле главной таблицы книг (`RoundedRowDelegate`) и контекстное меню по правому клику с пунктами «Изменить» и «Удалить».*
+- *Доработана система автообновления при смене только номера билда: добавлен устойчивый разбор номера билда (`parse_build_number`), заголовки `Cache-Control: no-cache` при чтении `version.json`, сброс устаревших `assets`/SHA-256 в `update_version_json.py` и отображение номера билда в диалоге загрузки.*
 - *Исправлена ошибка конвертации на Windows (`The path cannot be traversed because it contains an untrusted mount point`): вместо симлинков во временной рабочей папке `fbc` теперь используется копирование `ebook_styles.css` и каталога `fonts` (на Windows), а путь временного каталога раскрывается через `os.path.realpath`.*
 - *Усилена безопасность и стабильность: проверка разрешённых хостов в автообновлении, изоляция HTML-превью во временном каталоге (`WKWebView` / `WebView2`), предварительная проверка превышения лимита размера вложений SMTP, таймауты обращений к macOS Keychain, защита от выхода за пределы целевого каталога в организаторе FB2 и отклонение `DOCTYPE/ENTITY`.*
 - *Ускорен поиск и обновление строк таблицы очереди (`O(1)`-индекс), выделен единый модуль метаданных `core/version.py`, добавлены модули `core/watch_folder.py`, `core/notifier.py`, `core/autostart.py`, `core/fb2/omnibus.py`, `core/image_optimizer.py`, `ui/controllers/tray_controller.py`, `ui/dialogs/watch_folder.py`.*
-- *Обновлены все 8 встроенных пресетов устройств (`presets_defaults/`), конфигурация сборки и CI (`.github/workflows/release.yml`, иконки трея и Menu Bar), удалены неиспользуемые импорты (`ruff`), расширен набор юнит-тестов до 192 тестов (включая `test_watch_folder.py`, `test_image_optimizer.py`, `test_ui_smoke.py`).*
+- *Обновлены все 8 встроенных пресетов устройств (`presets_defaults/`), конфигурация сборки и CI (`.github/workflows/release.yml`, иконки трея и Menu Bar), удалены неиспользуемые импорты (`ruff`), расширен набор юнит-тестов до 194 тестов (включая `test_watch_folder.py`, `test_image_optimizer.py`, `test_ui_smoke.py`).*
 
 ---
 
@@ -38,8 +39,9 @@
   - Improved template pill dragging in both filename and title builders: centered under the cursor, rounded capsule drag preview, closed-hand cursor, and a vertical insertion indicator line.
 
 *_Bug Fixes & Maintenance_*
-- *Fixed a crash when deleting a Watch Folder rule by passing the required confirmation button label to `show_themed_confirm` and adding a safe default.*
+- *Improved the Watch Folder table with rounded row selection matching the main book queue (`RoundedRowDelegate`) and a right-click context menu with Edit and Delete actions.*
+- *Enhanced build-only auto-updates: added resilient build number parsing (`parse_build_number`), `Cache-Control: no-cache` headers for `version.json`, stale asset/SHA-256 reset on build change in `update_version_json.py`, and build display in the update download dialog.*
 - *Fixed a Windows conversion error (`The path cannot be traversed because it contains an untrusted mount point`): `ebook_styles.css` and the `fonts` directory are now copied into the temporary `fbc` work folder on Windows instead of symlinked, and the temporary directory path is resolved via `os.path.realpath`.*
 - *Hardened security and reliability: update host allowlist validation, isolated temporary staging for native HTML preview (`WKWebView` / `WebView2`), pre-send SMTP oversized attachment checks, macOS Keychain subprocess timeouts, path-traversal protection in FB2 Organizer, and `DOCTYPE/ENTITY` rejection.*
 - *Added O(1) queue row indexing, centralized version metadata in `core/version.py`, and introduced modular components (`core/watch_folder.py`, `core/notifier.py`, `core/autostart.py`, `core/fb2/omnibus.py`, `core/image_optimizer.py`, `ui/controllers/tray_controller.py`, `ui/dialogs/watch_folder.py`).*
-- *Updated all 8 built-in device presets (`presets_defaults/`), CI/packaging configuration (`.github/workflows/release.yml`, tray/Menu Bar icons), cleaned up unused imports (`ruff`), and expanded the unit test suite to 192 passing tests (including `test_watch_folder.py`, `test_image_optimizer.py`, `test_ui_smoke.py`).*
+- *Updated all 8 built-in device presets (`presets_defaults/`), CI/packaging configuration (`.github/workflows/release.yml`, tray/Menu Bar icons), cleaned up unused imports (`ruff`), and expanded the unit test suite to 194 passing tests (including `test_watch_folder.py`, `test_image_optimizer.py`, `test_ui_smoke.py`).*

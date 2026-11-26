@@ -9,10 +9,12 @@ from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QDialog,
+    QHBoxLayout,
     QHeaderView,
     QMenu,
     QSystemTrayIcon,
     QTableWidgetItem,
+    QWidget,
 )
 
 from core.autostart import is_autostart_enabled, is_autostart_supported, set_autostart_enabled
@@ -346,11 +348,46 @@ class TrayWatchController:
             rules.append(dlg.get_rule())
             self._apply_updated_watch_rules(rules)
 
-    def edit_watch_folder_clicked(self):
+    def _selected_watch_row(self):
+        table = getattr(self, "watch_table", None)
+        if table is None:
+            return -1
+        row = table.currentRow()
+        if row >= 0:
+            return row
+        sel_model = table.selectionModel()
+        if sel_model is not None:
+            rows = sel_model.selectedRows()
+            if rows:
+                return rows[0].row()
+        return -1
+
+    def on_watch_table_context_menu(self, pos):
         table = getattr(self, "watch_table", None)
         if table is None:
             return
-        row = table.currentRow()
+        index = table.indexAt(pos)
+        if not index.isValid():
+            return
+        row = index.row()
+        rules = list(self.app_settings.get("watch_folders") or [])
+        if row < 0 or row >= len(rules):
+            return
+        table.selectRow(row)
+        table.setCurrentCell(row, index.column())
+
+        menu = QMenu(self)
+        act_edit = menu.addAction(tr("watch.btn_edit"))
+        menu.addSeparator()
+        act_delete = menu.addAction(tr("watch.btn_delete"))
+        chosen = menu.exec(table.viewport().mapToGlobal(pos))
+        if chosen == act_edit:
+            self.edit_watch_folder_clicked()
+        elif chosen == act_delete:
+            self.delete_watch_folder_clicked()
+
+    def edit_watch_folder_clicked(self):
+        row = self._selected_watch_row()
         rules = list(self.app_settings.get("watch_folders") or [])
         if row < 0 or row >= len(rules):
             return
@@ -365,10 +402,7 @@ class TrayWatchController:
             self._apply_updated_watch_rules(rules)
 
     def delete_watch_folder_clicked(self):
-        table = getattr(self, "watch_table", None)
-        if table is None:
-            return
-        row = table.currentRow()
+        row = self._selected_watch_row()
         rules = list(self.app_settings.get("watch_folders") or [])
         if row < 0 or row >= len(rules):
             return
@@ -398,6 +432,13 @@ class TrayWatchController:
         table = getattr(self, "watch_table", None)
         if table is None:
             return
+        prev_selected_id = None
+        prev_row = self._selected_watch_row()
+        if 0 <= prev_row < table.rowCount():
+            it0 = table.item(prev_row, 0)
+            if it0 is not None:
+                prev_selected_id = it0.data(Qt.ItemDataRole.UserRole)
+
         rules = normalize_watch_rules(self.app_settings.get("watch_folders"))
         mgr = getattr(self, "watch_manager", None)
         table.setRowCount(len(rules))
@@ -410,13 +451,29 @@ class TrayWatchController:
             "permission_error": tr("watch.status_permission_error"),
         }
 
+        restore_row = -1
         for row, rule in enumerate(rules):
+            rid = rule["id"]
+            if prev_selected_id and rid == prev_selected_id:
+                restore_row = row
+
+            it_chk = QTableWidgetItem("")
+            it_chk.setData(Qt.ItemDataRole.UserRole, rid)
+            it_chk.setFlags(it_chk.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 0, it_chk)
+
+            chk_wrap = QWidget()
+            chk_wrap.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+            chk_lay = QHBoxLayout(chk_wrap)
+            chk_lay.setContentsMargins(0, 0, 0, 0)
+            chk_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
             chk = QCheckBox()
             chk.setChecked(bool(rule.get("enabled", True)))
             chk.setCursor(Qt.CursorShape.PointingHandCursor)
-            rid = rule["id"]
+            chk.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
             chk.toggled.connect(lambda checked, r_id=rid: self._on_watch_rule_toggled(r_id, checked))
-            table.setCellWidget(row, 0, chk)
+            chk_lay.addWidget(chk)
+            table.setCellWidget(row, 0, chk_wrap)
 
             it_name = QTableWidgetItem(rule.get("name") or os.path.basename(rule["folder"]))
             it_folder = QTableWidgetItem(rule.get("folder", ""))
@@ -435,6 +492,10 @@ class TrayWatchController:
             for col, item in enumerate((it_name, it_folder, it_preset, it_delivery, it_status), start=1):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 table.setItem(row, col, item)
+
+        if restore_row >= 0:
+            table.selectRow(restore_row)
+            table.setCurrentCell(restore_row, 1)
 
         hdr = table.horizontalHeader()
         if hdr is not None:

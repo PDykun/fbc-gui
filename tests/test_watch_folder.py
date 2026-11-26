@@ -441,6 +441,74 @@ class TestWatchFolderAndTray(unittest.TestCase):
             host.watch_manager.set_rules.assert_called_once_with([])
             host.watch_manager.stop.assert_called_once()
 
+    def test_watch_table_uses_rounded_delegate_and_context_menu_actions(self):
+        from PyQt6.QtCore import QPoint, Qt
+        from PyQt6.QtWidgets import QMenu, QTableWidget, QWidget
+        from ui.controllers.tray_controller import TrayWatchController
+        from ui.theme import RoundedRowDelegate, refresh_widget_halos
+
+        class _DummyHost(QWidget, TrayWatchController):
+            def __init__(self, watch_dir):
+                super().__init__()
+                self.app_settings = {
+                    "watch_folders": [
+                        {"id": "r1", "enabled": True, "name": "Inbox", "folder": watch_dir}
+                    ]
+                }
+                self.watch_table = QTableWidget(0, 6)
+                self.watch_table_row_delegate = RoundedRowDelegate(self.watch_table)
+                self.watch_table.setItemDelegate(self.watch_table_row_delegate)
+                self.watch_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                self.watch_manager = MagicMock()
+                self.watch_manager.get_rule_status.return_value = "active"
+                self._tray_icon = None
+                self._tray_menu = None
+                self.edited = False
+                self.deleted = False
+
+            def edit_watch_folder_clicked(self):
+                self.edited = True
+
+            def delete_watch_folder_clicked(self):
+                self.deleted = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = _DummyHost(tmp)
+            host.refresh_watch_folders_table()
+            self.assertEqual(host.watch_table.rowCount(), 1)
+
+            refresh_widget_halos(host, "@row-sel-start: #123456\n", mode="light")
+            self.assertEqual(host.watch_table_row_delegate.tokens["row_sel_start"], "#123456")
+
+            idx0 = host.watch_table.model().index(0, 1)
+            pos = host.watch_table.visualRect(idx0).center()
+
+            seen_labels = []
+
+            def _fake_exec_edit(menu_self, _global_pos):
+                seen_labels[:] = [a.text() for a in menu_self.actions() if not a.isSeparator()]
+                return menu_self.actions()[0]
+
+            with patch.object(QMenu, "exec", _fake_exec_edit):
+                host.on_watch_table_context_menu(pos)
+            self.assertEqual(len(seen_labels), 2)
+            self.assertTrue(host.edited)
+            self.assertFalse(host.deleted)
+            self.assertEqual(host.watch_table.currentRow(), 0)
+
+            def _fake_exec_delete(menu_self, _global_pos):
+                non_sep = [a for a in menu_self.actions() if not a.isSeparator()]
+                return non_sep[1]
+
+            with patch.object(QMenu, "exec", _fake_exec_delete):
+                host.on_watch_table_context_menu(pos)
+            self.assertTrue(host.deleted)
+
+            # Клик по пустой области таблицы не открывает меню
+            with patch.object(QMenu, "exec") as mock_exec:
+                host.on_watch_table_context_menu(QPoint(5, 500))
+            mock_exec.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
