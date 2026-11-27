@@ -203,11 +203,28 @@ class TestConfig(unittest.TestCase):
                 saved_secure = json.load(f)
             self.assertEqual(saved_secure["smtp_password"], "")
 
-            with patch("core.config._save_smtp_password_secure", return_value=False), patch(
-                "core.config.logger.warning"
-            ) as mock_warn:
+            st["google_books_api_key"] = "AIzaSecret999"
+            st["opds_password"] = "opds_secret_999"
+            with patch("core.config._save_smtp_password_secure", return_value=False), \
+                 patch("core.config._save_google_books_key_secure", return_value=False), \
+                 patch("core.config._save_opds_password_secure", return_value=False), \
+                 patch("core.config.logger.warning") as mock_warn:
                 save_app_settings(sp, st)
-                self.assertTrue(mock_warn.called)
+                self.assertEqual(mock_warn.call_count, 3)
+
+            with open(sp, encoding="utf-8") as f:
+                raw_text = f.read()
+                saved_fallback = json.loads(raw_text)
+            self.assertEqual(saved_fallback["smtp_password"], "")
+            self.assertEqual(saved_fallback["google_books_api_key"], "")
+            self.assertEqual(saved_fallback["opds_password"], "")
+            self.assertNotIn("secret123", raw_text)
+            self.assertNotIn("AIzaSecret999", raw_text)
+            self.assertNotIn("opds_secret_999", raw_text)
+            # В памяти текущей сессии секреты сохраняются
+            self.assertEqual(st["smtp_password"], "secret123")
+            self.assertEqual(st["google_books_api_key"], "AIzaSecret999")
+            self.assertEqual(st["opds_password"], "opds_secret_999")
 
         with patch("core.config.HAS_KEYRING", False), patch("core.config.sys.platform", "win32"):
             self.assertFalse(is_secure_password_storage_available())

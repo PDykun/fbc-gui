@@ -585,7 +585,7 @@
     "email_test_body": "Это тестовое письмо из {app} v{ver}.\nПодключение к {host}:{port} работает корректно.\n",
     "email_test_ok": "Тестовое письмо успешно отправлено на адрес:\n{email}",
     "email_test_err": "Не удалось отправить тестовое письмо:\n{e}",
-    "email_keyring_warning": "⚠ Системное хранилище паролей (keyring) недоступно — пароль SMTP сохраняется локально в settings.json.",
+    "email_keyring_warning": "⚠ Системное хранилище паролей недоступно — секреты (пароль SMTP, ключ Google Books, пароль OPDS) используются только в текущей сессии и не сохраняются на диск.",
     "lookup_keyring_warning": "⚠ Системное хранилище паролей (keyring) недоступно — ключ Google Books и пароль OPDS сохраняются локально в settings.json.",
     "sec_device_sync": "ДОСТАВКА НА РИДЕР (USB / MTP / SYNC2KINDLE)",
     "lbl_sync_mode": "Режим подключения",

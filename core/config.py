@@ -583,33 +583,30 @@ _LAST_PLAINTEXT_SECRET_FIELDS = ()
 
 
 def get_last_plaintext_secret_fields():
-    """Возвращает кортеж имён секретных полей, сохранённых в settings.json в открытом виде при последнем сохранении."""
+    """Возвращает кортеж имён секретных полей, которые не удалось сохранить в защищённое хранилище (оставлены только в памяти сессии)."""
     return _LAST_PLAINTEXT_SECRET_FIELDS
 
 
 def save_app_settings(settings_path, app_settings):
     global _LAST_PLAINTEXT_SECRET_FIELDS
     data_to_save = dict(app_settings)
-    plaintext_fields = []
-    pwd = data_to_save.get("smtp_password", "")
-    if _save_smtp_password_secure(pwd):
-        data_to_save["smtp_password"] = ""
-    elif pwd:
-        plaintext_fields.append("smtp_password")
-        logger.warning("Защищённое хранилище паролей (keyring) недоступно; SMTP-пароль сохранён в settings.json")
-    gb_key = data_to_save.get("google_books_api_key", "")
-    if _save_google_books_key_secure(gb_key):
-        data_to_save["google_books_api_key"] = ""
-    elif gb_key:
-        plaintext_fields.append("google_books_api_key")
-        logger.warning("Защищённое хранилище (keyring) недоступно; API-ключ Google Books сохранён в settings.json")
-    opds_pwd = data_to_save.get("opds_password", "")
-    if _save_opds_password_secure(opds_pwd):
-        data_to_save["opds_password"] = ""
-    elif opds_pwd:
-        plaintext_fields.append("opds_password")
-        logger.warning("Защищённое хранилище (keyring) недоступно; пароль OPDS сохранён в settings.json")
-    _LAST_PLAINTEXT_SECRET_FIELDS = tuple(plaintext_fields)
+    unsaved_fields = []
+    for field_name, saver_fn, label in (
+        ("smtp_password", _save_smtp_password_secure, "SMTP-пароль"),
+        ("google_books_api_key", _save_google_books_key_secure, "API-ключ Google Books"),
+        ("opds_password", _save_opds_password_secure, "пароль OPDS"),
+    ):
+        secret_val = data_to_save.get(field_name, "")
+        saved_secure = saver_fn(secret_val)
+        # Никогда не записываем секреты в открытом виде в settings.json
+        data_to_save[field_name] = ""
+        if not saved_secure and secret_val:
+            unsaved_fields.append(field_name)
+            logger.warning(
+                "Защищённое хранилище секретов (keyring) недоступно; %s оставлен только в памяти сессии и не записан в settings.json",
+                label,
+            )
+    _LAST_PLAINTEXT_SECRET_FIELDS = tuple(unsaved_fields)
     try:
         payload = json.dumps(data_to_save, ensure_ascii=False, indent=2)
         atomic_write_text(settings_path, payload)

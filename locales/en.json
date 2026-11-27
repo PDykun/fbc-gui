@@ -585,7 +585,7 @@
     "email_test_body": "This is a test email from {app} v{ver}.\nConnection to {host}:{port} works properly.\n",
     "email_test_ok": "Test email sent successfully to:\n{email}",
     "email_test_err": "Failed to send test email:\n{e}",
-    "email_keyring_warning": "⚠ System credential storage (keyring) is unavailable — SMTP password is saved locally in settings.json.",
+    "email_keyring_warning": "⚠ System credential storage is unavailable — secrets (SMTP password, Google Books key, OPDS password) are kept in memory for this session only and are not saved to disk.",
     "lookup_keyring_warning": "⚠ System credential storage (keyring) is unavailable — Google Books API key and OPDS password are saved locally in settings.json.",
     "sec_device_sync": "DEVICE DELIVERY (USB / MTP / SYNC2KINDLE)",
     "lbl_sync_mode": "Connection mode",

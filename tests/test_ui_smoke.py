@@ -96,6 +96,8 @@ class TestUiDialogsSmoke(unittest.TestCase):
             with patch("core.config._save_secret_secure", return_value=False):
                 save_app_settings(sp, st)
             self.assertIn("smtp_password", get_last_plaintext_secret_fields())
+            with open(sp, "r", encoding="utf-8") as fh:
+                self.assertNotIn("plain_fallback_test", fh.read())
             if os.name != "nt":
                 self.assertEqual(os.stat(sp).st_mode & 0o777, 0o600)
 
