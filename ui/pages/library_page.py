@@ -1,6 +1,7 @@
 """Страница локальной библиотеки INPX в стиле freeLib (навигация, алфавит, дерево книг, описание и обложка)."""
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -10,10 +11,12 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QProxyStyle,
     QPushButton,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QStyle,
     QTextBrowser,
     QTreeWidget,
     QVBoxLayout,
@@ -22,6 +25,68 @@ from PyQt6.QtWidgets import (
 
 from core.i18n import tr
 from ui.theme import FormatComboBox, PillSelector
+
+
+class _LibraryCheckboxProxyStyle(QProxyStyle):
+    """Отрисовывает контрастные векторные чекбоксы в дереве книг для светлых и тёмных тем."""
+
+    def drawPrimitive(self, element, option, painter, widget=None):
+        if element == QStyle.PrimitiveElement.PE_IndicatorItemViewItemCheck:
+            r = QRectF(option.rect)
+            side = min(r.width(), r.height(), 16.0)
+            box = QRectF(
+                r.center().x() - side / 2.0,
+                r.center().y() - side / 2.0,
+                side,
+                side,
+            ).adjusted(0.75, 0.75, -0.75, -0.75)
+
+            base_col = option.palette.base().color()
+            is_light = base_col.lightness() > 128
+            hi_col = option.palette.highlight().color()
+            is_golden = hi_col.hue() in range(30, 65) and hi_col.saturation() > 100
+            is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
+            is_checked = bool(option.state & QStyle.StateFlag.State_On)
+            is_partial = bool(option.state & QStyle.StateFlag.State_NoChange)
+
+            if is_golden:
+                accent = QColor("#D97706") if is_light else QColor("#FBCE58")
+                mark_col = QColor("#FFFFFF") if is_light else QColor("#151525")
+            else:
+                accent = QColor("#0284C7") if is_light else QColor("#38BDF8")
+                mark_col = QColor("#FFFFFF") if is_light else QColor("#0F172A")
+
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+            if is_checked or is_partial:
+                painter.setPen(QPen(accent, 1.5))
+                painter.setBrush(accent)
+                painter.drawRoundedRect(box, 3.5, 3.5)
+                pen_mark = QPen(mark_col, 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(pen_mark)
+                if is_checked:
+                    p1 = QPointF(box.left() + box.width() * 0.22, box.top() + box.height() * 0.52)
+                    p2 = QPointF(box.left() + box.width() * 0.43, box.top() + box.height() * 0.73)
+                    p3 = QPointF(box.left() + box.width() * 0.78, box.top() + box.height() * 0.29)
+                    painter.drawLine(p1, p2)
+                    painter.drawLine(p2, p3)
+                else:
+                    y = box.center().y()
+                    painter.drawLine(
+                        QPointF(box.left() + box.width() * 0.24, y),
+                        QPointF(box.right() - box.width() * 0.24, y),
+                    )
+            else:
+                fill = QColor("#FFFFFF") if is_light else QColor("#1E2636")
+                border = accent if is_hover else QColor("#64748B")
+                painter.setPen(QPen(border, 1.5))
+                painter.setBrush(fill)
+                painter.drawRoundedRect(box, 3.5, 3.5)
+
+            painter.restore()
+            return
+        super().drawPrimitive(element, option, painter, widget)
 
 _ALPHA_ROW_RU = list("АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ")
 _ALPHA_ROW_EN = ["*", "#"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -259,6 +324,9 @@ def build_library_page(win, parent):
 
     # Дерево книг (Автор -> Серия -> Книги)
     win.lib_book_tree = QTreeWidget()
+    win.lib_book_tree_style = _LibraryCheckboxProxyStyle("Fusion")
+    win.lib_book_tree_style.setParent(win.lib_book_tree)
+    win.lib_book_tree.setStyle(win.lib_book_tree_style)
     win.lib_book_tree.setColumnCount(6)
     win.lib_book_tree.setHeaderLabels(tr("library.tree_columns"))
     win.lib_book_tree.setAlternatingRowColors(True)

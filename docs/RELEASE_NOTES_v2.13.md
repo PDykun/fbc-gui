@@ -1,4 +1,4 @@
-# FBC GUI v2.13 (build 147)
+# FBC GUI v2.13 (build 148)
 
 ## Русская версия
 
@@ -16,6 +16,7 @@
 
 *_Безопасность, исправления и техническое обслуживание_*
 - *SQLite-кэш `library_cache.sqlite` (схема v4) исправляет канонический порядок 14 колонок Flibusta/Lib.rus.ec (`DATE;LANG;LIBRATE;KEYWORDS`) с валидацией кодов языков и лимитом списка языков, хранит предвычисленные сводки по авторам, сериям, жанрам и языкам с покрывающими индексами (`idx_ba_book`, `idx_bg_book`, `ANALYZE`) и переиспользует read-only соединение с `mmap_size` (128 МБ) и `cache_size` (16 МБ), обеспечивая мгновенное (< 1 мс) открытие и переключение вкладки даже на коллекциях в 700+ тыс. книг.*
+- *Улучшена контрастность и чёткость чекбоксов выбора книг в дереве библиотеки на светлых и тёмных темах (векторная отрисовка рамки, галочки и частичного выбора).*
 - *Реализована защита от zip-bomb при чтении `.inp`-файлов (лимит 128 МБ на запись), строгая проверка `os.path.realpath` против path traversal при поиске архивов и файлов книг рядом с `.inpx`, параметризованные SQL-запросы и атомарная подмена кэша.*
 - *Настройки локальной библиотеки (`library_enabled`, `library_inpx_path`) исключены из переносимых пользовательских пресетов.*
 - *Обновлены русская и английская локализации (`locales/ru.json`, `locales/en.json`), расширено покрытие юнит-тестами (`tests/test_inpx_library.py`, `tests/test_controllers.py`) до 262 тестов.*
@@ -38,6 +39,7 @@
 
 *_Security, Bug Fixes & Maintenance_*
 - *SQLite cache `library_cache.sqlite` (schema v4) aligns default 14-column Flibusta/Lib.rus.ec layout (`DATE;LANG;LIBRATE;KEYWORDS`) with strict language-code validation and dropdown limits, stores precomputed author/series/genre/language summary tables with covering indexes (`idx_ba_book`, `idx_bg_book`, `ANALYZE`), and reuses a warm read-only connection with `mmap_size` (128 MB) and `cache_size` (16 MB) for instant (< 1 ms) tab switching even on 700k+ book libraries.*
+- *Improved visibility and contrast of book selection checkboxes in the Library tree on both light and dark themes with crisp vector borders, checkmarks, and indeterminate indicators.*
 - *Enforced zip-bomb limits (128 MB per `.inp` entry), strict `os.path.realpath` path-traversal guards when resolving archives/files next to `.inpx`, parameterized SQL queries, and atomic SQLite cache replacement.*
 - *Excluded local library paths and toggle state from portable user presets.*
 - *Updated RU/EN localizations (`locales/ru.json`, `locales/en.json`) and expanded the unit test suite (`tests/test_inpx_library.py`, `tests/test_controllers.py`) to 262 tests.*
