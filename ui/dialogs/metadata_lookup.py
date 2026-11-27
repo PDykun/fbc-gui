@@ -50,6 +50,7 @@ class MetadataLookupDialog(QDialog):
         self._cover_cards = []
         self._lookup_worker = None
         self._cover_worker = None
+        self._closing = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 18)
@@ -59,8 +60,11 @@ class MetadataLookupDialog(QDialog):
         root.addWidget(self._build_results_card(), 1)
         root.addLayout(self._build_footer_row())
 
+        self._auto_search_timer = QTimer(self)
+        self._auto_search_timer.setSingleShot(True)
+        self._auto_search_timer.timeout.connect(self._start_search)
         if self.ed_title.text().strip() or self.ed_isbn.text().strip():
-            QTimer.singleShot(60, self._start_search)
+            self._auto_search_timer.start(60)
 
     def _build_search_card(self):
         search_card = QFrame()
@@ -241,17 +245,45 @@ class MetadataLookupDialog(QDialog):
     def _stop_workers(self):
         from core.workers import stop_qthread_safely
 
-        for attr in ("_lookup_worker", "_cover_worker"):
+        timer = getattr(self, "_auto_search_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+
+        for attr, sig_name in (
+            ("_lookup_worker", "finished_lookup"),
+            ("_cover_worker", "finished_covers"),
+        ):
             w = getattr(self, attr, None)
             setattr(self, attr, None)
-            if w is not None:
-                stop_qthread_safely(w, timeout_ms=2500, label=attr)
+            if w is None:
+                continue
+            sig = getattr(w, sig_name, None)
+            if sig is not None:
+                try:
+                    sig.disconnect()
+                except (TypeError, RuntimeError):
+                    pass
+            stopped = stop_qthread_safely(w, timeout_ms=250, label=attr)
+            if stopped:
+                try:
+                    w.setParent(None)
+                    w.deleteLater()
+                except RuntimeError:
+                    pass
 
     def done(self, result):
+        self._closing = True
         self._stop_workers()
         super().done(result)
 
+    def closeEvent(self, event):
+        self._closing = True
+        self._stop_workers()
+        super().closeEvent(event)
+
     def _start_search(self):
+        if self._closing:
+            return
         from core.workers import MetadataLookupWorker
 
         self._stop_workers()
@@ -283,6 +315,11 @@ class MetadataLookupDialog(QDialog):
         self._lookup_worker.start()
 
     def _on_lookup_finished(self, result):
+        if self._closing:
+            return
+        sender = self.sender()
+        if sender is not None and sender is not self._lookup_worker:
+            return
         from core.workers import CoverFetchWorker
 
         self.btn_search.setEnabled(True)
@@ -409,6 +446,11 @@ class MetadataLookupDialog(QDialog):
             self._covers_layout.addStretch()
 
     def _on_covers_loaded(self, covers):
+        if self._closing:
+            return
+        sender = self.sender()
+        if sender is not None and sender is not self._cover_worker:
+            return
         self._clear_covers_ui()
         self._loaded_covers = list(covers or [])
         if not self._loaded_covers:

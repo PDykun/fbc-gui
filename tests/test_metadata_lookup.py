@@ -570,6 +570,67 @@ class TestMetadataLookup(unittest.TestCase):
             )
         self.assertLess(time.monotonic() - t0, 1.5)
 
+    def test_metadata_lookup_dialog_cancel_prevents_late_worker_and_detaches_running_thread(self):
+        import os
+        import threading
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt6.QtWidgets import QApplication
+        from core.metadata_lookup import LookupResult
+        from core.workers import CoverFetchWorker
+        from ui.dialogs import MetadataLookupDialog
+
+        app = QApplication.instance() or QApplication([])
+        cand = BookMetadataCandidate(provider="fantlab", title="Дюна", last="Герберт", score=0.9)
+
+        # 1. Закрытие диалога отменяет отложенный автопоиск и блокирует запоздалый _on_lookup_finished
+        dlg = MetadataLookupDialog(
+            None,
+            {"title": "Дюна", "last": "Герберт"},
+            app_settings={"metadata_providers": ["fantlab"], "google_books_api_key": "", "opds_url": ""},
+        )
+        self.assertTrue(dlg._auto_search_timer.isActive())
+        dlg.reject()
+        self.assertTrue(dlg._closing)
+        self.assertFalse(dlg._auto_search_timer.isActive())
+
+        # Запоздалый сигнал finished_lookup после reject() не должен запускать CoverFetchWorker
+        dlg._on_lookup_finished(LookupResult(candidates=[cand], errors={}))
+        self.assertIsNone(dlg._cover_worker)
+        dlg.deleteLater()
+        app.processEvents()
+
+        # 2. При активном CoverFetchWorker reject() отсоединяет поток от диалога, чтобы ~QDialog не падал с SIGABRT
+        release_ev = threading.Event()
+        started_ev = threading.Event()
+
+        def _blocking_fetch(*args, **kwargs):
+            started_ev.set()
+            release_ev.wait(timeout=3.0)
+            return []
+
+        with patch.object(MetadataLookupDialog, "_start_search", lambda self: None), \
+             patch("core.metadata_lookup.fetch_candidate_covers", side_effect=_blocking_fetch):
+            dlg2 = MetadataLookupDialog(
+                None,
+                {"title": "Дюна", "last": "Герберт"},
+                app_settings={"metadata_providers": ["fantlab"], "google_books_api_key": "", "opds_url": ""},
+            )
+            dlg2._on_lookup_finished(LookupResult(candidates=[cand], errors={}))
+            cov_worker = dlg2._cover_worker
+            self.assertIsInstance(cov_worker, CoverFetchWorker)
+            self.assertTrue(started_ev.wait(timeout=2.0))
+
+            dlg2.reject()
+            self.assertIsNone(dlg2._cover_worker)
+            # Поток должен быть отсоединён от диалога до уничтожения виджета
+            self.assertIsNone(cov_worker.parent())
+            dlg2.deleteLater()
+            app.processEvents()
+
+            release_ev.set()
+            self.assertTrue(cov_worker.wait(2000))
+            app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()
