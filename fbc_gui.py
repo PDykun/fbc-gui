@@ -298,6 +298,7 @@ class MainWindow(
             "_convert_worker",
             "_import_worker",
             "_inpx_index_worker",
+            "_lib_preview_worker",
             "_fbc_worker",
             "_update_worker",
             "_update_dl_worker",

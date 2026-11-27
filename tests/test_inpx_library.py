@@ -7,19 +7,21 @@ from unittest.mock import patch
 from core.inpx_library import (
     InpxLibraryIndex,
     _format_inpx_authors,
+    load_book_preview_details,
     resolve_book_source,
 )
 
 INP_SEP = "\x04"
 
 
-def _make_sample_fb2(title="Тестовая книга", author_last="Иванов", author_first="Иван"):
+def _make_sample_fb2(title="Тестовая книга", author_last="Иванов", author_first="Иван", annotation="Краткое описание."):
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
         '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">'
         "<description><title-info>"
         f"<author><first-name>{author_first}</first-name><last-name>{author_last}</last-name></author>"
         f"<book-title>{title}</book-title>"
+        f"<annotation><p>{annotation}</p></annotation>"
         "<lang>ru</lang>"
         "</title-info></description>"
         "<body><section><p>Текст книги.</p></section></body>"
@@ -42,7 +44,7 @@ def _make_default_inp_row(
     insno="",
     folder="",
     lang="ru",
-    librate="",
+    librate="0",
     keywords="",
 ):
     return INP_SEP.join([
@@ -85,7 +87,7 @@ class TestInpxLibrary(unittest.TestCase):
             db_path = os.path.join(td, "cache.sqlite")
             row_ok = _make_default_inp_row(
                 "Лукьяненко,Сергей,Васильевич:", "sf_fantasy:", "Ночной дозор",
-                "Дозоры", "1", "1001", size="512000", deleted="0", ext="fb2", lang="ru",
+                "Дозоры", "1", "1001", size="512000", deleted="0", ext="fb2", lang="ru", librate="5",
             )
             row_non_fb2 = _make_default_inp_row(
                 "Автор,Тест,:", "sf:", "Книга в EPUB",
@@ -107,6 +109,7 @@ class TestInpxLibrary(unittest.TestCase):
             self.assertEqual(res["total"], 2)
             titles = {b["title"]: b for b in res["items"]}
             self.assertEqual(titles["Ночной дозор"]["author"], "Лукьяненко Сергей Васильевич")
+            self.assertEqual(titles["Ночной дозор"]["librate"], 5)
             self.assertEqual(titles["Ночной дозор"]["inp_name"], "fb2-001")
             self.assertEqual(titles["Удалённая книга"]["deleted"], 1)
 
@@ -129,22 +132,26 @@ class TestInpxLibrary(unittest.TestCase):
             self.assertEqual(cres["items"][0]["folder"], "sub/dune.zip")
             self.assertEqual(cres["items"][0]["lang"], "en")
 
-    def test_sqlite_index_search_filters_and_series_books(self):
+    def test_freelib_navigation_authors_series_genres_alpha_and_advanced_search(self):
         with tempfile.TemporaryDirectory() as td:
             inpx_path = os.path.join(td, "lib.inpx")
             db_path = os.path.join(td, "cache.sqlite")
             rows = [
                 _make_default_inp_row(
+                    "Аакер,Дженнифер,:Смит,Энди,:", "comp_www:sci_business:", "Эффект стрекозы",
+                    "Best Business Practices", "1", "10", size="2200000", deleted="0", lang="ru", librate="4",
+                ),
+                _make_default_inp_row(
                     "Стругацкий,Аркадий,:Стругацкий,Борис,:", "sf:", "Пикник на обочине",
-                    "Мир Полудня", "1", "10", size="300000", deleted="0", lang="ru",
+                    "Мир Полудня", "1", "11", size="300000", deleted="0", lang="ru",
                 ),
                 _make_default_inp_row(
                     "Стругацкий,Аркадий,:Стругацкий,Борис,:", "sf:", "Трудно быть богом",
-                    "Мир Полудня", "2", "11", size="350000", deleted="0", lang="ru",
+                    "Мир Полудня", "2", "12", size="350000", deleted="0", lang="ru",
                 ),
                 _make_default_inp_row(
                     "Стругацкий,Аркадий,:", "sf:", "Старая версия",
-                    "Мир Полудня", "3", "12", size="100000", deleted="1", lang="ru",
+                    "Мир Полудня", "3", "13", size="100000", deleted="1", lang="ru",
                 ),
                 _make_default_inp_row(
                     "Herbert,Frank,:", "sf:", "Dune",
@@ -156,46 +163,67 @@ class TestInpxLibrary(unittest.TestCase):
             idx = InpxLibraryIndex(db_path)
             self.assertTrue(idx.needs_reindex(inpx_path))
             res_build = idx.build_index(inpx_path)
-            self.assertEqual(res_build["total_books"], 4)
+            self.assertEqual(res_build["total_books"], 5)
             self.assertFalse(idx.needs_reindex(inpx_path))
 
-            # Hide deleted by default
-            res_all = idx.search(query="", hide_deleted=True)
-            self.assertEqual(res_all["total"], 3)
+            # Языки
+            self.assertEqual(idx.list_languages(hide_deleted=True), ["ru", "en"])
 
-            res_with_del = idx.search(query="", hide_deleted=False)
-            self.assertEqual(res_with_del["total"], 4)
+            # Авторы с кириллическим алфавитным префиксом «А» и латинским «H»
+            authors_a = idx.list_authors(prefix="А", hide_deleted=True)
+            self.assertEqual([a["name"] for a in authors_a], ["Аакер Дженнифер"])
+            self.assertEqual(authors_a[0]["count"], 1)
 
-            # Field-specific search
-            res_author = idx.search(query="Стругацкий", field="author", hide_deleted=True)
-            self.assertEqual(res_author["total"], 2)
+            authors_h = idx.list_authors(prefix="H", hide_deleted=True)
+            self.assertEqual([a["name"] for a in authors_h], ["Herbert Frank"])
 
-            res_title = idx.search(query="Пикник", field="title", hide_deleted=True)
-            self.assertEqual(res_title["total"], 1)
-            self.assertEqual(res_title["items"][0]["file"], "10")
+            # Книги автора (включая соавтора)
+            aaker_books = idx.get_books_by_author(authors_a[0]["id"], hide_deleted=True)
+            self.assertEqual(len(aaker_books), 1)
+            self.assertEqual(aaker_books[0]["title"], "Эффект стрекозы")
 
-            # Language filter
-            res_en = idx.search(query="", lang="en", hide_deleted=True)
-            self.assertEqual(res_en["total"], 1)
-            self.assertEqual(res_en["items"][0]["title"], "Dune")
+            # Серии и книги серии
+            series_m = idx.list_series(prefix="М", hide_deleted=True)
+            self.assertEqual([s["name"] for s in series_m], ["Мир Полудня"])
+            self.assertEqual(series_m[0]["count"], 2)
+            ser_books = idx.get_books_by_series("Мир Полудня", hide_deleted=True)
+            self.assertEqual([b["serno"] for b in ser_books], ["1", "2"])
 
-            # Series lookup ordered by serno
-            series_books = idx.get_series_books("Мир Полудня", author_hint="Стругацкий Аркадий", hide_deleted=True)
-            self.assertEqual([b["serno"] for b in series_books], ["1", "2"])
+            # Жанры и книги жанра
+            genres = {g["code"]: g["count"] for g in idx.list_genres(hide_deleted=True)}
+            self.assertEqual(genres.get("sf"), 3)
+            self.assertEqual(genres.get("comp_www"), 1)
+            g_books = idx.get_books_by_genre("comp_www", hide_deleted=True)
+            self.assertEqual(g_books["total"], 1)
 
-    def test_resolve_book_source_zip_folder_unpacked_and_traversal_guard(self):
+            # Многополевой поиск: при пустых полях ничего не возвращает
+            self.assertEqual(idx.search_advanced()["total"], 0)
+            res_adv = idx.search_advanced(author="Стругацкий", title="Пикник", hide_deleted=True)
+            self.assertEqual(res_adv["total"], 1)
+            self.assertEqual(res_adv["items"][0]["file"], "11")
+
+            # Серийный хелпер get_series_books
+            series_ctx = idx.get_series_books("Мир Полудня", author_hint="Стругацкий Аркадий", hide_deleted=True)
+            self.assertEqual([b["serno"] for b in series_ctx], ["1", "2"])
+
+    def test_resolve_book_source_preview_details_and_traversal_guard(self):
         with tempfile.TemporaryDirectory() as td:
             inpx_path = os.path.join(td, "lib.inpx")
             open(inpx_path, "wb").close()
 
-            # 1. ZIP named after inp_name
+            # 1. ZIP named after inp_name + preview details extraction
             zip_by_inp = os.path.join(td, "fb2-001.zip")
             with zipfile.ZipFile(zip_by_inp, "w") as zf:
-                zf.writestr("1001.fb2", _make_sample_fb2("Из архива по inp"))
-            src1 = resolve_book_source(inpx_path, {"inp_name": "fb2-001", "file": "1001", "ext": "fb2", "folder": ""})
+                zf.writestr("1001.fb2", _make_sample_fb2("Из архива по inp", annotation="Аннотация для превью."))
+            book1 = {"inp_name": "fb2-001", "file": "1001", "ext": "fb2", "folder": ""}
+            src1 = resolve_book_source(inpx_path, book1)
             self.assertIsNotNone(src1)
             self.assertEqual(os.path.realpath(src1["path"]), os.path.realpath(zip_by_inp))
             self.assertEqual(src1["archive_entry"], "1001.fb2")
+
+            details = load_book_preview_details(inpx_path, book1)
+            self.assertTrue(details["found"])
+            self.assertIn("Аннотация для превью.", details["annotation"])
 
             # 2. ZIP in FOLDER column
             sub_dir = os.path.join(td, "pack")
@@ -227,8 +255,9 @@ class TestInpxLibrary(unittest.TestCase):
             )
             self.assertIsNone(src_bad)
 
-    def test_file_import_worker_explicit_entries_and_main_window_toggle(self):
+    def test_file_import_worker_explicit_entries_and_freelib_ui_tree(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt6.QtCore import Qt
         from PyQt6.QtWidgets import QApplication
         from core.workers import FileImportWorker
         import fbc_gui
@@ -272,9 +301,30 @@ class TestInpxLibrary(unittest.TestCase):
                     self.assertTrue(win.is_library_enabled())
                     self.assertFalse(win.nav_buttons[PAGE_LIBRARY_INDEX].isHidden())
 
-                    # Переключаемся на библиотеку и выключаем — возвращается на Конвертер
+                    # Проверяем дерево книг: Автор -> Серия -> Книги и каскад чекбоксов
+                    sample_books = [
+                        {"id": 1, "author": "Аакер Дженнифер", "series": "Best Business", "serno": "1", "title": "Книга 1", "size": 1000, "librate": 4, "date": "2022-01-01", "genres": "comp_www", "file": "1", "ext": "fb2"},
+                        {"id": 2, "author": "Аакер Дженнифер", "series": "Best Business", "serno": "2", "title": "Книга 2", "size": 2000, "librate": 0, "date": "2022-01-02", "genres": "comp_www", "file": "2", "ext": "fb2"},
+                    ]
+                    win._populate_library_book_tree(sample_books)
+                    self.assertEqual(win.lib_book_tree.topLevelItemCount(), 1)
+                    author_node = win.lib_book_tree.topLevelItem(0)
+                    self.assertEqual(author_node.text(0), "Аакер Дженнифер")
+                    series_node = author_node.child(0)
+                    self.assertEqual(series_node.text(0), "Best Business")
+                    self.assertEqual(series_node.childCount(), 2)
+
+                    # Отмечаем серию — отмечаются обе книги
+                    series_node.setCheckState(0, Qt.CheckState.Checked)
+                    self.assertEqual(len(win._collect_checked_books()), 2)
+                    self.assertTrue(win.btn_lib_add_to_converter.isEnabled())
+
+                    # В режиме «Поиск» дерево очищается до явного поиска
+                    win.on_library_mode_changed("search")
+                    self.assertEqual(win.lib_book_tree.topLevelItemCount(), 0)
+
+                    # Выключение вкладки возвращает на Конвертер
                     win.switch_page(PAGE_LIBRARY_INDEX)
-                    self.assertEqual(win.pages.currentIndex(), PAGE_LIBRARY_INDEX)
                     win.on_library_enabled_changed("false")
                     self.assertTrue(win.nav_buttons[PAGE_LIBRARY_INDEX].isHidden())
                     self.assertEqual(win.pages.currentIndex(), 0)
