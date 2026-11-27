@@ -40,6 +40,7 @@
       "font_drop": "PomorskyUnicode.otf",
       "font_title": "PT-Astra-Serif_Regular.ttf",
       "font_author": "PT-Astra-Serif_Regular.ttf",
+      "base_font_size": "default",
       "pdf_frame": "0",
       "h1_sz": "150%",
       "h1_cl": "black",

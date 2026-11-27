@@ -246,6 +246,7 @@ class PreviewController:
             "font_drop": self._get_combo_data(self.font_drop_cb, "__none__"),
             "font_title": self._get_combo_data(self.font_title_cb, "__none__"),
             "font_author": self._get_combo_data(self.font_author_cb, "__none__"),
+            "base_font_size": self._get_combo_data(self.base_font_size_cb, "default"),
             "pdf_frame": self._get_combo_data(self.pdf_frame_cb, "0"),
             "h1_sz": self.h1_sz_cb.currentText(),
             "h1_cl": self.h1_cl_cb.get(),
@@ -299,9 +300,16 @@ class PreviewController:
         if not isinstance(st, dict):
             return
         none_font_map = {"Нет": "__none__", "None": "__none__"}
+        base_fs_legacy = {"По умолчанию (ридер)": "default", "Default (reader)": "default", "По умолчанию": "default"}
+        if "base_font_size" in st and st["base_font_size"] and hasattr(self, "base_font_size_cb"):
+            bfs_raw = str(st["base_font_size"]).strip()
+            bfs_norm = base_fs_legacy.get(bfs_raw, bfs_raw)
+            if bfs_norm and self.base_font_size_cb.findData(bfs_norm) < 0:
+                self.base_font_size_cb.addItem(bfs_norm, bfs_norm)
         cb_map = [
             ("font_para", self.font_para_cb, none_font_map), ("font_drop", self.font_drop_cb, none_font_map),
             ("font_title", self.font_title_cb, none_font_map), ("font_author", self.font_author_cb, none_font_map),
+            ("base_font_size", self.base_font_size_cb, base_fs_legacy),
             ("pdf_frame", self.pdf_frame_cb, {"0 (Выкл)": "0", "0 (Off)": "0"}),
             ("h1_sz", self.h1_sz_cb, None), ("h1_al", self.h1_al_cb, LEGACY_ALIGN_MAP),
             ("auth_sz", self.auth_sz_cb, None), ("auth_al", self.auth_al_cb, LEGACY_ALIGN_MAP), ("auth_style", self.auth_style_cb, LEGACY_STYLE_MAP),

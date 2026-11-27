@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QLabel, QComboBox, QScrollArea, QGridLayout, QTextEdit, QFrame
 )
 
-from core.css_preview import VALID_FONT_EXTENSIONS
+from core.css_preview import BASE_FONT_SIZE_OPTIONS, VALID_FONT_EXTENSIONS
 from core.i18n import (
     tr, get_align_options, get_style_options,
     get_note_bg_options, get_note_border_options
@@ -147,6 +147,19 @@ def _build_fonts_section(win, available_fonts):
     lbl_pdf_frame.setToolTip(pdf_frame_tip)
     g_fonts.addWidget(lbl_pdf_frame, 2, 0)
     g_fonts.addWidget(win.pdf_frame_cb, 2, 1)
+
+    base_fs_options = [
+        (tr("styles.base_font_default"), "default")
+    ] + [(sz, sz) for sz in BASE_FONT_SIZE_OPTIONS if sz != "default"]
+    win.base_font_size_cb = QComboBox()
+    win._populate_data_combo(win.base_font_size_cb, base_fs_options, "default")
+    base_fs_tip = tr("styles.tooltip_base_font_size")
+    win.base_font_size_cb.setToolTip(base_fs_tip)
+    win.base_font_size_cb.currentIndexChanged.connect(win.on_style_param_changed)
+    lbl_base_fs = QLabel(tr("styles.lbl_base_font_size"))
+    lbl_base_fs.setToolTip(base_fs_tip)
+    g_fonts.addWidget(lbl_base_fs, 2, 3)
+    g_fonts.addWidget(win.base_font_size_cb, 2, 4)
 
     fonts_row.addLayout(g_fonts, 1)
 

@@ -7,11 +7,20 @@ from core.i18n import tr
 from core.logger import get_logger
 
 
+BASE_FONT_SIZE_OPTIONS = (
+    "default",
+    "8pt", "9pt", "10pt", "10.5pt", "11pt", "12pt",
+    "13pt", "14pt", "16pt", "18pt", "20pt", "22pt", "24pt",
+)
+
+_BASE_FONT_SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)(pt|px|em|rem|%|mm|cm|in)$", re.IGNORECASE)
+
 DEFAULT_CSS_UI_STATE = {
     "font_para": "PT-Astra-Serif_Regular.ttf",
     "font_drop": "PomorskyUnicode.otf",
     "font_title": "PT-Astra-Serif_Regular.ttf",
     "font_author": "PT-Astra-Serif_Regular.ttf",
+    "base_font_size": "default",
     "pdf_frame": "0",
     "h1_sz": "150%",
     "h1_cl": "red",
@@ -238,6 +247,13 @@ def parse_css_file_to_state(css_path):
             if v:
                 st[st_key] = v
 
+    st["base_font_size"] = "default"
+    body_m = re.search(r'(?:^|\n)\s*body\s*\{([^}]+)\}', content)
+    if body_m:
+        bfs = parse_prop(body_m.group(1), 'font-size')
+        if bfs:
+            st["base_font_size"] = _normalize_base_font_size(bfs)
+
     st["pdf_frame"] = "0"
     m_pf = re.search(r'@page\s*\{[^}]*-fbc-page-frame\s*:\s*([^;\s}]+)', content)
     if m_pf:
@@ -322,6 +338,54 @@ def _sanitize_font_filename(val, fallback="__none__"):
     return clean
 
 
+def _normalize_base_font_size(val):
+    """Нормализует и проверяет значение базового размера шрифта (default или безопасная CSS-величина)."""
+    if val is None:
+        return "default"
+    s = _sanitize_css_value(val, "").strip()
+    if not s or s.lower() in ("default", "auto", "initial", "inherit", "по умолчанию", "по умолчанию (ридер)", "default (reader)"):
+        return "default"
+    m = _BASE_FONT_SIZE_RE.fullmatch(s)
+    if not m:
+        return "default"
+    num_str, unit = m.group(1), m.group(2).lower()
+    try:
+        if float(num_str) <= 0:
+            return "default"
+    except ValueError:
+        return "default"
+    return f"{num_str}{unit}"
+
+
+def _base_font_size_to_px(val, default_px=15.0):
+    """Переводит базовый размер шрифта в CSS-пиксели для расчёта перестроения страниц в превью."""
+    norm = _normalize_base_font_size(val)
+    if norm == "default":
+        return float(default_px)
+    m = _BASE_FONT_SIZE_RE.fullmatch(norm)
+    if not m:
+        return float(default_px)
+    num = float(m.group(1))
+    unit = m.group(2).lower()
+    if unit == "pt":
+        px = num * (96.0 / 72.0)
+    elif unit == "px":
+        px = num
+    elif unit == "%":
+        px = default_px * (num / 100.0)
+    elif unit in ("em", "rem"):
+        px = default_px * num
+    elif unit == "mm":
+        px = num * (96.0 / 25.4)
+    elif unit == "cm":
+        px = num * (96.0 / 2.54)
+    elif unit == "in":
+        px = num * 96.0
+    else:
+        px = float(default_px)
+    return max(6.0, min(72.0, px))
+
+
 def _sanitize_css_state(st):
     """Возвращает санитизированную копию css_ui_state с безопасными значениями по умолчанию."""
     clean = {}
@@ -329,6 +393,8 @@ def _sanitize_css_state(st):
         raw = st.get(key, default_val) if isinstance(st, dict) else default_val
         if key.startswith("font_"):
             clean[key] = _sanitize_font_filename(raw, default_val)
+        elif key == "base_font_size":
+            clean[key] = _normalize_base_font_size(raw)
         else:
             clean[key] = _sanitize_css_value(raw, default_val)
     return clean
@@ -405,9 +471,11 @@ def generate_css_content(st, fonts_dir):
     else:
         author_decl_imp = ''
 
+    base_fs_val = st.get("base_font_size", "default")
+    base_fs_decl = f'font-size: {base_fs_val}; ' if base_fs_val != "default" else ''
     pdf_frame_val = st.get("pdf_frame", "0")
     css_lines = [
-        f'body {{ {para_decl}font-weight: normal; font-style: normal; line-height: 100%; }}',
+        f'body {{ {para_decl}{base_fs_decl}font-weight: normal; font-style: normal; line-height: 100%; }}',
         f'@page {{ margin-left: 10px; margin-right: 10px; margin-top: 10px; margin-bottom: 5px; {f"-fbc-page-frame: {pdf_frame_val}; " if pdf_frame_val != "0" else ""} }}',
     ]
     if has_drop or has_para or has_title or has_author:
@@ -733,6 +801,10 @@ def _prepare_preview_style_context(
             f"\n    .title-page-body, .book-columns, .cover-placeholder {{ filter: {pfilt}; }}"
         )
 
+    base_fs_val = st.get("base_font_size", "default")
+    preview_base_fs = "15px" if base_fs_val == "default" else base_fs_val
+    base_fs_px = _base_font_size_to_px(base_fs_val, default_px=15.0)
+    base_fs_disp = tr("styles.base_font_default") if base_fs_val == "default" else base_fs_val
     pf_val = st.get("pdf_frame", "0")
     note_bg = st["note_bg"]
     return {
@@ -746,6 +818,9 @@ def _prepare_preview_style_context(
         "title_disp": _disp_font(title_file),
         "author_disp": _disp_font(author_file),
         "drop_disp": _disp_font(drop_file),
+        "preview_base_font_size": preview_base_fs,
+        "base_font_size_px": base_fs_px,
+        "base_font_size_disp": base_fs_disp,
         "note_bg_css": note_bg if note_bg != "transparent" else "#FDFBF7",
         "page_outline_css": f"outline: {pf_val} solid #EBE8E0;" if pf_val != "0" else "",
         "gray_css": "filter: grayscale(100%);" if effective_gray else "",
@@ -888,12 +963,16 @@ def _build_book_mode_preview_parts(book_preview, ctx, dropcaps_enable):
         return len(re.sub(r'<[^>]+>', '', html_chunk or '').strip())
 
     front_chars = sum(_plain_len(p) for p in right_parts)
-    target_right_chars = 1650
+    font_scale = max(0.5, float(ctx.get("base_font_size_px", 15.0)) / 15.0)
+    target_right_chars = max(350, int(round(1650.0 / (font_scale * font_scale))))
     if body_parts:
         right_parts.append('<hr class="divider">')
         taken = 0
         acc_chars = front_chars
-        min_take = 4 if front_chars < 900 else 3
+        if font_scale > 1.3:
+            min_take = 2
+        else:
+            min_take = 4 if front_chars < 900 else 3
         while taken < len(body_parts):
             chunk = body_parts[taken]
             chunk_len = _plain_len(chunk)
@@ -1006,7 +1085,7 @@ def _build_sample_mode_preview_parts(ctx, svg_mode, p_al_lbl, img_al_lbl):
             <tr>
                 <td>{tr("preview.tbl_row_body")}</td>
                 <td>{ctx["para_disp"]}</td>
-                <td>{tr("preview.tbl_row_body_val", indent=ctx["text_indent"], align=p_al_lbl)}</td>
+                <td>{tr("preview.tbl_row_body_val", size=ctx["base_font_size_disp"], indent=ctx["text_indent"], align=p_al_lbl)}</td>
             </tr>
             <tr>
                 <td>{tr("preview.tbl_row_drop")}</td>
@@ -1062,6 +1141,7 @@ def _render_preview_fallback_html(ctx, app_name, running_header_esc, cover_html,
         background-color: #FDFBF7;
         color: #222222;
         font-family: {ctx["para_stack"]};
+        font-size: {ctx["preview_base_font_size"]};
         font-style: normal;
         font-weight: normal;
         margin: 0;
@@ -1229,6 +1309,7 @@ _PREVIEW_RICH_CSS_TEMPLATE = """    __FONT_FACES__
     .title-page-body {
         margin: auto 0;
         padding: 14px 0;
+        font-size: __BASE_FONT_SIZE__;
     }
     .page-num {
         display: block;
@@ -1267,6 +1348,7 @@ _PREVIEW_RICH_CSS_TEMPLATE = """    __FONT_FACES__
         column-gap: 72px;
         column-fill: balance;
         min-height: 520px;
+        font-size: __BASE_FONT_SIZE__;
         hyphens: auto;
         -webkit-hyphens: auto;
     }
@@ -1343,6 +1425,7 @@ def _build_preview_stylesheet(ctx):
         _PREVIEW_RICH_CSS_TEMPLATE
         .replace("__FONT_FACES__", ctx["font_faces"])
         .replace("__PARA_STACK__", ctx["para_stack"])
+        .replace("__BASE_FONT_SIZE__", ctx["preview_base_font_size"])
         .replace("__PAGE_OUTLINE_CSS__", ctx["page_outline_css"])
         + ctx.get("eink_override_css", "")
     )

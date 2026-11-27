@@ -390,6 +390,85 @@ class TestCssPreview(unittest.TestCase):
             self.assertEqual(installed, [])
             self.assertEqual(errors, [("big.ttf", "font_too_large")])
 
+    def test_base_font_size_css_roundtrip_and_sanitization(self):
+        # 1. Режим по умолчанию не добавляет font-size в body и обратно парсится как "default"
+        st_def = _sample_state(base_font_size="default")
+        css_def = generate_css_content(st_def, FONTS_DIR)
+        body_line_def = css_def.splitlines()[0]
+        self.assertTrue(body_line_def.startswith("body {"))
+        self.assertNotIn("font-size:", body_line_def)
+
+        with tempfile.TemporaryDirectory() as td:
+            css_path = os.path.join(td, "def.css")
+            with open(css_path, "w", encoding="utf-8") as fh:
+                fh.write(css_def)
+            parsed_def = parse_css_file_to_state(css_path)
+        self.assertEqual(parsed_def.get("base_font_size"), "default")
+
+        # 2. Заданный размер в pt записывается в body и корректно восстанавливается при парсинге
+        st_14 = _sample_state(base_font_size="14pt")
+        css_14 = generate_css_content(st_14, FONTS_DIR)
+        body_line_14 = css_14.splitlines()[0]
+        self.assertIn("font-size: 14pt;", body_line_14)
+
+        with tempfile.TemporaryDirectory() as td:
+            css_path = os.path.join(td, "pt14.css")
+            with open(css_path, "w", encoding="utf-8") as fh:
+                fh.write(css_14)
+            parsed_14 = parse_css_file_to_state(css_path)
+        self.assertEqual(parsed_14.get("base_font_size"), "14pt")
+
+        # 3. Некорректные или опасные значения безопасно сбрасываются к "default"
+        for bad_val in ("14pt; background: url(https://evil.example/x)", "0pt", "-10pt", "javascript:alert(1)", "huge"):
+            css_bad = generate_css_content(_sample_state(base_font_size=bad_val), FONTS_DIR)
+            self.assertNotIn("font-size:", css_bad.splitlines()[0], f"Bad value not sanitized: {bad_val}")
+
+    def test_base_font_size_preview_rendering_and_page_reflow(self):
+        fams = {"para": "PT Astra Serif", "title": "PT Astra Serif", "author": "PT Astra Serif", "drop": "Pomorsky Unicode"}
+
+        # 1. В режиме образца выбранный размер попадает в CSS превью (rich и fallback) и в сводную таблицу
+        st_16 = _sample_state(base_font_size="16pt")
+        rich_html = build_full_preview_html(
+            st_16, fams, "SVG", FONTS_DIR, "FBC GUI", "2.12.1", "По ширине", "По центру",
+            for_browser=True,
+        )
+        self.assertIn("font-size: 16pt;", rich_html)
+        self.assertIn("16pt", rich_html)
+
+        fallback_html = build_full_preview_html(
+            st_16, fams, "SVG", FONTS_DIR, "FBC GUI", "2.12.1", "По ширине", "По центру",
+            for_browser=False, use_web_engine=False,
+        )
+        self.assertIn("font-size: 16pt;", fallback_html)
+
+        # 2. В режиме книги увеличение базового шрифта уменьшает число абзацев на 2-й странице
+        #    и переносит больше текста на следующий разворот (стр. 3-4)
+        blocks = [("p", f"Абзац {i}. " + ("Достаточно длинный текст книжного абзаца для проверки разбиения. " * 4)) for i in range(1, 15)]
+        book_data = {
+            "author": "Автор",
+            "title": "Тест масштабирования",
+            "series": "",
+            "cover_data_uri": "",
+            "annotation": ["Краткая аннотация."],
+            "epigraph_lines": [],
+            "epigraph_author": "",
+            "chapter_title": "Глава 1",
+            "blocks": blocks,
+            "footnote_title": "",
+            "footnote_paras": [],
+        }
+        html_small = build_full_preview_html(
+            _sample_state(base_font_size="10pt"), fams, "SVG", FONTS_DIR, "FBC GUI", "2.12.1",
+            "По ширине", "По центру", for_browser=True, book_preview=book_data,
+        )
+        html_large = build_full_preview_html(
+            _sample_state(base_font_size="22pt"), fams, "SVG", FONTS_DIR, "FBC GUI", "2.12.1",
+            "По ширине", "По центру", for_browser=True, book_preview=book_data,
+        )
+        p2_small = html_small.split('<div class="title-page-body">', 1)[1].split('<div class="page-num">2</div>', 1)[0]
+        p2_large = html_large.split('<div class="title-page-body">', 1)[1].split('<div class="page-num">2</div>', 1)[0]
+        self.assertGreater(p2_small.count("<p "), p2_large.count("<p "))
+
 
 if __name__ == "__main__":
     unittest.main()
