@@ -26,17 +26,17 @@
    @row-sep: rgba(255, 255, 255, 38)
    ========================================================================== */
 
+QWidget {
+    background: transparent;
+    color: #f2f3f8;
+}
+
 QMainWindow, QDialog, QMessageBox, QInputDialog, QColorDialog, QFileDialog,
 QWidget#MainContainer, QWidget#CentralContainer, QWidget#ScrollContent {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #16172b, stop:1 #0f1021);
     color: #f2f3f8;
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
     font-size: 13px;
-}
-
-QWidget {
-    background: transparent;
-    color: #f2f3f8;
 }
 
 QMenuBar {
@@ -400,7 +400,7 @@ QHeaderView::section:last {
     border-top-right-radius: 9px;
 }
 
-QTextEdit {
+QTextEdit, QPlainTextEdit, QTreeWidget {
     background-color: #141526;
     color: #f2f3f8;
     border: 1px solid #313359;

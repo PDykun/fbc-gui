@@ -578,6 +578,69 @@ class TestControllers(unittest.TestCase):
         with self.assertRaises(ValueError):
             send_test_email(cfg, "FBC\r\nBcc: evil@example.com", "2.12")
 
+    def test_dark_theme_modal_dialogs_render_opaque_dark_background(self):
+        import os
+        from PyQt6.QtWidgets import QApplication
+        from ui.theme import init_themes, build_theme_qss, build_qpalette_from_qss
+        from ui.dialogs.inspector import BookInspectorDialog
+        from ui.dialogs.book_edit import BookEditDialog, BatchEditDialog
+        from ui.dialogs.watch_folder import WatchFolderRuleDialog
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication([])
+        themes_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "themes")
+        init_themes(themes_dir, themes_dir)
+
+        for fname in sorted(os.listdir(themes_dir)):
+            if not fname.endswith(".qss"):
+                continue
+            with open(os.path.join(themes_dir, fname), encoding="utf-8") as fh:
+                qss_src = fh.read()
+            self.assertLess(
+                qss_src.index("QWidget {"),
+                qss_src.index("QMainWindow, QDialog"),
+                f"{fname}: QWidget rule must precede QDialog rule",
+            )
+
+        sample_book = {
+            "path": "/tmp/a.fb2",
+            "display_name": "a.fb2",
+            "meta": {"title": "T", "last": "A", "first": "B", "mid": "", "series": "", "num": ""},
+        }
+        sample_report = {
+            "xml_valid_strict": True,
+            "xml_recovered": False,
+            "encoding": "utf-8",
+            "size_bytes": 100,
+            "chapter_count": 0,
+            "paragraph_count": 1,
+            "footnotes_count": 0,
+            "images": [],
+            "toc": [],
+            "warnings": [],
+        }
+
+        for family in ("Modern", "Golden"):
+            qss = build_theme_qss(family, family, "dark")
+            pal = build_qpalette_from_qss(qss, "dark")
+            app.setPalette(pal)
+            app.setStyleSheet(qss)
+            for dlg in (
+                BookInspectorDialog(None, "a.fb2", sample_report),
+                BookEditDialog(None, sample_book, "kfx"),
+                BatchEditDialog(None, 2, {}),
+                WatchFolderRuleDialog(None),
+            ):
+                try:
+                    dlg.show()
+                    app.processEvents()
+                    px = dlg.grab().toImage().pixelColor(4, 4)
+                    self.assertEqual(px.alpha(), 255, f"{family} {type(dlg).__name__} background must be opaque")
+                    self.assertLess(px.lightness(), 60, f"{family} {type(dlg).__name__} background must be dark, got {px.name()}")
+                finally:
+                    dlg.close()
+                    app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()
