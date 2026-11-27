@@ -978,3 +978,20 @@ class CoverFetchWorker(QThread):
         except Exception as e:
             logger.error("Ошибка фоновой загрузки обложек: %s", e)
             self.finished_covers.emit([])
+
+
+class BackgroundTaskWorker(QThread):
+    """Универсальный фоновый поток для файловых операций очереди без блокировки GUI."""
+
+    finished_task = pyqtSignal(object, object)
+
+    def __init__(self, fn, parent=None):
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self):
+        try:
+            result = self._fn()
+            self.finished_task.emit(result, None)
+        except Exception as e:
+            self.finished_task.emit(None, e)

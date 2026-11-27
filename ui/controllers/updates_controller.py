@@ -117,6 +117,19 @@ class UpdatesController:
                 pass
             if result.get("downloaded") and not cb:
                 logger.info("fb2cng v%s успешно установлен в %s", self.fbc_version, self.fbc_cmd)
+            if result.get("unverified") and not getattr(self, "_warned_unverified_fbc", False):
+                self._warned_unverified_fbc = True
+                logger.warning(
+                    "Локальный fb2cng используется без проверки SHA-256 (%s): %s",
+                    result.get("reason", ""),
+                    result["path"],
+                )
+                show_themed_message(
+                    self,
+                    tr("common.warning"),
+                    tr("fbc_setup.unverified_warn", path=result["path"]),
+                    "warning",
+                )
             if cb is not None:
                 QTimer.singleShot(0, cb)
             return

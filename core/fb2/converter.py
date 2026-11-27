@@ -175,7 +175,10 @@ def _run_cancellable_process(cmd, cwd, cancel_event=None, on_output_line=None):
                         proc.wait(timeout=1.5)
                     except subprocess.TimeoutExpired:
                         proc.kill()
-                        proc.wait()
+                        try:
+                            proc.wait(timeout=2.0)
+                        except subprocess.TimeoutExpired:
+                            logger.warning("Процесс %s не завершился после kill() за 2.0 с", cmd[0] if cmd else "subprocess")
                     raise ConversionCancelledError("Conversion cancelled")
                 try:
                     proc.wait(timeout=0.1)
@@ -186,9 +189,18 @@ def _run_cancellable_process(cmd, cwd, cancel_event=None, on_output_line=None):
         except Exception:
             if proc.poll() is None:
                 proc.kill()
-                proc.wait()
+                try:
+                    proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Процесс %s не завершился после kill() за 2.0 с", cmd[0] if cmd else "subprocess")
             raise
         finally:
+            for stream in (proc.stdout, proc.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
             t_out.join(timeout=1.0)
             t_err.join(timeout=1.0)
         stdout = "".join(out_lines)
@@ -202,7 +214,10 @@ def _run_cancellable_process(cmd, cwd, cancel_event=None, on_output_line=None):
                         proc.communicate(timeout=1.5)
                     except subprocess.TimeoutExpired:
                         proc.kill()
-                        proc.communicate()
+                        try:
+                            proc.communicate(timeout=2.0)
+                        except subprocess.TimeoutExpired:
+                            logger.warning("Процесс %s не завершился после kill() за 2.0 с", cmd[0] if cmd else "subprocess")
                     raise ConversionCancelledError("Conversion cancelled")
                 try:
                     stdout, stderr = proc.communicate(timeout=0.1)
@@ -214,7 +229,10 @@ def _run_cancellable_process(cmd, cwd, cancel_event=None, on_output_line=None):
         except Exception:
             if proc.poll() is None:
                 proc.kill()
-                proc.communicate()
+                try:
+                    proc.communicate(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Процесс %s не завершился после kill() за 2.0 с", cmd[0] if cmd else "subprocess")
             raise
 
     if cancel_event is not None and cancel_event.is_set():

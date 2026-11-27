@@ -301,6 +301,40 @@ class TestWorkers(unittest.TestCase):
 
         self.assertNotIn(w, workers._ORPHANED_THREADS)
 
+    def test_background_task_worker_runs_off_main_thread_and_emits_result_or_error(self):
+        import threading
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication([])
+        main_tid = threading.get_ident()
+        seen_tids = []
+        results = []
+
+        def _ok_task():
+            seen_tids.append(threading.get_ident())
+            return {"count": 3}
+
+        w_ok = workers.BackgroundTaskWorker(_ok_task)
+        w_ok.finished_task.connect(lambda res, err: results.append((res, err)))
+        w_ok.start()
+        self.assertTrue(w_ok.wait(2000))
+        app.processEvents()
+
+        self.assertEqual(len(seen_tids), 1)
+        self.assertNotEqual(seen_tids[0], main_tid)
+        self.assertEqual(results, [({"count": 3}, None)])
+
+        err_results = []
+        w_err = workers.BackgroundTaskWorker(lambda: (_ for _ in ()).throw(ValueError("boom")))
+        w_err.finished_task.connect(lambda res, err: err_results.append((res, err)))
+        w_err.start()
+        self.assertTrue(w_err.wait(2000))
+        app.processEvents()
+
+        self.assertEqual(len(err_results), 1)
+        self.assertIsNone(err_results[0][0])
+        self.assertIsInstance(err_results[0][1], ValueError)
+
 
 if __name__ == "__main__":
     unittest.main()

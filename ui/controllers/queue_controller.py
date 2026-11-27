@@ -30,7 +30,7 @@ from core.undo_commands import (
     UpdateBooksCommand,
     snapshot_book_state,
 )
-from core.workers import FileImportWorker
+from core.workers import BackgroundTaskWorker, FileImportWorker
 from ui.dialogs import (
     BatchEditDialog,
     BookEditDialog,
@@ -748,6 +748,30 @@ class QueueController:
             elif chosen == act_delete:
                 self.remove_book_rows(selected_rows)
 
+    def _run_queue_bg_task(self, fn, on_done):
+        existing = getattr(self, "_bg_task_worker", None)
+        if existing is not None:
+            try:
+                if existing.isRunning():
+                    show_themed_message(self, tr("common.warning"), tr("common.busy_workers_warning"), "warning")
+                    return False
+            except RuntimeError:
+                pass
+        worker = BackgroundTaskWorker(fn, parent=self)
+        self._bg_task_worker = worker
+
+        def _handle_done(result, error, w=worker):
+            if getattr(self, "_bg_task_worker", None) is w:
+                self._bg_task_worker = None
+            if getattr(self, "_closing", False):
+                return
+            on_done(result, error)
+
+        worker.finished_task.connect(_handle_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+        return True
+
     def merge_omnibus_rows(self, rows):
         """Объединяет выбранные книги (в порядке таблицы) в один том FB2 (Омнибус) и добавляет его в очередь."""
         if not rows or len(rows) < 2:
@@ -779,15 +803,26 @@ class QueueController:
             return
         if not out_path.lower().endswith(".fb2"):
             out_path += ".fb2"
-        try:
-            res = merge_fb2_books_to_omnibus(
+
+        default_collection_title = tr("converter.omnibus_default_title")
+        default_unknown_author = tr("converter.omnibus_unknown_author")
+        default_book_prefix = tr("converter.omnibus_book_prefix")
+
+        def _work():
+            return merge_fb2_books_to_omnibus(
                 items,
                 out_path,
                 default_omnibus_suffix=omnibus_suffix,
-                default_collection_title=tr("converter.omnibus_default_title"),
-                default_unknown_author=tr("converter.omnibus_unknown_author"),
-                default_book_prefix=tr("converter.omnibus_book_prefix"),
+                default_collection_title=default_collection_title,
+                default_unknown_author=default_unknown_author,
+                default_book_prefix=default_book_prefix,
             )
+
+        def _done(res, err):
+            if err is not None:
+                logger.error("Ошибка объединения книг в омнибус: %s", err)
+                show_themed_message(self, tr("common.error"), tr("converter.err_merge_omnibus", e=err), "error")
+                return
             self.process_files([res["path"]])
             show_themed_message(
                 self,
@@ -795,9 +830,8 @@ class QueueController:
                 tr("converter.msg_merge_omnibus_ok", count=res["books_count"], path=os.path.basename(res["path"])),
                 "info",
             )
-        except Exception as e:
-            logger.error("Ошибка объединения книг в омнибус: %s", e)
-            show_themed_message(self, tr("common.error"), tr("converter.err_merge_omnibus", e=e), "error")
+
+        self._run_queue_bg_task(_work, _done)
 
     def organize_fb2_rows(self, rows):
         """Копирует или перемещает исходные .fb2/.zip выбранных строк по папкам Автор/Серия без конвертации."""
@@ -865,33 +899,53 @@ class QueueController:
         """Сохраняет текущие метаданные и обложки выбранных строк обратно в исходные .fb2/.zip файлы."""
         if not rows:
             return
-        saved_count = 0
-        errors = []
+        targets = []
         for r in sorted(rows):
             it0 = self.table.item(r, 0)
             if not it0:
                 continue
-            data = self.files_data.get(it0.data(Qt.ItemDataRole.UserRole))
-            if not data:
-                continue
-            try:
-                save_book_changes_to_source(data)
-                saved_count += 1
-                if not data.get("status"):
-                    self._updating_table_items = True
-                    try:
-                        self.table.setItem(r, 8, self._make_status_item("", "", data.get("warnings"), data.get("is_duplicate", False)))
-                    finally:
-                        self._updating_table_items = False
-            except Exception as e:
-                logger.error("Ошибка сохранения в исходный FB2 (%s): %s", data.get("display_name") or data.get("path"), e)
-                errors.append(f"{data.get('display_name') or os.path.basename(data['path'])}: {e}")
-        self.apply_table_filter()
-        self.on_table_selection_changed()
-        if errors:
-            show_themed_message(self, tr("common.error"), tr("converter.err_save_source", e="\n".join(errors)), "error")
-        elif saved_count > 0:
-            show_themed_message(self, tr("common.success"), tr("converter.msg_save_source_ok", count=saved_count), "info")
+            item_id = it0.data(Qt.ItemDataRole.UserRole)
+            data = self.files_data.get(item_id)
+            if data:
+                targets.append((item_id, data))
+        if not targets:
+            return
+
+        def _work():
+            saved_ids = []
+            errors = []
+            for item_id, data in targets:
+                try:
+                    save_book_changes_to_source(data)
+                    saved_ids.append(item_id)
+                except Exception as e:
+                    logger.error("Ошибка сохранения в исходный FB2 (%s): %s", data.get("display_name") or data.get("path"), e)
+                    errors.append(f"{data.get('display_name') or os.path.basename(data['path'])}: {e}")
+            return saved_ids, errors
+
+        def _done(res, err):
+            if err is not None:
+                show_themed_message(self, tr("common.error"), tr("converter.err_save_source", e=err), "error")
+                return
+            saved_ids, errors = res
+            if saved_ids and hasattr(self, "table"):
+                self._updating_table_items = True
+                try:
+                    for iid in saved_ids:
+                        data = self.files_data.get(iid)
+                        cur_row = self._find_table_row_by_item_id(iid)
+                        if data is not None and cur_row is not None and not data.get("status"):
+                            self.table.setItem(cur_row, 8, self._make_status_item("", "", data.get("warnings"), data.get("is_duplicate", False)))
+                finally:
+                    self._updating_table_items = False
+            self.apply_table_filter()
+            self.on_table_selection_changed()
+            if errors:
+                show_themed_message(self, tr("common.error"), tr("converter.err_save_source", e="\n".join(errors)), "error")
+            elif saved_ids:
+                show_themed_message(self, tr("common.success"), tr("converter.msg_save_source_ok", count=len(saved_ids)), "info")
+
+        self._run_queue_bg_task(_work, _done)
 
     def inspect_book_row(self, row, item_id):
         data = self.files_data.get(item_id)
@@ -904,12 +958,19 @@ class QueueController:
         if dlg.debug_requested:
             self.convert_selected(debug=True)
         elif dlg.repair_requested:
-            try:
-                stats = repair_book_in_source(data)
-                if not data.get("status"):
+            def _work():
+                return repair_book_in_source(data)
+
+            def _done(stats, err):
+                if err is not None:
+                    logger.error("Ошибка исправления FB2 (%s): %s", data.get("display_name") or data.get("path"), err)
+                    show_themed_message(self, tr("common.error"), tr("inspector.err_repair", e=err), "error")
+                    return
+                cur_row = self._find_table_row_by_item_id(item_id)
+                if cur_row is not None and not data.get("status"):
                     self._updating_table_items = True
                     try:
-                        self.table.setItem(row, 8, self._make_status_item("", "", data.get("warnings"), data.get("is_duplicate", False)))
+                        self.table.setItem(cur_row, 8, self._make_status_item("", "", data.get("warnings"), data.get("is_duplicate", False)))
                     finally:
                         self._updating_table_items = False
                 self.apply_table_filter()
@@ -930,9 +991,8 @@ class QueueController:
                     ),
                     "info",
                 )
-            except Exception as e:
-                logger.error("Ошибка исправления FB2 (%s): %s", data.get("display_name") or data.get("path"), e)
-                show_themed_message(self, tr("common.error"), tr("inspector.err_repair", e=e), "error")
+
+            self._run_queue_bg_task(_work, _done)
 
     def lookup_selected_book_metadata(self):
         if not hasattr(self, "table"):
@@ -1069,10 +1129,16 @@ class QueueController:
                     self.save_app_settings()
 
             if dlg.should_save_to_source():
-                try:
+                def _save_work():
                     save_book_changes_to_source(data)
-                except Exception as e:
-                    show_themed_message(self, tr("common.error"), tr("converter.err_save_source", e=e), "error")
+                    return True
+
+                def _save_done(_res, err):
+                    if err is not None:
+                        show_themed_message(self, tr("common.error"), tr("converter.err_save_source", e=err), "error")
+                    self.on_table_selection_changed()
+
+                self._run_queue_bg_task(_save_work, _save_done)
             self.on_table_selection_changed()
 
     def batch_edit_rows(self, rows):

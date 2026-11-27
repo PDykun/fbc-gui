@@ -442,6 +442,108 @@ class TestControllers(unittest.TestCase):
             dlg.close()
             app.processEvents()
 
+    def test_preview_controller_caches_book_preview_and_debounces_style_change(self):
+        import os
+        from unittest.mock import patch
+        from PyQt6.QtWidgets import QApplication
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        _app = QApplication.instance() or QApplication([])
+
+        class _FakePreviewHost(PreviewController):
+            def __init__(self):
+                self._loading_css = False
+                self.saved = 0
+                self.refreshed = 0
+
+            def save_visual_css(self, show_alert=False):
+                self.saved += 1
+
+            def refresh_preview(self):
+                self.refreshed += 1
+
+        host = _FakePreviewHost()
+        book = {
+            "source_key": "book_1",
+            "path": "/nonexistent/book_1.fb2",
+            "meta": {"title": "First", "last": "Author"},
+            "cover_bytes": b"IMG1",
+            "cover_mime": "image/jpeg",
+        }
+        with patch("ui.controllers.preview_controller.get_book_xml", return_value=b"<FictionBook/>") as mock_xml, \
+             patch("ui.controllers.preview_controller.extract_book_preview_data", return_value={"title": "First"}) as mock_ext:
+            p1 = host._get_cached_book_preview(book)
+            p2 = host._get_cached_book_preview(book)
+            self.assertEqual(p1, {"title": "First"})
+            self.assertIs(p1, p2)
+            self.assertEqual(mock_xml.call_count, 1)
+            self.assertEqual(mock_ext.call_count, 1)
+
+            book["meta"] = {"title": "Changed", "last": "Author"}
+            host._get_cached_book_preview(book)
+            self.assertEqual(mock_ext.call_count, 2)
+
+        host.on_style_param_changed()
+        self.assertEqual(host.saved, 1)
+        self.assertEqual(host.refreshed, 0)
+        self.assertTrue(host._preview_refresh_timer.isActive())
+        host._preview_refresh_timer.stop()
+
+    def test_updates_controller_warns_once_on_unverified_fbc(self):
+        from unittest.mock import patch
+
+        class _FakeFbcHost(UpdatesController):
+            def __init__(self):
+                self._fbc_worker = None
+                self._fbc_setup_dlg = None
+                self._fbc_ready_callback = None
+                self.fbc_cmd = ""
+                self.fbc_version = ""
+
+            def update_header_status(self):
+                pass
+
+        host = _FakeFbcHost()
+        res = {"ok": True, "path": "/usr/local/bin/fbc", "version": "2.1.1", "unverified": True, "reason": "offline"}
+        with patch("ui.controllers.updates_controller.show_themed_message") as mock_msg:
+            host._on_fbc_check_finished(res)
+            host._on_fbc_check_finished(res)
+
+        mock_msg.assert_called_once()
+        self.assertEqual(mock_msg.call_args[0][3], "warning")
+
+    def test_tray_controller_quit_application_closes_modals_and_schedules_quit(self):
+        import os
+        from unittest.mock import patch
+        from PyQt6.QtWidgets import QApplication, QDialog
+        from ui.controllers import TrayWatchController
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication([])
+
+        class _FakeTrayHost(TrayWatchController):
+            def __init__(self):
+                self._force_quit = False
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        host = _FakeTrayHost()
+        modal = QDialog()
+        modal.show()
+        app.processEvents()
+        try:
+            with patch("ui.controllers.tray_controller.QTimer.singleShot") as mock_single:
+                host.quit_application()
+            self.assertTrue(host._force_quit)
+            self.assertTrue(host.closed)
+            self.assertFalse(modal.isVisible())
+            mock_single.assert_called_once_with(0, app.quit)
+        finally:
+            modal.close()
+            app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()

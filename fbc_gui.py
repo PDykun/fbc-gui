@@ -225,6 +225,7 @@ class MainWindow(
         self._test_email_worker = None
         self._convert_worker = None
         self._device_sync_worker = None
+        self._bg_task_worker = None
         self._closing = False
         self._pending_settings_save = False
         self._pending_fbc_config_save = False
@@ -295,6 +296,7 @@ class MainWindow(
             "_update_dl_worker",
             "_test_email_worker",
             "_device_sync_worker",
+            "_bg_task_worker",
         )
         active = []
         for attr in worker_names:
@@ -313,6 +315,7 @@ class MainWindow(
             "_import_worker",
             "_test_email_worker",
             "_device_sync_worker",
+            "_bg_task_worker",
         )))
 
     def _detach_preview_native_view(self):

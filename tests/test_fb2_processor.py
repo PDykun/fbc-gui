@@ -1436,6 +1436,65 @@ class TestFb2Processor(unittest.TestCase):
             for bad_ch in (':', '"', '*', '?'):
                 self.assertNotIn(bad_ch, bname)
 
+    def test_cancellable_process_streaming_bounded_kill_and_closes_pipes(self):
+        import subprocess
+
+        class _StubStream:
+            def __init__(self):
+                self.closed = False
+
+            def readline(self):
+                return ""
+
+            def close(self):
+                self.closed = True
+
+        class _StubProc:
+            def __init__(self):
+                self.stdout = _StubStream()
+                self.stderr = _StubStream()
+                self.returncode = None
+                self.wait_timeouts = []
+                self.killed = False
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                pass
+
+            def kill(self):
+                self.killed = True
+
+            def wait(self, timeout=None):
+                self.wait_timeouts.append(timeout)
+                raise subprocess.TimeoutExpired(cmd=["fake"], timeout=timeout or 0)
+
+        stub = _StubProc()
+        cancel_ev = threading.Event()
+        cancel_ev.set()
+
+        # Pass a fresh unset event that gets set immediately after Popen starts
+        cancel_ev.clear()
+        def _fake_popen(*_args, **_kwargs):
+            cancel_ev.set()
+            return stub
+
+        with patch("core.fb2.converter.subprocess.Popen", side_effect=_fake_popen):
+            with self.assertRaises(ConversionCancelledError):
+                _run_cancellable_process(
+                    ["fake_cmd"],
+                    cwd=tempfile.gettempdir(),
+                    cancel_event=cancel_ev,
+                    on_output_line=lambda _line: None,
+                )
+
+        self.assertTrue(stub.killed)
+        self.assertIn(2.0, stub.wait_timeouts)
+        self.assertNotIn(None, stub.wait_timeouts)
+        self.assertTrue(stub.stdout.closed)
+        self.assertTrue(stub.stderr.closed)
+
 
 if __name__ == "__main__":
     unittest.main()

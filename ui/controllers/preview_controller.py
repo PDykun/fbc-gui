@@ -1,6 +1,7 @@
+import hashlib
 import os
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QObject, Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices, QFontDatabase
 from PyQt6.QtWidgets import QFileDialog
 
@@ -107,11 +108,21 @@ class PreviewController:
         os.makedirs(self.fonts_dir, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(self.fonts_dir)))
 
+    def _schedule_refresh_preview(self, delay_ms=120):
+        timer = getattr(self, "_preview_refresh_timer", None)
+        if timer is None:
+            parent = self if isinstance(self, QObject) else None
+            timer = QTimer(parent)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self.refresh_preview)
+            self._preview_refresh_timer = timer
+        timer.start(int(delay_ms))
+
     def on_style_param_changed(self, *args):
         if getattr(self, '_loading_css', False):
             return
         self.save_visual_css(show_alert=False)
-        self.refresh_preview()
+        self._schedule_refresh_preview(120)
 
     def on_preview_mode_changed(self, mode):
         self.preview_source_mode = "sample" if mode == "sample" else "book"
@@ -134,6 +145,41 @@ class PreviewController:
                     return data
         return next(iter(self.files_data.values()), None)
 
+    @staticmethod
+    def _compute_book_preview_cache_key(data):
+        source_key = data.get("source_key") or data.get("path") or ""
+        path = data.get("path") or ""
+        try:
+            st = os.stat(path)
+            file_sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            file_sig = (None, None)
+        meta = data.get("meta") or {}
+        meta_sig = tuple(
+            sorted(
+                (k, tuple(v) if isinstance(v, list) else v)
+                for k, v in meta.items()
+            )
+        )
+        cov = data.get("cover_bytes")
+        cov_sig = (len(cov), hashlib.sha1(cov).digest()) if cov else None
+        cov_mime = data.get("cover_mime") or ""
+        return (source_key, file_sig, meta_sig, cov_sig, cov_mime)
+
+    def _get_cached_book_preview(self, selected_data):
+        key = self._compute_book_preview_cache_key(selected_data)
+        cache = getattr(self, "_book_preview_cache", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        book_preview = extract_book_preview_data(
+            get_book_xml(selected_data),
+            meta=selected_data.get("meta"),
+            cover_bytes=selected_data.get("cover_bytes"),
+            cover_mime=selected_data.get("cover_mime"),
+        )
+        self._book_preview_cache = (key, book_preview)
+        return book_preview
+
     def _build_full_preview_html(self, for_browser=False):
         st = self._get_css_ui_state()
         font_families = {
@@ -147,12 +193,7 @@ class PreviewController:
         book_preview = None
         selected_data = self._get_selected_book_data() if mode == "book" else None
         if selected_data:
-            book_preview = extract_book_preview_data(
-                get_book_xml(selected_data),
-                meta=selected_data.get("meta"),
-                cover_bytes=selected_data.get("cover_bytes"),
-                cover_mime=selected_data.get("cover_mime"),
-            )
+            book_preview = self._get_cached_book_preview(selected_data)
 
         if hasattr(self, "lbl_preview_source"):
             if mode == "book" and book_preview:

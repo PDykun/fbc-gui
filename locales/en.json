@@ -753,7 +753,8 @@
     "err_msg": "The fb2cng (fbc) converter was not found or failed verification, and automatic download from GitHub failed:\n\n{e}\n\nWould you like to retry?",
     "btn_retry": "Retry Download",
     "btn_skip": "Later",
-    "installed_msg": "fb2cng v{ver} has been downloaded and verified."
+    "installed_msg": "fb2cng v{ver} has been downloaded and verified.",
+    "unverified_warn": "Could not verify the checksum of the local fb2cng converter ({path}) — GitHub may be unreachable. The converter will be used without integrity verification."
   },
   "inspector": {
     "title": "FB2 Structure Inspector",

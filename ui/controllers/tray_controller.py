@@ -3,7 +3,7 @@
 import os
 import sys
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QAction, QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
@@ -229,12 +229,19 @@ class TrayWatchController:
         self.refresh_tray_menu()
 
     def quit_application(self):
-        """Полный выход из приложения (минуя сворачивание в трей)."""
+        """Полный выход из приложения (минуя сворачивание в трей и с корректным завершением модальных циклов)."""
         self._force_quit = True
-        self.close()
         app_inst = QApplication.instance()
         if app_inst is not None:
-            app_inst.quit()
+            for widget in list(app_inst.topLevelWidgets()):
+                if widget is not self and isinstance(widget, QDialog) and widget.isVisible():
+                    try:
+                        widget.close()
+                    except RuntimeError:
+                        pass
+        self.close()
+        if app_inst is not None:
+            QTimer.singleShot(0, app_inst.quit)
 
     def _on_watch_status_changed(self):
         self.refresh_tray_menu()
