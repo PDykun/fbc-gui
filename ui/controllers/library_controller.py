@@ -613,14 +613,23 @@ class LibraryController:
         return books
 
     def on_library_selection_changed(self):
-        if not hasattr(self, "btn_lib_add_to_converter"):
+        has_add = hasattr(self, "btn_lib_add_to_converter")
+        has_send = hasattr(self, "btn_lib_send_to_reader")
+        if not has_add and not has_send:
             return
         cnt = len(self._get_target_library_books())
-        self.btn_lib_add_to_converter.setEnabled(cnt > 0)
-        if cnt > 0:
-            self.btn_lib_add_to_converter.setText(tr("library.btn_add_to_converter", count=cnt))
-        else:
-            self.btn_lib_add_to_converter.setText(tr("library.btn_add_to_converter_empty"))
+        if has_add:
+            self.btn_lib_add_to_converter.setEnabled(cnt > 0)
+            if cnt > 0:
+                self.btn_lib_add_to_converter.setText(tr("library.btn_add_to_converter", count=cnt))
+            else:
+                self.btn_lib_add_to_converter.setText(tr("library.btn_add_to_converter_empty"))
+        if has_send:
+            self.btn_lib_send_to_reader.setEnabled(cnt > 0)
+            if cnt > 0:
+                self.btn_lib_send_to_reader.setText(tr("library.btn_send_to_reader", count=cnt))
+            else:
+                self.btn_lib_send_to_reader.setText(tr("library.btn_send_to_reader_empty"))
 
     # --- Нижняя карточка описания книги и обложки ---
 
@@ -913,6 +922,11 @@ class LibraryController:
         books = self._get_target_library_books()
         if books:
             self._send_library_books_to_converter(books)
+
+    def send_selected_library_books_to_reader(self):
+        books = self._get_target_library_books()
+        if books:
+            self._send_library_books_to_reader(books)
 
     def add_library_series_to_converter(self, book_row):
         series_name = str((book_row or {}).get("series") or "").strip()

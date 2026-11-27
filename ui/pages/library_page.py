@@ -286,6 +286,15 @@ def build_library_page(win, parent):
     win.btn_lib_add_to_converter.clicked.connect(win.add_selected_library_books_to_converter)
     top_ctrl.addWidget(win.btn_lib_add_to_converter)
 
+    win.btn_lib_send_to_reader = QPushButton(tr("library.btn_send_to_reader_empty"))
+    win.btn_lib_send_to_reader.setObjectName("SecondaryButton")
+    win.btn_lib_send_to_reader.setProperty("variant", "secondary")
+    win.btn_lib_send_to_reader.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_lib_send_to_reader.setEnabled(False)
+    win.btn_lib_send_to_reader.setToolTip(tr("library.btn_send_to_reader_tip"))
+    win.btn_lib_send_to_reader.clicked.connect(win.send_selected_library_books_to_reader)
+    top_ctrl.addWidget(win.btn_lib_send_to_reader)
+
     right_lay.addLayout(top_ctrl)
 
     # Алфавитная линейка в 2 ряда (RU + * # EN), как в freeLib
