@@ -315,13 +315,48 @@ class InpxLibraryIndex:
 
     def __init__(self, db_path):
         self.db_path = os.path.abspath(db_path)
+        self._ro_conn = None
+        self._ro_stat = None
+
+    def close(self):
+        """Закрывает кэшированное read-only соединение SQLite (необходимо перед заменой файла или выходом)."""
+        conn = self._ro_conn
+        self._ro_conn = None
+        self._ro_stat = None
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
 
     def _connect(self, readonly=False):
         if readonly and os.path.isfile(self.db_path):
+            try:
+                st = os.stat(self.db_path)
+                sig = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                sig = None
+            if self._ro_conn is not None and self._ro_stat == sig:
+                return self._ro_conn
+            self.close()
             conn = sqlite3.connect(self.db_path, timeout=10)
-        else:
-            os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
-            conn = sqlite3.connect(self.db_path, timeout=10)
+            conn.row_factory = sqlite3.Row
+            # Прогрев read-only соединения: memory-mapped I/O (128 МБ) и кэш страниц в ОЗУ (16 МБ)
+            for pragma in (
+                "PRAGMA query_only = ON",
+                "PRAGMA temp_store = MEMORY",
+                "PRAGMA cache_size = -16000",
+                "PRAGMA mmap_size = 134217728",
+            ):
+                try:
+                    conn.execute(pragma)
+                except sqlite3.Error:
+                    pass
+            self._ro_conn = conn
+            self._ro_stat = sig
+            return conn
+        os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
+        conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -669,6 +704,7 @@ class InpxLibraryIndex:
                 finally:
                     conn.close()
 
+            self.close()
             os.replace(tmp_db, self.db_path)
             logger.info(
                 "Индекс INPX построен: %s (книг FB2: %d, авторов: %d, серий: %d, FTS5=%s)",

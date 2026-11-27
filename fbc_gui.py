@@ -401,6 +401,8 @@ class MainWindow(
             except RuntimeError:
                 pass
         self._stop_background_workers()
+        if hasattr(self, "_close_library_index"):
+            self._close_library_index()
         self._detach_preview_native_view()
         self.save_app_settings()
         super().closeEvent(event)

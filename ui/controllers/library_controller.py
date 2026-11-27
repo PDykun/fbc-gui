@@ -68,7 +68,20 @@ class LibraryController:
         return os.path.join(self.base_dir, "library_cache.sqlite")
 
     def _get_library_index(self):
-        return InpxLibraryIndex(self._get_library_db_path())
+        db_path = os.path.abspath(self._get_library_db_path())
+        idx = getattr(self, "_lib_index", None)
+        if idx is None or idx.db_path != db_path:
+            if idx is not None:
+                idx.close()
+            idx = InpxLibraryIndex(db_path)
+            self._lib_index = idx
+        return idx
+
+    def _close_library_index(self):
+        idx = getattr(self, "_lib_index", None)
+        if idx is not None:
+            idx.close()
+            self._lib_index = None
 
     def _update_library_nav_visibility(self):
         enabled = self.is_library_enabled()
@@ -171,6 +184,8 @@ class LibraryController:
             except RuntimeError:
                 pass
 
+        # Освобождаем кэшированное read-only соединение перед пересборкой и os.replace (важно для Windows)
+        self._close_library_index()
         self._set_library_status(tr("library.status_indexing", name=os.path.basename(inpx_path)))
         dlg = ImportProgressDialog(self)
         dlg.setWindowTitle(tr("library.index_progress_title"))
