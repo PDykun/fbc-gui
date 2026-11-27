@@ -1413,6 +1413,29 @@ class TestFb2Processor(unittest.TestCase):
         self.assertNotIn(home, rec.getMessage())
         self.assertIn("~", rec.getMessage())
 
+    def test_fit_image_to_cover_size_enforces_file_limit_and_debug_report_sanitizes_name(self):
+        from core.fb2.converter import _save_debug_report_if_present
+        from core.fb2.xml_io import fit_image_to_cover_size
+
+        with tempfile.TemporaryDirectory() as td:
+            img_p = os.path.join(td, "big.jpg")
+            with open(img_p, "wb") as fh:
+                fh.write(b"\xff\xd8\xff\xe0" + b"0" * 512)
+            with self.assertRaises(ValueError):
+                fit_image_to_cover_size(img_p, max_file_bytes=128)
+
+            work_dir = os.path.join(td, "work")
+            dest_dir = os.path.join(td, "dest")
+            os.makedirs(work_dir)
+            with open(os.path.join(work_dir, "fbc-report.zip"), "wb") as fh:
+                fh.write(b"PK\x05\x06" + b"\x00" * 18)
+            saved = _save_debug_report_if_present(work_dir, dest_dir, {"display_name": 'CON: "bad*?name".fb2'})
+            self.assertIsNotNone(saved)
+            self.assertTrue(os.path.isfile(saved))
+            bname = os.path.basename(saved)
+            for bad_ch in (':', '"', '*', '?'):
+                self.assertNotIn(bad_ch, bname)
+
 
 if __name__ == "__main__":
     unittest.main()

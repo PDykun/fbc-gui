@@ -167,6 +167,14 @@ class TestEmailSender(unittest.TestCase):
             send_test_email(self._valid_settings(smtp_port="25", smtp_security="none"), "FBC GUI", "2.11")
         warn_mock.assert_called_once()
 
+    def test_crlf_header_injection_rejected_in_config_and_message_builder(self):
+        from core.email_sender import _build_email_message
+
+        self.assertFalse(is_smtp_configured(self._valid_settings(email_to="a@b.com\r\nBcc: evil@x.com")))
+        self.assertFalse(is_smtp_configured(self._valid_settings(smtp_host="smtp.example.com\n")))
+        with self.assertRaises(ValueError):
+            _build_email_message("a@b.com", "c@d.com\r\nBcc: evil@x.com", "Subj", [], "FBC GUI", "2.12")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -116,6 +116,9 @@ def is_valid_font_file(filepath):
         return False
 
 
+MAX_FONT_FILE_BYTES = 50 * 1024 * 1024  # 50 МБ лимит для файла шрифта
+
+
 def install_user_fonts(filepaths, fonts_dir):
     """Валидирует и копирует выбранные пользовательские шрифты в fonts_dir."""
     import shutil
@@ -129,6 +132,13 @@ def install_user_fonts(filepaths, fonts_dir):
         bname = os.path.basename(raw_path)
         if not is_valid_font_file(raw_path):
             errors.append((bname or str(raw_path), "invalid_font"))
+            continue
+        try:
+            if os.path.getsize(raw_path) > MAX_FONT_FILE_BYTES:
+                errors.append((bname, "font_too_large"))
+                continue
+        except OSError as e:
+            errors.append((bname, str(e)))
             continue
         dst = os.path.join(fonts_dir, bname)
         try:
@@ -144,14 +154,19 @@ def parse_ttf_names(font_path):
     """Извлекает метаданные имён (family, full, postscript) из таблицы name TTF/OTF-шрифта."""
     names = {}
     try:
+        if os.path.getsize(font_path) > MAX_FONT_FILE_BYTES:
+            return names
         with open(font_path, 'rb') as f:
-            data = f.read()
-        if len(data) < 12:
+            data = f.read(MAX_FONT_FILE_BYTES + 1)
+        if len(data) < 12 or len(data) > MAX_FONT_FILE_BYTES:
             return names
         num_tables = struct.unpack('>H', data[4:6])[0]
         name_table_offset = None
         for i in range(num_tables):
-            entry = data[12 + i * 16 : 12 + (i + 1) * 16]
+            ent_start = 12 + i * 16
+            if ent_start + 16 > len(data):
+                break
+            entry = data[ent_start : ent_start + 16]
             if entry[0:4] == b'name':
                 name_table_offset = struct.unpack('>I', entry[8:12])[0]
                 break
@@ -161,10 +176,16 @@ def parse_ttf_names(font_path):
         record_offset = name_table_offset + 6
         storage_offset = name_table_offset + string_offset
         for i in range(count):
-            rec = data[record_offset + i * 12 : record_offset + (i + 1) * 12]
+            rec_start = record_offset + i * 12
+            if rec_start + 12 > len(data):
+                break
+            rec = data[rec_start : rec_start + 12]
             plat_id, _, _, name_id, length, str_off = struct.unpack('>HHHHHH', rec)
             if name_id in (1, 4, 6):
-                str_bytes = data[storage_offset + str_off : storage_offset + str_off + length]
+                s_start = storage_offset + str_off
+                if s_start + length > len(data):
+                    continue
+                str_bytes = data[s_start : s_start + length]
                 try:
                     if plat_id in (0, 3):
                         decoded = str_bytes.decode('utf-16-be')

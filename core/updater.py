@@ -488,7 +488,10 @@ def download_and_verify_update(
 
     if not is_safe_http_url(download_url, allow_relative=False, require_https=True):
         raise ValueError(f"Unsupported download URL scheme: {download_url}")
-    if allowed_hosts is not None and not is_allowed_update_host(download_url, allowed_hosts):
+    eff_hosts = allowed_hosts
+    if eff_hosts is None and is_allowed_update_host(download_url, DEFAULT_ALLOWED_UPDATE_HOSTS):
+        eff_hosts = DEFAULT_ALLOWED_UPDATE_HOSTS
+    if eff_hosts is not None and not is_allowed_update_host(download_url, eff_hosts):
         raise ValueError(f"Untrusted update download host: {download_url}")
 
     expected_clean = str(expected_sha256 or "").strip().lower()
@@ -512,7 +515,7 @@ def download_and_verify_update(
     downloaded = 0
 
     try:
-        with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True, allowed_hosts=allowed_hosts) as resp, open(target_path, "wb") as out_fh:
+        with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True, allowed_hosts=eff_hosts) as resp, open(target_path, "wb") as out_fh:
             try:
                 total = max(0, int(resp.headers.get("Content-Length") or 0))
             except (TypeError, ValueError):
@@ -704,6 +707,8 @@ if HAS_PYQT:
             self.fallback_url = fallback_url
 
         def run(self):
+            if self.isInterruptionRequested():
+                return
             info = fetch_update_info(
                 self.local_ver,
                 self.local_build,
@@ -711,7 +716,8 @@ if HAS_PYQT:
                 lang=self.lang,
                 fallback_url=self.fallback_url,
             )
-            self.checked.emit(info, self.manual)
+            if not self.isInterruptionRequested():
+                self.checked.emit(info, self.manual)
 
 
     class UpdateDownloadWorker(QThread):

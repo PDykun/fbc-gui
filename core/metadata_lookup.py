@@ -1130,6 +1130,8 @@ class OpdsProvider:
         url = template.replace("{searchTerms}", encoded)
         url = re.sub(r"\{[a-zA-Z0-9_:]+\?\}", "", url)
         url = re.sub(r"\{[a-zA-Z0-9_:]+\}", "", url)
+        if not is_safe_http_url(url, allow_relative=False, require_https=False):
+            raise ValueError(f"Unsafe OPDS search URL: {url}")
         return url
 
     def search(self, title="", author="", isbn="", limit=5, timeout=DEFAULT_TIMEOUT_SEC, cancel_event=None):
@@ -1319,9 +1321,14 @@ def search_book_metadata(
         )
 
     max_workers = min(5, len(providers))
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+    pool = ThreadPoolExecutor(max_workers=max_workers)
+    cancelled = False
+    try:
         future_map = {pool.submit(_run_one, p): p.provider_id for p in providers}
         for fut in as_completed(future_map):
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
             pid = future_map[fut]
             try:
                 items = fut.result() or []
@@ -1330,6 +1337,8 @@ def search_book_metadata(
                 safe_err = _mask_secrets_in_text(e)
                 logger.warning("Провайдер метаданных %s завершился с ошибкой: %s", pid, safe_err)
                 errors[pid] = safe_err
+    finally:
+        pool.shutdown(wait=not cancelled, cancel_futures=cancelled)
 
     scored = []
     for cand in all_candidates:

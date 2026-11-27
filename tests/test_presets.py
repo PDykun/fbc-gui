@@ -381,6 +381,19 @@ class TestPresets(unittest.TestCase):
             )
             self.assertEqual(target["cover_studio_spec"]["template_id"], "series_edition")
 
+    def test_slugify_reserved_windows_names_and_sanitize_file_protocol_urls(self):
+        from core.presets import sanitize_preset_css
+
+        for reserved in ("CON", "nul", "COM1", "LPT9"):
+            slug = slugify_preset_name(reserved)
+            self.assertNotEqual(slug.upper(), reserved.upper())
+            self.assertTrue(slug.endswith("_"))
+
+        dirty = 'body { background: url("file:///etc/passwd"); color: red; } p { background: url("//evil.example/x.png"); }'
+        cleaned = sanitize_preset_css(dirty)
+        self.assertNotIn("file://", cleaned.lower())
+        self.assertNotIn("evil.example", cleaned.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

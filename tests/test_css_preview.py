@@ -369,6 +369,27 @@ class TestCssPreview(unittest.TestCase):
             self.assertIn("p.has-dropcap .dropcap, .dropcap, span.dropcaps, span.dropcap {", staged_text)
             self.assertIn("p.has-dropcap, .has-dropcap { margin: 0; text-indent: 0; text-align: justify; }", staged_text)
 
+    def test_parse_ttf_names_truncated_and_install_user_fonts_size_limit(self):
+        from unittest.mock import patch
+        from core.css_preview import install_user_fonts, parse_ttf_names
+
+        with tempfile.TemporaryDirectory() as td:
+            # Усечённый TTF-заголовок с num_tables=50 не должен падать с struct.error
+            trunc = os.path.join(td, "truncated.ttf")
+            with open(trunc, "wb") as fh:
+                fh.write(b"\x00\x01\x00\x00\x00\x32" + b"\x00" * 10)
+            self.assertEqual(parse_ttf_names(trunc), {})
+
+            # Проверка лимита размера при установке шрифтов
+            big_font = os.path.join(td, "big.ttf")
+            with open(big_font, "wb") as fh:
+                fh.write(b"\x00\x01\x00\x00" + b"\x00" * 128)
+            dst_dir = os.path.join(td, "out_fonts")
+            with patch("core.css_preview.MAX_FONT_FILE_BYTES", 64):
+                installed, errors = install_user_fonts([big_font], dst_dir)
+            self.assertEqual(installed, [])
+            self.assertEqual(errors, [("big.ttf", "font_too_large")])
+
 
 if __name__ == "__main__":
     unittest.main()

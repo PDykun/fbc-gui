@@ -457,10 +457,17 @@ def extract_cover_from_fb2(xml_bytes):
     return None, None
 
 
-def fit_image_to_cover_size(image_path, target_size=COVER_TARGET_SIZE):
+MAX_COVER_FILE_BYTES = 32 * 1024 * 1024  # 32 МБ лимит для файла обложки перед декодированием
+
+
+def fit_image_to_cover_size(image_path, target_size=COVER_TARGET_SIZE, max_file_bytes=MAX_COVER_FILE_BYTES):
     target_w, target_h = target_size
+    if max_file_bytes and os.path.getsize(image_path) > max_file_bytes:
+        raise ValueError(f"Cover image exceeds size limit ({max_file_bytes} bytes): {image_path}")
     with open(image_path, "rb") as f:
-        raw_bytes = f.read()
+        raw_bytes = f.read(max_file_bytes + 1) if max_file_bytes else f.read()
+    if max_file_bytes and len(raw_bytes) > max_file_bytes:
+        raise ValueError(f"Cover image exceeds size limit ({max_file_bytes} bytes): {image_path}")
     if get_facade_attr("HAS_PIL", HAS_PIL) and Image is not None and ImageOps is not None:
         from core.image_optimizer import open_raster_image_safely
 

@@ -14,7 +14,8 @@ from core.fb2.common import (
     get_facade_attr,
     logger,
 )
-from core.fb2.xml_io import get_book_xml
+from core.fb2.organizer import _sanitize_fs_component
+from core.fb2.xml_io import _read_zip_entry_limited, get_book_xml
 from core.fb2.metadata import update_fb2_xml
 
 
@@ -93,15 +94,17 @@ def patch_epub_title_classes(epub_path, style_params, meta=None):
         f"text-align: {h1_al} !important; margin-top: 0.8em !important; margin-bottom: 0.5em !important;"
     )
 
-    temp_epub = epub_path + ".tmp"
+    epub_dir = os.path.dirname(os.path.abspath(epub_path)) or "."
+    fd_tmp, temp_epub = tempfile.mkstemp(prefix=".fbc_epub_", suffix=".tmp", dir=epub_dir)
+    os.close(fd_tmp)
     try:
         with zipfile.ZipFile(epub_path, 'r') as zin, zipfile.ZipFile(temp_epub, 'w') as zout:
             if "mimetype" in zin.namelist():
-                zout.writestr("mimetype", zin.read("mimetype"), compress_type=zipfile.ZIP_STORED)
+                zout.writestr("mimetype", _read_zip_entry_limited(zin, "mimetype", max_bytes=4096), compress_type=zipfile.ZIP_STORED)
             for item in zin.infolist():
                 if item.filename == "mimetype":
                     continue
-                content = zin.read(item.filename)
+                content = _read_zip_entry_limited(zin, item.filename)
                 if item.filename.lower().endswith(('.xhtml', '.html', '.htm')):
                     try:
                         text = content.decode('utf-8')
@@ -116,7 +119,10 @@ def patch_epub_title_classes(epub_path, style_params, meta=None):
         return True
     except Exception:
         if os.path.exists(temp_epub):
-            os.remove(temp_epub)
+            try:
+                os.remove(temp_epub)
+            except OSError:
+                pass
         return False
 
 
@@ -225,7 +231,8 @@ def _save_debug_report_if_present(tmp_work_dir, dest_dir, data):
     if not os.path.isfile(report_src):
         return None
     base_label = data.get("display_name") or os.path.basename(data.get("path") or "book")
-    stem = os.path.splitext(base_label.replace("/", "_").replace("\\", "_"))[0].strip() or "book"
+    raw_stem = os.path.splitext(base_label.replace("/", "_").replace("\\", "_"))[0].strip() or "book"
+    stem = _sanitize_fs_component(raw_stem, fallback="book", max_len=80)
     report_dst = os.path.join(dest_dir, f"{stem}_fbc-report.zip")
     try:
         with _DEST_MOVE_LOCK:

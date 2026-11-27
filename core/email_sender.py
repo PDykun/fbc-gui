@@ -24,12 +24,29 @@ def _normalize_smtp_security(raw_value):
     raise ValueError(f"Unsupported smtp_security value: {raw_value!r}")
 
 
+def _has_unsafe_header_chars(value):
+    return any(ch in str(value or "") for ch in ("\r", "\n", "\x00"))
+
+
+def _validate_email_header_value(label, value):
+    raw = str(value or "")
+    if _has_unsafe_header_chars(raw):
+        raise ValueError(f"Invalid control character in {label}")
+    return raw.strip()
+
+
 def is_smtp_configured(app_settings):
     """Проверяет, заполнены ли обязательные параметры SMTP (независимо от автоотправки)."""
-    smtp_host = app_settings.get("smtp_host", "").strip()
+    raw_host = app_settings.get("smtp_host", "")
+    raw_to = app_settings.get("email_to", "")
+    raw_from = app_settings.get("email_from", "")
+    raw_user = app_settings.get("smtp_user", "")
+    if any(_has_unsafe_header_chars(v) for v in (raw_host, raw_to, raw_from, raw_user)):
+        return False
+    smtp_host = str(raw_host).strip()
     smtp_port = str(app_settings.get("smtp_port", "")).strip()
-    email_to = app_settings.get("email_to", "").strip()
-    sender = (app_settings.get("email_from", "") or app_settings.get("smtp_user", "")).strip()
+    email_to = str(raw_to).strip()
+    sender = (str(raw_from) or str(raw_user)).strip()
     if not (smtp_host and smtp_port.isdigit() and email_to and sender and "@" in email_to):
         return False
     port_num = int(smtp_port)
@@ -89,21 +106,25 @@ def split_files_into_email_batches(file_paths, max_bytes=None, reject_oversized=
 
 
 def _build_email_message(email_from, email_to, subject, batch_files, app_name, app_version):
+    safe_from = _validate_email_header_value("From", email_from)
+    safe_to = _validate_email_header_value("To", email_to)
+    safe_subject = _validate_email_header_value("Subject", subject)
     msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = email_from
-    msg["To"] = email_to
+    msg["Subject"] = safe_subject
+    msg["From"] = safe_from
+    msg["To"] = safe_to
     file_names = "\n".join(f"• {os.path.basename(p)}" for p in batch_files)
     msg.set_content(tr("converter.email_body", app=app_name, ver=app_version, files=file_names))
 
     for fp in batch_files:
         with open(fp, "rb") as f:
             data = f.read()
+        safe_fname = os.path.basename(fp).replace("\r", "").replace("\n", "").replace("\x00", "")
         msg.add_attachment(
             data,
             maintype="application",
             subtype="octet-stream",
-            filename=os.path.basename(fp)
+            filename=safe_fname or "book.bin"
         )
     return msg
 

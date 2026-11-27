@@ -539,6 +539,37 @@ class TestMetadataLookup(unittest.TestCase):
         with self.assertRaises(ValueError):
             open_raster_image_safely(raw, max_pixels=10_000, load=True)
 
+    def test_opds_build_search_url_rejects_unsafe_scheme_and_search_cancels_promptly(self):
+        import threading
+        import time
+
+        prov = OpdsProvider(opds_url="https://example.org/opds")
+        with self.assertRaises(ValueError):
+            prov._build_search_url("file:///etc/passwd?q={searchTerms}", "dune")
+
+        cancel_ev = threading.Event()
+        started_ev = threading.Event()
+
+        def _slow_search(*args, **kwargs):
+            started_ev.set()
+            time.sleep(3.0)
+            return []
+
+        def _fast_search(*args, **kwargs):
+            started_ev.wait(timeout=1.0)
+            cancel_ev.set()
+            return []
+
+        t0 = time.monotonic()
+        with patch.object(FantLabProvider, "search", side_effect=_fast_search), \
+             patch.object(LitResProvider, "search", side_effect=_slow_search):
+            search_book_metadata(
+                title="Dune",
+                enabled_providers=("fantlab", "litres"),
+                cancel_event=cancel_ev,
+            )
+        self.assertLess(time.monotonic() - t0, 1.5)
+
 
 if __name__ == "__main__":
     unittest.main()

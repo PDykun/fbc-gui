@@ -13,7 +13,7 @@ _DANGEROUS_CSS_IMPORT_RE = re.compile(r"@import\b[^;{}]*(?:;|$)", re.IGNORECASE)
 _DANGEROUS_CSS_EXPR_RE = re.compile(r"expression\s*\([^)]*\)", re.IGNORECASE)
 _DANGEROUS_CSS_BEHAVIOR_RE = re.compile(r"(?:behavior|-moz-binding)\s*:[^;{}]*(?:;|$)", re.IGNORECASE)
 _DANGEROUS_CSS_REMOTE_URL_RE = re.compile(
-    r"url\(\s*['\"]?\s*(?:https?:|javascript:|vbscript:)[^)]*\)",
+    r"url\(\s*['\"]?\s*(?:https?:|file:|//|javascript:|vbscript:)[^)]*\)",
     re.IGNORECASE,
 )
 
@@ -82,12 +82,21 @@ PRESET_SETTING_KEYS = (
 )
 
 
+_WIN_RESERVED_PRESET_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+
 def slugify_preset_name(name):
     """Преобразует название пресета в безопасное имя файла для Windows и macOS."""
     raw = str(name or "").strip()
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", raw)
-    cleaned = re.sub(r"\s+", "_", cleaned).strip("._ ")
-    return cleaned[:80] or "preset"
+    cleaned = re.sub(r"\s+", "_", cleaned).strip("._ ")[:80]
+    if cleaned.upper() in _WIN_RESERVED_PRESET_NAMES:
+        cleaned = f"{cleaned}_"
+    return cleaned or "preset"
 
 
 def _sanitize_cover_studio_spec(val):
