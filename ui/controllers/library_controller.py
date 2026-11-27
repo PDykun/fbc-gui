@@ -615,8 +615,11 @@ class LibraryController:
         book = current.data(0, _ROLE_BOOK)
         if not book:
             return
-        self._render_book_details_html(book, details=None)
-        self._load_book_details_async(book)
+        try:
+            self._render_book_details_html(book, details=None)
+            self._schedule_book_details_load(book)
+        except Exception as e:
+            logger.error("Ошибка отображения карточки книги: %s", e)
 
     def _render_book_details_html(self, book, details=None):
         if not hasattr(self, "lib_book_details"):
@@ -686,46 +689,81 @@ class LibraryController:
         )
         self.lib_book_details.setHtml(doc_html)
 
+    def _schedule_book_details_load(self, book):
+        self._lib_pending_preview_book = dict(book)
+        if hasattr(self, "lib_book_cover"):
+            self.lib_book_cover.setPixmap(QPixmap())
+            self.lib_book_cover.setText(tr("library.cover_loading"))
+        timer = getattr(self, "_lib_preview_timer", None)
+        if timer is None:
+            parent = self if isinstance(self, QObject) else None
+            timer = QTimer(parent)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._flush_book_details_load)
+            self._lib_preview_timer = timer
+        timer.start(120)
+
+    def _flush_book_details_load(self):
+        book = getattr(self, "_lib_pending_preview_book", None)
+        if book and not getattr(self, "_closing", False):
+            self._load_book_details_async(book)
+
     def _load_book_details_async(self, book):
         inpx_path = str(self.app_settings.get("library_inpx_path", "")).strip()
         req_id = getattr(self, "_lib_preview_req_id", 0) + 1
         self._lib_preview_req_id = req_id
 
-        if hasattr(self, "lib_book_cover"):
-            self.lib_book_cover.setPixmap(QPixmap())
-            self.lib_book_cover.setText(tr("library.cover_loading"))
-
         if not inpx_path or not os.path.isfile(inpx_path):
             self._apply_book_preview_result(req_id, book, {"found": False})
             return
 
+        workers = getattr(self, "_lib_preview_workers", None)
+        if workers is None:
+            workers = set()
+            self._lib_preview_workers = workers
+
         worker = BackgroundTaskWorker(lambda p=inpx_path, b=dict(book): load_book_preview_details(p, b), parent=self)
+        workers.add(worker)
         self._lib_preview_worker = worker
         worker.finished_task.connect(
             lambda res, err, rid=req_id, bk=book: self._apply_book_preview_result(rid, bk, res if err is None else {"found": False})
         )
-        worker.finished.connect(worker.deleteLater)
+        def _cleanup_worker(w=worker):
+            try:
+                self._lib_preview_workers.discard(w)
+            except Exception:
+                pass
+            if getattr(self, "_lib_preview_worker", None) is w:
+                self._lib_preview_worker = None
+            try:
+                w.deleteLater()
+            except RuntimeError:
+                pass
+        worker.finished.connect(_cleanup_worker)
         worker.start()
 
     def _apply_book_preview_result(self, req_id, book, details):
         if getattr(self, "_closing", False) or req_id != getattr(self, "_lib_preview_req_id", 0):
             return
-        self._render_book_details_html(book, details=details or {"found": False})
-        if not hasattr(self, "lib_book_cover"):
-            return
-        cover_bytes = (details or {}).get("cover_bytes")
-        if cover_bytes:
-            pm = QPixmap()
-            if pm.loadFromData(cover_bytes):
-                target_w = max(140, self.lib_book_cover.width() - 8)
-                target_h = max(180, self.lib_book_cover.height() - 8)
-                self.lib_book_cover.setPixmap(
-                    pm.scaled(target_w, target_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                )
-                self.lib_book_cover.setText("")
+        try:
+            self._render_book_details_html(book, details=details or {"found": False})
+            if not hasattr(self, "lib_book_cover"):
                 return
-        self.lib_book_cover.setPixmap(QPixmap())
-        self.lib_book_cover.setText(tr("library.cover_missing"))
+            cover_bytes = (details or {}).get("cover_bytes")
+            if cover_bytes:
+                pm = QPixmap()
+                if pm.loadFromData(cover_bytes):
+                    target_w = max(140, self.lib_book_cover.width() - 8)
+                    target_h = max(180, self.lib_book_cover.height() - 8)
+                    self.lib_book_cover.setPixmap(
+                        pm.scaled(target_w, target_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    )
+                    self.lib_book_cover.setText("")
+                    return
+            self.lib_book_cover.setPixmap(QPixmap())
+            self.lib_book_cover.setText(tr("library.cover_missing"))
+        except Exception as e:
+            logger.error("Ошибка обновления карточки предпросмотра книги: %s", e)
 
     def on_library_detail_link_clicked(self, url):
         scheme = url.scheme()

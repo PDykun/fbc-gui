@@ -10,7 +10,7 @@ from core.logger import get_logger
 
 logger = get_logger("inpx_library")
 
-INPX_CACHE_SCHEMA_VERSION = "2"
+INPX_CACHE_SCHEMA_VERSION = "3"
 MAX_INPX_ENTRY_BYTES = 128 * 1024 * 1024  # 128 МБ лимит на один .inp-файл (защита от zip-bomb)
 MAX_INPX_SEARCH_LIMIT = 500
 
@@ -305,7 +305,6 @@ def _prefix_range_clause(col_name, prefix_low, where_list, params_list):
     if p == "#":
         where_list.append(f"({col_name} < 'a' OR ({col_name} > 'z' AND {col_name} < 'а'))")
         return
-    # Точный диапазон для B-tree индекса без зависимости от ASCII-only COLLATE NOCASE
     hi = p[:-1] + chr(ord(p[-1]) + 1)
     where_list.append(f"({col_name} >= ? AND {col_name} < ?)")
     params_list.extend([p, hi])
@@ -354,7 +353,7 @@ class InpxLibraryIndex:
         )
 
     def build_index(self, inpx_path, progress_callback=None, cancel_event=None):
-        """Парсит INPX в изолированный временный SQLite-файл и атомарно подменяет кэш."""
+        """Парсит INPX в изолированный временный SQLite-файл с предвычисленными сводками и атомарно подменяет кэш."""
         if not inpx_path or not os.path.isfile(inpx_path):
             raise FileNotFoundError(f"INPX file not found: {inpx_path}")
 
@@ -423,7 +422,37 @@ class InpxLibraryIndex:
                         CREATE TABLE authors (
                             id INTEGER PRIMARY KEY,
                             name TEXT NOT NULL,
-                            name_low TEXT NOT NULL UNIQUE
+                            name_low TEXT NOT NULL UNIQUE,
+                            count_active INTEGER NOT NULL,
+                            count_all INTEGER NOT NULL
+                        )
+                        """
+                    )
+                    conn.execute(
+                        """
+                        CREATE TABLE series_summary (
+                            series_low TEXT PRIMARY KEY,
+                            name TEXT NOT NULL,
+                            count_active INTEGER NOT NULL,
+                            count_all INTEGER NOT NULL
+                        )
+                        """
+                    )
+                    conn.execute(
+                        """
+                        CREATE TABLE genre_summary (
+                            genre TEXT PRIMARY KEY,
+                            count_active INTEGER NOT NULL,
+                            count_all INTEGER NOT NULL
+                        )
+                        """
+                    )
+                    conn.execute(
+                        """
+                        CREATE TABLE lang_summary (
+                            lang TEXT PRIMARY KEY,
+                            count_active INTEGER NOT NULL,
+                            count_all INTEGER NOT NULL
                         )
                         """
                     )
@@ -471,7 +500,11 @@ class InpxLibraryIndex:
                     insert_ba_sql = "INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)"
                     insert_bg_sql = "INSERT INTO book_genres (book_id, genre) VALUES (?, ?)"
 
-                    author_map = {}  # name_low -> (author_id, display_name)
+                    # Предвычисляемые счётчики в памяти (для мгновенного отклика левой панели без тяжёлых JOIN)
+                    author_map = {}  # name_low -> [author_id, display_name, count_active, count_all]
+                    series_map = {}  # series_low -> [display_name, count_active, count_all]
+                    genre_map = {}   # genre_code -> [count_active, count_all]
+                    lang_map = {}    # lang_code -> [count_active, count_all]
                     next_author_id = 1
                     book_batch = []
                     ba_batch = []
@@ -514,6 +547,7 @@ class InpxLibraryIndex:
                             author_str = ", ".join(authors_list)
                             title = _get_col(parts, idx_title).strip()
                             series = _get_col(parts, idx_series).strip()
+                            series_low = series.lower()
                             serno = _get_col(parts, idx_serno).strip()
                             serno_num = _parse_serno_int(serno)
                             genres_list = _split_inpx_genres(_get_col(parts, idx_genre))
@@ -523,11 +557,12 @@ class InpxLibraryIndex:
                             librate = _parse_int_clamped(_get_col(parts, idx_librate), min_val=0, max_val=5)
                             folder = _get_col(parts, idx_folder).strip()
                             deleted = 1 if _get_col(parts, idx_del).strip() == "1" else 0
+                            is_active = 0 if deleted else 1
                             date_str = _get_col(parts, idx_date).strip()
 
                             book_batch.append((
                                 book_id, author_str, author_str.lower(), title, title.lower(),
-                                series, series.lower(), serno, serno_num, genres_str, lang,
+                                series, series_low, serno, serno_num, genres_str, lang,
                                 size_b, librate, file_stem, ext, folder, inp_stem, deleted, date_str,
                             ))
 
@@ -537,13 +572,37 @@ class InpxLibraryIndex:
                                 if entry is None:
                                     a_id = next_author_id
                                     next_author_id += 1
-                                    author_map[a_low] = (a_id, a_name)
+                                    author_map[a_low] = [a_id, a_name, is_active, 1]
                                 else:
                                     a_id = entry[0]
+                                    entry[2] += is_active
+                                    entry[3] += 1
                                 ba_batch.append((book_id, a_id))
 
+                            if series_low:
+                                s_entry = series_map.get(series_low)
+                                if s_entry is None:
+                                    series_map[series_low] = [series, is_active, 1]
+                                else:
+                                    s_entry[1] += is_active
+                                    s_entry[2] += 1
+
                             for g_code in genres_list:
+                                g_entry = genre_map.get(g_code)
+                                if g_entry is None:
+                                    genre_map[g_code] = [is_active, 1]
+                                else:
+                                    g_entry[0] += is_active
+                                    g_entry[1] += 1
                                 bg_batch.append((book_id, g_code))
+
+                            if lang:
+                                l_entry = lang_map.get(lang)
+                                if l_entry is None:
+                                    lang_map[lang] = [is_active, 1]
+                                else:
+                                    l_entry[0] += is_active
+                                    l_entry[1] += 1
 
                             if len(book_batch) >= 5000:
                                 _flush_batches()
@@ -552,15 +611,31 @@ class InpxLibraryIndex:
 
                     if author_map:
                         conn.executemany(
-                            "INSERT INTO authors (id, name, name_low) VALUES (?, ?, ?)",
-                            [(aid, aname, alow) for alow, (aid, aname) in author_map.items()],
+                            "INSERT INTO authors (id, name, name_low, count_active, count_all) VALUES (?, ?, ?, ?, ?)",
+                            [(v[0], v[1], k, v[2], v[3]) for k, v in author_map.items()],
+                        )
+                    if series_map:
+                        conn.executemany(
+                            "INSERT INTO series_summary (series_low, name, count_active, count_all) VALUES (?, ?, ?, ?)",
+                            [(k, v[0], v[1], v[2]) for k, v in series_map.items()],
+                        )
+                    if genre_map:
+                        conn.executemany(
+                            "INSERT INTO genre_summary (genre, count_active, count_all) VALUES (?, ?, ?)",
+                            [(k, v[0], v[1]) for k, v in genre_map.items()],
+                        )
+                    if lang_map:
+                        conn.executemany(
+                            "INSERT INTO lang_summary (lang, count_active, count_all) VALUES (?, ?, ?)",
+                            [(k, v[0], v[1]) for k, v in lang_map.items()],
                         )
 
                     conn.execute("CREATE INDEX idx_books_series_low ON books(series_low)")
                     conn.execute("CREATE INDEX idx_books_lang_del ON books(deleted, lang)")
-                    conn.execute("CREATE INDEX idx_authors_name_low ON authors(name_low)")
                     conn.execute("CREATE INDEX idx_ba_author ON book_authors(author_id, book_id)")
+                    conn.execute("CREATE INDEX idx_ba_book ON book_authors(book_id, author_id)")
                     conn.execute("CREATE INDEX idx_bg_genre ON book_genres(genre, book_id)")
+                    conn.execute("CREATE INDEX idx_bg_book ON book_genres(book_id, genre)")
 
                     use_fts5 = _has_fts5_support(conn)
                     if use_fts5:
@@ -589,14 +664,15 @@ class InpxLibraryIndex:
                         ("has_fts5", "1" if use_fts5 else "0"),
                     ]
                     conn.executemany("INSERT INTO meta(key, value) VALUES (?, ?)", meta_rows)
+                    conn.execute("ANALYZE")
                     conn.commit()
                 finally:
                     conn.close()
 
             os.replace(tmp_db, self.db_path)
             logger.info(
-                "Индекс INPX построен: %s (книг FB2: %d, авторов: %d, FTS5=%s)",
-                abs_inpx, total_books, len(author_map), use_fts5,
+                "Индекс INPX построен: %s (книг FB2: %d, авторов: %d, серий: %d, FTS5=%s)",
+                abs_inpx, total_books, len(author_map), len(series_map), use_fts5,
             )
             return {
                 "inpx_path": abs_inpx,
@@ -614,13 +690,13 @@ class InpxLibraryIndex:
             raise
 
     def list_languages(self, hide_deleted=True):
-        """Возвращает список языков, присутствующих в библиотеке, по убыванию числа книг."""
+        """Возвращает список языков, присутствующих в библиотеке, по убыванию числа книг (мгновенно из lang_summary)."""
         if not os.path.isfile(self.db_path):
             return []
-        where = "WHERE deleted = 0 AND lang != ''" if hide_deleted else "WHERE lang != ''"
+        cnt_col = "count_active" if hide_deleted else "count_all"
         with self._connect(readonly=True) as conn:
             rows = conn.execute(
-                f"SELECT lang, COUNT(*) AS cnt FROM books {where} GROUP BY lang ORDER BY cnt DESC, lang"
+                f"SELECT lang FROM lang_summary WHERE {cnt_col} > 0 ORDER BY {cnt_col} DESC, lang"
             ).fetchall()
             return [r["lang"] for r in rows]
 
@@ -628,83 +704,119 @@ class InpxLibraryIndex:
         """Возвращает список уникальных авторов с количеством книг для левой панели."""
         if not os.path.isfile(self.db_path):
             return []
-        where = []
+        lang_f = str(lang or "all").strip().lower()
+        lim = int(limit or 1500)
+
+        # Быстрый путь без фильтра по языку — прямое чтение по B-tree индексу таблицы authors (< 2 мс)
+        if not lang_f or lang_f == "all":
+            cnt_col = "count_active" if hide_deleted else "count_all"
+            where = [f"{cnt_col} > 0"]
+            params = []
+            _prefix_range_clause("name_low", prefix, where, params)
+            ft = str(filter_text or "").strip().lower()
+            if ft:
+                where.append("name_low LIKE ?")
+                params.append(f"%{ft}%")
+            sql = (
+                f"SELECT id, name, {cnt_col} AS cnt FROM authors "
+                f"WHERE {' AND '.join(where)} "
+                f"ORDER BY name_low LIMIT ?"
+            )
+            with self._connect(readonly=True) as conn:
+                rows = conn.execute(sql, params + [lim]).fetchall()
+                return [{"id": r["id"], "name": r["name"], "count": int(r["cnt"])} for r in rows]
+
+        # Путь с фильтром по языку — опирается на индексы authors(name_low), book_authors(author_id, book_id) и books(id)
+        where_a = []
         params = []
-        _prefix_range_clause("a.name_low", prefix, where, params)
+        _prefix_range_clause("a.name_low", prefix, where_a, params)
         ft = str(filter_text or "").strip().lower()
         if ft:
-            where.append("a.name_low LIKE ?")
+            where_a.append("a.name_low LIKE ?")
             params.append(f"%{ft}%")
-        if hide_deleted:
-            where.append("b.deleted = 0")
-        lang_f = str(lang or "all").strip().lower()
-        if lang_f and lang_f != "all":
-            where.append("b.lang = ?")
-            params.append(lang_f)
-
-        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        del_cond = "AND b.deleted = 0" if hide_deleted else ""
+        where_a_sql = ("WHERE " + " AND ".join(where_a)) if where_a else ""
         sql = (
-            f"SELECT a.id, a.name, COUNT(ba.book_id) AS cnt "
+            f"SELECT a.id, a.name, COUNT(b.id) AS cnt "
             f"FROM authors a "
-            f"JOIN book_authors ba ON ba.author_id = a.id "
-            f"JOIN books b ON b.id = ba.book_id "
-            f"{where_sql} "
+            f"CROSS JOIN book_authors ba ON ba.author_id = a.id "
+            f"CROSS JOIN books b ON b.id = ba.book_id AND b.lang = ? {del_cond} "
+            f"{where_a_sql} "
             f"GROUP BY a.id, a.name "
-            f"ORDER BY a.name_low "
-            f"LIMIT ?"
+            f"ORDER BY a.name_low LIMIT ?"
         )
         with self._connect(readonly=True) as conn:
-            rows = conn.execute(sql, params + [int(limit or 1500)]).fetchall()
+            rows = conn.execute(sql, [lang_f] + params + [lim]).fetchall()
             return [{"id": r["id"], "name": r["name"], "count": int(r["cnt"])} for r in rows]
 
     def list_series(self, prefix="", filter_text="", lang="all", hide_deleted=True, limit=1500):
         """Возвращает список уникальных серий с количеством книг для левой панели."""
         if not os.path.isfile(self.db_path):
             return []
-        where = ["b.series != ''"]
-        params = []
+        lang_f = str(lang or "all").strip().lower()
+        lim = int(limit or 1500)
+
+        if not lang_f or lang_f == "all":
+            cnt_col = "count_active" if hide_deleted else "count_all"
+            where = [f"{cnt_col} > 0"]
+            params = []
+            _prefix_range_clause("series_low", prefix, where, params)
+            ft = str(filter_text or "").strip().lower()
+            if ft:
+                where.append("series_low LIKE ?")
+                params.append(f"%{ft}%")
+            sql = (
+                f"SELECT name, {cnt_col} AS cnt FROM series_summary "
+                f"WHERE {' AND '.join(where)} "
+                f"ORDER BY series_low LIMIT ?"
+            )
+            with self._connect(readonly=True) as conn:
+                rows = conn.execute(sql, params + [lim]).fetchall()
+                return [{"name": r["name"], "count": int(r["cnt"])} for r in rows]
+
+        where = ["b.series_low != ''", "b.lang = ?"]
+        params = [lang_f]
+        if hide_deleted:
+            where.append("b.deleted = 0")
         _prefix_range_clause("b.series_low", prefix, where, params)
         ft = str(filter_text or "").strip().lower()
         if ft:
             where.append("b.series_low LIKE ?")
             params.append(f"%{ft}%")
-        if hide_deleted:
-            where.append("b.deleted = 0")
-        lang_f = str(lang or "all").strip().lower()
-        if lang_f and lang_f != "all":
-            where.append("b.lang = ?")
-            params.append(lang_f)
-
         sql = (
-            f"SELECT MIN(b.series) AS name, b.series_low, COUNT(*) AS cnt "
+            f"SELECT MIN(b.series) AS name, COUNT(*) AS cnt "
             f"FROM books b "
             f"WHERE {' AND '.join(where)} "
             f"GROUP BY b.series_low "
-            f"ORDER BY b.series_low "
-            f"LIMIT ?"
+            f"ORDER BY b.series_low LIMIT ?"
         )
         with self._connect(readonly=True) as conn:
-            rows = conn.execute(sql, params + [int(limit or 1500)]).fetchall()
+            rows = conn.execute(sql, params + [lim]).fetchall()
             return [{"name": r["name"], "count": int(r["cnt"])} for r in rows]
 
     def list_genres(self, lang="all", hide_deleted=True):
         """Возвращает список жанров с количеством книг."""
         if not os.path.isfile(self.db_path):
             return []
-        where = []
-        params = []
+        lang_f = str(lang or "all").strip().lower()
+        if not lang_f or lang_f == "all":
+            cnt_col = "count_active" if hide_deleted else "count_all"
+            with self._connect(readonly=True) as conn:
+                rows = conn.execute(
+                    f"SELECT genre AS code, {cnt_col} AS cnt FROM genre_summary "
+                    f"WHERE {cnt_col} > 0 ORDER BY {cnt_col} DESC, genre"
+                ).fetchall()
+                return [{"code": r["code"], "count": int(r["cnt"])} for r in rows]
+
+        where = ["b.lang = ?"]
+        params = [lang_f]
         if hide_deleted:
             where.append("b.deleted = 0")
-        lang_f = str(lang or "all").strip().lower()
-        if lang_f and lang_f != "all":
-            where.append("b.lang = ?")
-            params.append(lang_f)
-        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
         sql = (
             f"SELECT bg.genre AS code, COUNT(bg.book_id) AS cnt "
-            f"FROM book_genres bg "
-            f"JOIN books b ON b.id = bg.book_id "
-            f"{where_sql} "
+            f"FROM books b "
+            f"JOIN book_genres bg ON bg.book_id = b.id "
+            f"WHERE {' AND '.join(where)} "
             f"GROUP BY bg.genre "
             f"ORDER BY cnt DESC, bg.genre"
         )

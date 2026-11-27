@@ -336,7 +336,7 @@ class MainWindow(
                 logger.debug("Ошибка отключения нативного предпросмотра: %s", e)
 
     def _stop_background_workers(self, timeout_ms=3000):
-        for timer_attr in ("_import_dlg_timer", "_inpx_dlg_timer", "_lib_search_timer"):
+        for timer_attr in ("_import_dlg_timer", "_inpx_dlg_timer", "_lib_search_timer", "_lib_preview_timer"):
             timer = getattr(self, timer_attr, None)
             if timer is not None:
                 try:
@@ -360,6 +360,15 @@ class MainWindow(
         from core.workers import stop_qthread_safely
 
         active = self._get_active_workers()
+        seen_workers = {w for _, w in active}
+        for pw in list(getattr(self, "_lib_preview_workers", ()) or ()):
+            if pw not in seen_workers:
+                try:
+                    if pw.isRunning():
+                        active.append(("_lib_preview_worker", pw))
+                        seen_workers.add(pw)
+                except RuntimeError:
+                    pass
         for _, worker in active:
             try:
                 if hasattr(worker, "cancel"):
