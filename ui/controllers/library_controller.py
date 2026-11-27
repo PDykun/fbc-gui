@@ -13,7 +13,7 @@ from core.fb2_genres import get_genre_label
 from core.i18n import tr
 from core.inpx_library import InpxLibraryIndex, load_book_preview_details, resolve_book_source
 from core.logger import get_logger
-from core.workers import BackgroundTaskWorker, InpxIndexWorker
+from core.workers import BackgroundTaskWorker, FileImportWorker, InpxIndexWorker
 from ui.dialogs import ImportProgressDialog, show_themed_message
 
 logger = get_logger("app")
@@ -829,18 +829,85 @@ class LibraryController:
         menu = QMenu(self)
         if len(books_to_add) == 1:
             act_add = menu.addAction(tr("library.ctx_add_one"))
+            act_reader = menu.addAction(tr("library.ctx_send_to_reader_one"))
         else:
             act_add = menu.addAction(tr("library.ctx_add_multi", count=len(books_to_add)))
+            act_reader = menu.addAction(tr("library.ctx_send_to_reader_multi", count=len(books_to_add)))
 
         act_series = None
         if series_name:
+            menu.addSeparator()
             act_series = menu.addAction(tr("library.ctx_add_series", series=series_name))
 
         chosen = menu.exec(self.lib_book_tree.viewport().mapToGlobal(pos))
         if chosen == act_add:
             self._send_library_books_to_converter(books_to_add)
+        elif chosen == act_reader:
+            self._send_library_books_to_reader(books_to_add)
         elif act_series is not None and chosen == act_series:
             self.add_library_series_to_converter(ref_book)
+
+    def _send_library_books_to_reader(self, book_rows):
+        """Загружает метаданные выбранных книг из INPX, конвертирует и отправляет на ридер выбранным в настройках способом."""
+        if self._has_blocking_workers():
+            show_themed_message(self, tr("common.warning"), tr("common.busy_workers_warning"), "warning")
+            return
+        inpx_path = str(self.app_settings.get("library_inpx_path", "")).strip()
+        if not inpx_path or not os.path.isfile(inpx_path):
+            show_themed_message(self, tr("common.warning"), tr("library.warn_no_inpx"), "warning")
+            return
+
+        resolved = []
+        missing = []
+        for book in book_rows:
+            src = resolve_book_source(inpx_path, book)
+            if src is not None:
+                resolved.append(src)
+            else:
+                missing.append(book.get("title") or book.get("file") or "?")
+
+        if not resolved:
+            show_themed_message(
+                self,
+                tr("common.warning"),
+                tr("library.err_files_not_found", count=len(missing)),
+                "warning",
+            )
+            return
+
+        self._import_progress_dlg = ImportProgressDialog(self)
+        worker = FileImportWorker([], set(), parent=self, explicit_entries=resolved)
+        self._import_worker = worker
+        worker.progress.connect(self._import_progress_dlg.update_progress)
+        self._import_progress_dlg.cancel_requested.connect(self._cancel_import_worker)
+
+        def _on_loaded(imported_items, cancelled):
+            self._import_worker = None
+            if getattr(self, "_closing", False):
+                return
+            timer = getattr(self, "_import_dlg_timer", None)
+            if timer is not None and timer.isActive():
+                timer.stop()
+            dlg = getattr(self, "_import_progress_dlg", None)
+            if dlg is not None:
+                self._import_progress_dlg = None
+                try:
+                    dlg.finish_and_close()
+                    dlg.deleteLater()
+                except RuntimeError:
+                    pass
+            if cancelled or not imported_items:
+                return
+            self.send_to_reader_clicked(target_items=imported_items)
+
+        worker.finished_import.connect(_on_loaded)
+        worker.finished.connect(worker.deleteLater)
+
+        self._import_dlg_timer = QTimer(self)
+        self._import_dlg_timer.setSingleShot(True)
+        self._import_dlg_timer.timeout.connect(self._show_import_progress_dialog)
+        self._import_dlg_timer.start(180)
+        worker.start()
 
     def add_selected_library_books_to_converter(self):
         books = self._get_target_library_books()

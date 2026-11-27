@@ -172,14 +172,12 @@ def _build_queue_table(win):
     win.table.setItemDelegate(win.table_row_delegate)
 
     header = win.table.horizontalHeader()
-    header.setMinimumSectionSize(55)
+    header.setMinimumSectionSize(50)
+    header.setStretchLastSection(False)
     header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-    header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-    header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
-    header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
     header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
-    for col, width in [(1, 115), (2, 105), (3, 115), (4, 130)]:
+    for col, width in [(0, 160), (1, 110), (2, 100), (3, 105), (4, 140), (6, 220), (7, 240)]:
         win.table.setColumnWidth(col, width)
 
     win.table.setSortingEnabled(True)

@@ -2,7 +2,7 @@
 
 import math
 
-from PyQt6.QtCore import QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QDrag,
@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QStyle,
     QStyleOptionButton,
     QStyledItemDelegate,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -75,6 +76,26 @@ class RoundedRowDelegate(QStyledItemDelegate):
     def updateEditorGeometry(self, editor, option, index):
         if editor is not None:
             editor.setGeometry(option.rect.adjusted(3, 5, -3, -5))
+
+    def helpEvent(self, event, view, option, index):
+        if event is not None and event.type() == QEvent.Type.ToolTip and index.isValid():
+            explicit_tip = index.data(Qt.ItemDataRole.ToolTipRole)
+            if explicit_tip:
+                QToolTip.showText(event.globalPos(), str(explicit_tip), view)
+                return True
+            text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+            if text and self.table is not None:
+                col = index.column()
+                col_count = self.table.columnCount()
+                left_pad = 14 if col == 0 else 10
+                right_pad = 14 if col == col_count - 1 else 10
+                avail_w = max(10, option.rect.width() - left_pad - right_pad)
+                if QFontMetrics(option.font).horizontalAdvance(text) > avail_w:
+                    QToolTip.showText(event.globalPos(), text, view)
+                    return True
+            QToolTip.hideText()
+            return True
+        return super().helpEvent(event, view, option, index)
 
     def paint(self, painter: QPainter, option, index):
         if not index.isValid() or self.table is None:

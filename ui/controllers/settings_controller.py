@@ -571,7 +571,7 @@ class SettingsController:
                 found.append(cand)
         return found
 
-    def send_to_reader_clicked(self):
+    def send_to_reader_clicked(self, target_items=None):
         """Умная отправка на ридер: проверка формата под устройство → конвертация при необходимости → отправка."""
         if getattr(self, "_device_sync_worker", None) is not None and self._device_sync_worker.isRunning():
             return
@@ -618,6 +618,59 @@ class SettingsController:
                 return
 
         ignore_del = str(self.app_settings.get("device_sync_ignore_removals", "true")).lower() == "true"
+
+        if target_items is not None:
+            items = [d for d in target_items if isinstance(d, dict) and d.get("path")]
+            if not items:
+                return
+            save_mode = self.app_settings.get("save_mode", "source")
+            custom_dir = (self.app_settings.get("custom_output_dir") or "").strip()
+            fn_mode = self.app_settings.get("filename_mode", "default")
+            fn_tokens = self.app_settings.get("filename_tokens")
+            pending_items = []
+            existing_files = []
+            seen = set()
+            for data in items:
+                target_name = simulate_fbc_target(data.get("meta") or {}, cur_fmt, fn_mode, fn_tokens)
+                if save_mode == "custom" and custom_dir and os.path.isdir(custom_dir):
+                    dest_dir = custom_dir
+                else:
+                    dest_dir = os.path.dirname(os.path.abspath(data["path"]))
+                if should_skip_existing_conversion(data, dest_dir, target_name):
+                    cand = os.path.join(dest_dir, target_name)
+                    norm = os.path.normcase(os.path.abspath(cand))
+                    if norm not in seen and os.path.isfile(cand):
+                        seen.add(norm)
+                        existing_files.append(cand)
+                else:
+                    pending_items.append(data)
+
+            src_dir = (
+                custom_dir
+                if (save_mode == "custom" and custom_dir and os.path.isdir(custom_dir))
+                else os.path.dirname(os.path.abspath(items[0]["path"]))
+            )
+            if pending_items:
+                self._run_conversion(
+                    pending_items,
+                    debug=False,
+                    device_sync_params={
+                        "mode": mode,
+                        "target_dir": target_dir,
+                        "ignore_device_removals": ignore_del,
+                        "dry_run": False,
+                        "existing_files": existing_files,
+                        "source_dir": src_dir,
+                    },
+                )
+                return
+            self.run_device_sync(
+                dry_run=False,
+                source_dir_override=src_dir,
+                explicit_files=existing_files,
+            )
+            return
+
         existing_files = self._collect_existing_queue_output_files(cur_fmt) if self.files_data else []
         if self.files_data:
             pending_items = self._collect_unconverted_queue_items(cur_fmt)

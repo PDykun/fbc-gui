@@ -1130,6 +1130,8 @@
     "btn_add_to_converter": "Add to Converter ({count})",
     "ctx_add_one": "Add to Converter",
     "ctx_add_multi": "Add Selected to Converter ({count})",
+    "ctx_send_to_reader_one": "Send to Reader",
+    "ctx_send_to_reader_multi": "Send to Reader ({count})",
     "ctx_add_series": "Add entire series «{series}» to Converter",
     "err_files_not_found": "Could not locate files for the selected books ({count}) next to the INPX file.",
     "msg_added_to_converter": "Added to converter: {count}",
