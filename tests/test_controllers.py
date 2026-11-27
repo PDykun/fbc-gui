@@ -137,7 +137,9 @@ class TestControllers(unittest.TestCase):
         ):
             win = fbc_gui.MainWindow()
             try:
-                self.assertEqual(win.pages.count(), 5)
+                from ui.controllers.library_controller import PAGE_LIBRARY_INDEX
+                self.assertEqual(win.pages.count(), 6)
+                self.assertTrue(win.nav_buttons[PAGE_LIBRARY_INDEX].isHidden())
                 for idx in range(5):
                     win.switch_page(idx)
                     self.assertEqual(win.pages.currentIndex(), idx)

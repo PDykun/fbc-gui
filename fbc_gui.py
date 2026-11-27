@@ -50,6 +50,7 @@ from core.updater import DEFAULT_RELEASES_URL, is_safe_http_url
 from core.workers import SingleInstanceManager
 from ui.controllers import (
     ConversionController,
+    LibraryController,
     PresetsController,
     PreviewController,
     QueueController,
@@ -57,10 +58,12 @@ from ui.controllers import (
     TrayWatchController,
     UpdatesController,
 )
+from ui.controllers.library_controller import PAGE_LIBRARY_INDEX
 from ui.dialogs import show_themed_message
 from ui.pages.about_page import build_about_page
 from ui.pages.converter_page import build_converter_page
 from ui.pages.css_page import build_visual_css_page
+from ui.pages.library_page import build_library_page
 from ui.pages.preview_page import build_preview_page
 from ui.pages.settings_page import build_settings_page
 from ui.theme import (
@@ -183,6 +186,7 @@ class MainWindow(
     PresetsController,
     PreviewController,
     QueueController,
+    LibraryController,
     ConversionController,
     TrayWatchController,
     UpdatesController,
@@ -222,6 +226,8 @@ class MainWindow(
         self._update_dl_dlg = None
         self._fbc_worker = None
         self._import_worker = None
+        self._inpx_index_worker = None
+        self._inpx_progress_dlg = None
         self._test_email_worker = None
         self._convert_worker = None
         self._device_sync_worker = None
@@ -291,6 +297,7 @@ class MainWindow(
         worker_names = names or (
             "_convert_worker",
             "_import_worker",
+            "_inpx_index_worker",
             "_fbc_worker",
             "_update_worker",
             "_update_dl_worker",
@@ -313,6 +320,7 @@ class MainWindow(
         return bool(self._get_active_workers((
             "_convert_worker",
             "_import_worker",
+            "_inpx_index_worker",
             "_test_email_worker",
             "_device_sync_worker",
             "_bg_task_worker",
@@ -327,15 +335,16 @@ class MainWindow(
                 logger.debug("Ошибка отключения нативного предпросмотра: %s", e)
 
     def _stop_background_workers(self, timeout_ms=3000):
-        timer = getattr(self, "_import_dlg_timer", None)
-        if timer is not None:
-            try:
-                if timer.isActive():
-                    timer.stop()
-            except RuntimeError:
-                pass
+        for timer_attr in ("_import_dlg_timer", "_inpx_dlg_timer", "_lib_search_timer"):
+            timer = getattr(self, timer_attr, None)
+            if timer is not None:
+                try:
+                    if timer.isActive():
+                        timer.stop()
+                except RuntimeError:
+                    pass
 
-        for dlg_attr in ("_convert_progress_dlg", "_import_progress_dlg", "_fbc_setup_dlg", "_s2k_setup_dlg", "_update_dl_dlg"):
+        for dlg_attr in ("_convert_progress_dlg", "_import_progress_dlg", "_inpx_progress_dlg", "_fbc_setup_dlg", "_s2k_setup_dlg", "_update_dl_dlg"):
             dlg = getattr(self, dlg_attr, None)
             if dlg is not None:
                 try:
@@ -606,6 +615,7 @@ class MainWindow(
         nav_layout.setSpacing(2)
 
         nav_items = [
+            (tr("nav.library"), PAGE_LIBRARY_INDEX),
             (tr("nav.converter"), 0),
             (tr("nav.styles"), 1),
             (tr("nav.preview"), 2),
@@ -648,6 +658,12 @@ class MainWindow(
         self.page_about = QWidget()
         self.create_about_page(self.page_about)
         self.pages.addWidget(self.page_about)
+
+        self.page_library = QWidget()
+        self.create_library_page(self.page_library)
+        self.pages.addWidget(self.page_library)
+
+        self._update_library_nav_visibility()
         self.update_convert_button_text()
 
     def _get_status_text(self):
@@ -672,6 +688,11 @@ class MainWindow(
         self.pages.setCurrentIndex(idx)
         if idx == 2:
             self.refresh_preview()
+        elif idx == PAGE_LIBRARY_INDEX:
+            self.on_library_page_opened()
+
+    def create_library_page(self, parent):
+        build_library_page(self, parent)
 
     def create_converter_page(self, parent):
         build_converter_page(self, parent)

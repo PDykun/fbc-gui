@@ -1120,6 +1120,22 @@ def _build_watch_folder_section(win, s_layout):
         win.refresh_watch_folders_table()
 
 
+def _build_library_toggle_section(win, s_layout):
+    card_lib, l_lib = create_section_card(tr("library.sec_settings"))
+    win.library_enabled_selector = PillSelector(
+        [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+        default=str(win.app_settings.get("library_enabled", "false")),
+        callback=win.on_library_enabled_changed,
+    )
+    add_setting_row(
+        l_lib,
+        tr("library.lbl_enable"),
+        tr("library.desc_enable"),
+        win.library_enabled_selector,
+    )
+    s_layout.addWidget(card_lib)
+
+
 def build_settings_page(win, parent):
     layout = QVBoxLayout(parent)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -1134,6 +1150,7 @@ def build_settings_page(win, parent):
     s_layout.setContentsMargins(0, 0, 8, 0)
     s_layout.setSpacing(16)
 
+    _build_library_toggle_section(win, s_layout)
     _build_presets_section(win, s_layout)
     _build_format_section(win, s_layout)
     _build_text_layout_section(win, s_layout)

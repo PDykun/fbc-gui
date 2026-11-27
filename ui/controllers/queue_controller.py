@@ -1280,6 +1280,35 @@ class QueueController:
             return
         self.process_files(paths)
 
+    def enqueue_library_entries(self, entries):
+        """Импортирует выбранные книги (zip_path + archive_entry) из локальной библиотеки INPX в очередь конвертера."""
+        items = [e for e in (entries or []) if isinstance(e, dict) and e.get("path")]
+        if not items:
+            return
+        if getattr(self, "_import_worker", None) is not None and self._import_worker.isRunning():
+            show_themed_message(self, tr("common.warning"), tr("common.busy_workers_warning"), "warning")
+            return
+
+        existing_keys = {
+            d.get('source_key') or os.path.abspath(d['path'])
+            for d in self.files_data.values()
+        }
+        self._import_had_rows = (self.table.rowCount() > 0)
+        self._import_progress_dlg = ImportProgressDialog(self)
+        worker = FileImportWorker([], existing_keys, parent=self, explicit_entries=items)
+        self._import_worker = worker
+        worker.progress.connect(self._import_progress_dlg.update_progress)
+        self._import_progress_dlg.cancel_requested.connect(self._cancel_import_worker)
+        worker.finished_import.connect(self._on_import_finished)
+        worker.finished.connect(worker.deleteLater)
+
+        self._import_dlg_timer = QTimer(self)
+        self._import_dlg_timer.setSingleShot(True)
+        self._import_dlg_timer.timeout.connect(self._show_import_progress_dialog)
+        self._import_dlg_timer.start(180)
+
+        worker.start()
+
     def process_files(self, filepaths):
         if not filepaths:
             return

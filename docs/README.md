@@ -5,6 +5,7 @@
 
 ## История релизов / Release Notes
 
+- [v2.13](RELEASE_NOTES_v2.13.md) — Локальная библиотека INPX с быстрым поиском и передачей серий в конвертер, адаптивные палитры E Ink и базовый размер шрифта / Local INPX Library Browser with Fast Search & Series Transfer, Display-Aware E Ink Palettes & Base Font Size
 - [v2.12.1](RELEASE_NOTES_v2.12.1.md) — Выбор базового размера шрифта в стилях, перестроение страниц и обновлённое превью / Base Font Size Selector in Styles, Page Reflow & Updated Preview
 - [v2.12](RELEASE_NOTES_v2.12.md) — Cover Studio (генератор обложек), Auto-Repair / Auto-Enrich / фолбэк-обложки в Watch Folder, сохранение стиля обложек в пресетах и уведомления трея / Cover Studio, Watch Folder Auto-Repair / Auto-Enrich & Cover Fallback, Preset Cover Styles & Tray Counters
 - [v2.11](RELEASE_NOTES_v2.11.md) — Режим Watch Folder, трей / macOS Menu Bar, оптимизация и имитация E Ink, омнибус FB2, автоопределение ридеров и обновлённый UI / Watch Folder Mode, Tray / macOS Menu Bar, E Ink Optimization & Simulation, FB2 Omnibus, Reader Auto-Detection & UI Refinements

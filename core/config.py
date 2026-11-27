@@ -268,6 +268,8 @@ def get_default_app_settings():
         "autostart_enabled": "false",
         "watch_notifications_enabled": "true",
         "watch_folders": [],
+        "library_enabled": "false",
+        "library_inpx_path": "",
         "last_update_check": 0
     }
 

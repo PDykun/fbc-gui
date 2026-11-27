@@ -28,6 +28,7 @@ from core.fb2_processor import (
     copy_meta_dict,
     extract_cover_from_fb2,
     iter_fb2_from_file,
+    load_book_xml,
     parse_metadata,
     quick_check_fb2,
     should_skip_existing_conversion,
@@ -94,18 +95,59 @@ class FileImportWorker(QThread):
     progress = pyqtSignal(int, int, str)
     finished_import = pyqtSignal(list, bool)
 
-    def __init__(self, filepaths, existing_keys=None, parent=None):
+    def __init__(self, filepaths, existing_keys=None, parent=None, explicit_entries=None):
         super().__init__(parent)
         self.filepaths = list(filepaths or [])
+        self.explicit_entries = list(explicit_entries or [])
         self.existing_keys = set(existing_keys or ())
 
+    def _build_book_entry(self, path, archive_entry, source_key, display_name, xml_bytes):
+        meta = parse_metadata(xml_bytes)
+        cover_bytes, cover_mime = extract_cover_from_fb2(xml_bytes)
+        warnings = quick_check_fb2(xml_bytes, meta=meta, cover_bytes=cover_bytes)
+        return {
+            'path': path,
+            'archive_entry': archive_entry,
+            'source_key': source_key,
+            'display_name': display_name,
+            'meta': meta,
+            'orig_meta': copy_meta_dict(meta),
+            'orig_cover_bytes': cover_bytes,
+            'orig_cover_mime': cover_mime,
+            'cover_bytes': cover_bytes,
+            'cover_mime': cover_mime,
+            'cover_modified': False,
+            'warnings': warnings,
+        }
+
     def run(self):
-        resolved_paths = collect_book_paths(self.filepaths)
-        total = len(resolved_paths)
         imported = []
         cancelled = False
         seen_keys = set(self.existing_keys)
 
+        if self.explicit_entries:
+            total = len(self.explicit_entries)
+            for idx, item in enumerate(self.explicit_entries, start=1):
+                if self.isInterruptionRequested():
+                    cancelled = True
+                    break
+                path = item.get('path') or ''
+                archive_entry = item.get('archive_entry')
+                display_name = item.get('display_name') or os.path.basename(path)
+                source_key = f"{path}::{archive_entry}" if archive_entry else os.path.abspath(path)
+                self.progress.emit(idx, total, display_name)
+                if source_key in seen_keys:
+                    continue
+                xml_bytes = load_book_xml(path, archive_entry)
+                if not xml_bytes:
+                    continue
+                seen_keys.add(source_key)
+                imported.append(self._build_book_entry(path, archive_entry, source_key, display_name, xml_bytes))
+            self.finished_import.emit(imported, cancelled)
+            return
+
+        resolved_paths = collect_book_paths(self.filepaths)
+        total = len(resolved_paths)
         for idx, path in enumerate(resolved_paths, start=1):
             if self.isInterruptionRequested():
                 cancelled = True
@@ -118,28 +160,45 @@ class FileImportWorker(QThread):
                 if source_key in seen_keys or not xml_bytes:
                     continue
                 seen_keys.add(source_key)
-
-                meta = parse_metadata(xml_bytes)
-                cover_bytes, cover_mime = extract_cover_from_fb2(xml_bytes)
-                warnings = quick_check_fb2(xml_bytes, meta=meta, cover_bytes=cover_bytes)
-                imported.append({
-                    'path': path,
-                    'archive_entry': archive_entry,
-                    'source_key': source_key,
-                    'display_name': display_name,
-                    'meta': meta,
-                    'orig_meta': copy_meta_dict(meta),
-                    'orig_cover_bytes': cover_bytes,
-                    'orig_cover_mime': cover_mime,
-                    'cover_bytes': cover_bytes,
-                    'cover_mime': cover_mime,
-                    'cover_modified': False,
-                    'warnings': warnings,
-                })
+                imported.append(self._build_book_entry(path, archive_entry, source_key, display_name, xml_bytes))
             if cancelled:
                 break
 
         self.finished_import.emit(imported, cancelled)
+
+
+class InpxIndexWorker(QThread):
+    """Фоновый поток индексации локального INPX-файла в SQLite FTS5."""
+
+    progress = pyqtSignal(int, int, str)
+    finished_index = pyqtSignal(bool, object, bool)
+
+    def __init__(self, db_path, inpx_path, parent=None):
+        super().__init__(parent)
+        self.db_path = db_path
+        self.inpx_path = inpx_path
+        self._cancel_event = threading.Event()
+
+    def cancel(self):
+        self._cancel_event.set()
+        self.requestInterruption()
+
+    def run(self):
+        from core.inpx_library import InpxLibraryIndex
+
+        try:
+            index = InpxLibraryIndex(self.db_path)
+            info = index.build_index(
+                self.inpx_path,
+                progress_callback=lambda cur, tot, name: self.progress.emit(cur, tot, name),
+                cancel_event=self._cancel_event,
+            )
+            self.finished_index.emit(True, info, False)
+        except InterruptedError:
+            self.finished_index.emit(False, "", True)
+        except Exception as e:
+            logger.error("Ошибка индексации INPX (%s): %s", self.inpx_path, e)
+            self.finished_index.emit(False, str(e), False)
 
 
 class ConversionWorker(QThread):
