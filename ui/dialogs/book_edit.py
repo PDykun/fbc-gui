@@ -4,7 +4,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QPushButton, QLabel, QFrame, QCheckBox,
+    QPushButton, QLabel, QFrame, QCheckBox, QSizePolicy,
     QDialog, QLineEdit, QFileDialog, QPlainTextEdit,
     QComboBox, QTreeWidget, QTreeWidgetItem, QScrollArea,
 )
@@ -116,14 +116,19 @@ class BookEditDialog(QDialog):
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(10)
 
-        lbl_src_val = QLabel(data.get("display_name") or os.path.basename(data.get("path", "")))
-        lbl_src_val.setObjectName("RowDesc")
-        lbl_src_val.setWordWrap(True)
-        form.addRow(QLabel(tr("converter.edit_dlg_file")), lbl_src_val)
+        src_text = data.get("display_name") or os.path.basename(data.get("path", ""))
+        self.lbl_src_val = QLabel(src_text)
+        self.lbl_src_val.setObjectName("RowDesc")
+        self.lbl_src_val.setWordWrap(True)
+        self.lbl_src_val.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.lbl_src_val.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self.lbl_src_val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.lbl_src_val.setToolTip(src_text)
+        form.addRow(QLabel(tr("converter.edit_dlg_file")), self.lbl_src_val)
 
         self.ed_last = QLineEdit(meta.get("last", ""))
         self.ed_first = QLineEdit(meta.get("first", ""))
@@ -145,8 +150,9 @@ class BookEditDialog(QDialog):
         self.lbl_target_val = QLabel()
         self.lbl_target_val.setObjectName("RowDesc")
         self.lbl_target_val.setWordWrap(True)
-        self.lbl_target_val.setMinimumHeight(34)
         self.lbl_target_val.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.lbl_target_val.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self.lbl_target_val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         form.addRow(QLabel(tr("converter.edit_dlg_target")), self.lbl_target_val)
 
         for ed in (self.ed_last, self.ed_first, self.ed_mid, self.ed_series, self.ed_num, self.ed_title):
@@ -441,9 +447,11 @@ class BookEditDialog(QDialog):
         self.lbl_anno_chars.setText(tr("converter.edit_dlg_annotation_chars", count=cnt))
 
     def _update_target_preview(self):
-        self.lbl_target_val.setText(
-            simulate_fbc_target(self.get_meta(), self._output_format, self._filename_mode, self._filename_tokens)
+        target_text = simulate_fbc_target(
+            self.get_meta(), self._output_format, self._filename_mode, self._filename_tokens
         )
+        self.lbl_target_val.setText(target_text)
+        self.lbl_target_val.setToolTip(target_text)
 
     def _render_cover(self):
         if not self._cover_bytes:

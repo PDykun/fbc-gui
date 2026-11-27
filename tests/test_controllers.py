@@ -403,6 +403,45 @@ class TestControllers(unittest.TestCase):
                 self.assertNotIn("qproperty-trackBorderColor", blk, f"{fname} leaks trackBorderColor onto bare QTabBar")
             self.assertIn("QTabBar#SegmentedTabBar", qss, f"{fname} missing QTabBar#SegmentedTabBar block")
 
+    def test_book_edit_dialog_source_and_target_labels_expand_without_clipping(self):
+        import os
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt6.QtWidgets import QApplication
+        from ui.dialogs.book_edit import BookEditDialog
+
+        app = QApplication.instance() or QApplication([])
+        data = {
+            "display_name": "Kornev_Chertopoloh-Kornev-_1_Aspekt-belee-smerti.TbEqvA.805803.fb2.zip",
+            "meta": {
+                "last": "Корнев",
+                "first": "Павел",
+                "mid": "Николаевич",
+                "series": "Чертополох [Корнев]",
+                "num": "1",
+                "title": "Аспект белее смерти",
+            },
+        }
+        dlg = BookEditDialog(None, data, "kfx")
+        try:
+            dlg.show()
+            app.processEvents()
+            field_w = dlg.ed_last.width()
+            self.assertGreaterEqual(dlg.lbl_src_val.width(), field_w)
+            self.assertGreaterEqual(dlg.lbl_src_val.height(), dlg.lbl_src_val.heightForWidth(dlg.lbl_src_val.width()))
+            self.assertEqual(dlg.lbl_src_val.toolTip(), data["display_name"])
+
+            dlg.ed_title.setText("Очень длинное название книги для проверки автоматического переноса строк без обрезания")
+            app.processEvents()
+            self.assertGreaterEqual(dlg.lbl_target_val.width(), field_w)
+            self.assertGreaterEqual(
+                dlg.lbl_target_val.height(),
+                dlg.lbl_target_val.heightForWidth(dlg.lbl_target_val.width()),
+            )
+            self.assertEqual(dlg.lbl_target_val.toolTip(), dlg.lbl_target_val.text())
+        finally:
+            dlg.close()
+            app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()
