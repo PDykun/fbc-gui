@@ -1173,9 +1173,26 @@ class WatchFolderManager(QObject):
                 info["mtime"] = st.st_mtime
                 info["stable"] = 0
 
-            if info["stable"] >= 1 and is_file_readable_and_ready(fp):
-                ready_by_rule.setdefault(rid, []).append(fp)
-                to_remove.append(key)
+            if info["stable"] >= 1:
+                if is_file_readable_and_ready(fp):
+                    ready_by_rule.setdefault(rid, []).append(fp)
+                    to_remove.append(key)
+                else:
+                    info["unreadable_checks"] = int(info.get("unreadable_checks", 0)) + 1
+                    if info["unreadable_checks"] >= 20:
+                        logger.warning(
+                            "Watch Folder: файл '%s' остаётся недоступен/повреждён после %d проверок; отложен",
+                            os.path.basename(fp),
+                            info["unreadable_checks"],
+                        )
+                        prev = self._retry_backoff.get(key) or {}
+                        attempts = int(prev.get("attempts", 0)) + 1
+                        delay = min(WATCH_RETRY_MAX_SEC, WATCH_RETRY_BASE_SEC * (2 ** (attempts - 1)))
+                        self._retry_backoff[key] = {
+                            "attempts": attempts,
+                            "next_retry_at": time.monotonic() + delay,
+                        }
+                        to_remove.append(key)
 
         for key in to_remove:
             self._pending_files.pop(key, None)

@@ -396,7 +396,8 @@ class TestControllers(unittest.TestCase):
         for fname in sorted(os.listdir(themes_dir)):
             if not fname.endswith(".qss"):
                 continue
-            qss = open(os.path.join(themes_dir, fname), encoding="utf-8").read()
+            with open(os.path.join(themes_dir, fname), encoding="utf-8") as fh:
+                qss = fh.read()
             bare_blocks = re.findall(r"(?m)^QTabBar\s*\{([^}]*)\}", qss)
             for blk in bare_blocks:
                 self.assertNotIn("qproperty-trackColor", blk, f"{fname} leaks trackColor onto bare QTabBar")
@@ -543,6 +544,39 @@ class TestControllers(unittest.TestCase):
         finally:
             modal.close()
             app.processEvents()
+
+    def test_segmented_tabs_retain_python_bar_and_s2k_user_agent_and_keyring_copy(self):
+        import os
+        from PyQt6.QtWidgets import QApplication
+        import core.s2k_manager as s2k_manager
+        import core.version as version_mod
+        from core.i18n import tr
+        from ui.dialogs.common import SegmentedTabBar, create_segmented_tabs
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        _app = QApplication.instance() or QApplication([])
+        tabs = create_segmented_tabs()
+        self.assertIsInstance(tabs.tabBar(), SegmentedTabBar)
+        self.assertIs(tabs._segmented_tab_bar, tabs.tabBar())
+        self.assertGreaterEqual(tabs.tabBar().metaObject().indexOfProperty("trackColor"), 0)
+
+        self.assertIn(version_mod.__version__, s2k_manager.S2K_HTTP_USER_AGENT)
+        self.assertNotIn("settings.json", tr("settings.lookup_keyring_warning").lower())
+
+    def test_send_test_email_rejects_crlf_in_app_name_subject(self):
+        from core.email_sender import send_test_email
+
+        cfg = {
+            "smtp_host": "smtp.example.com",
+            "smtp_port": "465",
+            "smtp_security": "ssl",
+            "smtp_user": "user@example.com",
+            "smtp_password": "secret",
+            "email_from": "user@example.com",
+            "email_to": "reader@example.com",
+        }
+        with self.assertRaises(ValueError):
+            send_test_email(cfg, "FBC\r\nBcc: evil@example.com", "2.12")
 
 
 if __name__ == "__main__":

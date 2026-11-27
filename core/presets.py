@@ -5,6 +5,9 @@ import re
 
 from core.config import atomic_write_text
 from core.fb2.organizer import _WIN_RESERVED_NAMES
+from core.logger import get_logger
+
+logger = get_logger("presets")
 
 PRESET_SCHEMA_VERSION = 1
 PRESET_FILE_EXT = ".fbcpreset.json"
@@ -190,7 +193,8 @@ def list_presets(presets_dir):
                 "path": fp,
                 "filename": fname,
             })
-        except Exception:
+        except Exception as e:
+            logger.debug("Пропущен некорректный файл пресета %s: %s", fname, e)
             continue
     items.sort(key=lambda x: x["name"].lower())
     return items
@@ -293,7 +297,8 @@ def find_builtin_preset_path(bundled_dir, name=None, filename=None):
                 payload = load_preset_file(fp)
                 if payload["name"].strip().lower() == target:
                     return fp
-            except Exception:
+            except Exception as e:
+                logger.debug("Пропущен некорректный встроенный пресет %s: %s", fname, e)
                 continue
     return None
 

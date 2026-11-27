@@ -557,6 +557,40 @@ class TestWatchFolderAndTray(unittest.TestCase):
             self.assertNotIn(key, mgr._in_flight_files)
             mgr.stop()
 
+    def test_watch_manager_backs_off_permanently_unreadable_zip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            watch_dir = os.path.join(tmp, "inbox")
+            os.makedirs(watch_dir)
+            bad_zip = os.path.join(watch_dir, "corrupt.zip")
+            with open(bad_zip, "wb") as fh:
+                fh.write(b"not-a-valid-zip")
+            st = os.stat(bad_zip)
+
+            mgr = WatchFolderManager(
+                base_dir=tmp,
+                get_fbc_cmd=lambda: "",
+                get_app_settings=get_default_app_settings,
+                fbc_config_path=os.path.join(REPO_ROOT, "config.yaml"),
+                css_path=os.path.join(REPO_ROOT, "ebook_styles.css"),
+                fonts_dir=os.path.join(REPO_ROOT, "fonts"),
+                presets_dir=os.path.join(tmp, "presets"),
+            )
+            rule = {"id": "r_bad", "enabled": True, "folder": watch_dir, "preset_name": PRESET_CURRENT_TOKEN}
+            mgr.set_rules([rule])
+            mgr._running = True
+            key = ("r_bad", os.path.normcase(os.path.abspath(bad_zip)))
+            mgr._pending_files[key] = {
+                "path": bad_zip,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+                "stable": 1,
+                "unreadable_checks": 19,
+            }
+            mgr._check_pending_stability()
+            self.assertNotIn(key, mgr._pending_files)
+            self.assertIn(key, mgr._retry_backoff)
+            mgr.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

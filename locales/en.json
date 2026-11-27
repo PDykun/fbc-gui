@@ -586,7 +586,7 @@
     "email_test_ok": "Test email sent successfully to:\n{email}",
     "email_test_err": "Failed to send test email:\n{e}",
     "email_keyring_warning": "⚠ System credential storage is unavailable — secrets (SMTP password, Google Books key, OPDS password) are kept in memory for this session only and are not saved to disk.",
-    "lookup_keyring_warning": "⚠ System credential storage (keyring) is unavailable — Google Books API key and OPDS password are saved locally in settings.json.",
+    "lookup_keyring_warning": "⚠ System credential storage is unavailable — Google Books API key and OPDS password are kept in memory for this session only and are not saved to disk.",
     "sec_device_sync": "DEVICE DELIVERY (USB / MTP / SYNC2KINDLE)",
     "lbl_sync_mode": "Connection mode",
     "desc_sync_mode": "MTP for newer Kindles (Scribe, PW12, Colorsoft), USB for older Kindles, or direct folder copy for Kobo / PocketBook",

@@ -291,8 +291,15 @@ class TestUpdater(unittest.TestCase):
                 self.assertEqual(res["action"], "dmg_mounted")
                 self.assertFalse(res["should_quit"])
                 self.assertEqual(res["mount_point"], fake_mount)
+                import subprocess
                 run_mock.assert_called_once()
-                popen_mock.assert_called_once_with(["open", fake_mount])
+                popen_mock.assert_called_once_with(
+                    ["open", fake_mount],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
 
     def test_create_windows_portable_update_script(self):
         with tempfile.TemporaryDirectory() as tmpdir:

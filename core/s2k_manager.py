@@ -12,6 +12,7 @@ import threading
 import urllib.request
 import zipfile
 
+from core.config import atomic_write_text
 from core.fbc_manager import (
     FBC_RELEASES_API,
     _copy_stream_limited,
@@ -26,10 +27,12 @@ from core.updater import (
     is_safe_http_url,
     safe_urlopen,
 )
+from core.version import __version__
 
 logger = get_logger("s2k_manager")
 
 S2K_GITHUB_API_LATEST = f"{FBC_RELEASES_API.replace('/fb2cng/', '/sync2kindle/')}/latest"
+S2K_HTTP_USER_AGENT = f"FBC-GUI/{__version__}"
 S2K_MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 S2K_TIMEOUT_SEC = 20
 S2K_VERSION_RE = re.compile(r"\b(\d+\.\d+(?:\.\d+)?)\b")
@@ -183,7 +186,7 @@ def select_s2k_release_asset(assets, platform_name=None, machine=None):
 def _fetch_json(url, timeout=S2K_TIMEOUT_SEC, allowed_hosts=None):
     if not is_safe_http_url(url, allow_relative=False, require_https=True):
         raise ValueError(f"Небезопасный URL: {url}")
-    req = urllib.request.Request(url, headers={"User-Agent": "FBC-GUI"})
+    req = urllib.request.Request(url, headers={"User-Agent": S2K_HTTP_USER_AGENT})
     eff_hosts = allowed_hosts
     if eff_hosts is None and is_allowed_update_host(url, DEFAULT_ALLOWED_UPDATE_HOSTS):
         eff_hosts = DEFAULT_ALLOWED_UPDATE_HOSTS
@@ -225,7 +228,7 @@ def download_and_install_s2k(user_data_dir, cancel_event=None, progress_callback
             c_url = str(a.get("browser_download_url") or "")
             if is_safe_http_url(c_url, allow_relative=False, require_https=True):
                 try:
-                    req = urllib.request.Request(c_url, headers={"User-Agent": "FBC-GUI"})
+                    req = urllib.request.Request(c_url, headers={"User-Agent": S2K_HTTP_USER_AGENT})
                     c_kwargs = {"timeout": S2K_TIMEOUT_SEC, "context": _build_ssl_context(), "require_https": True}
                     if is_allowed_update_host(c_url, DEFAULT_ALLOWED_UPDATE_HOSTS):
                         c_kwargs["allowed_hosts"] = DEFAULT_ALLOWED_UPDATE_HOSTS
@@ -240,7 +243,7 @@ def download_and_install_s2k(user_data_dir, cancel_event=None, progress_callback
 
     with tempfile.TemporaryDirectory(prefix="s2k_dl_") as td:
         archive_path = os.path.join(td, asset_name)
-        req = urllib.request.Request(dl_url, headers={"User-Agent": "FBC-GUI"})
+        req = urllib.request.Request(dl_url, headers={"User-Agent": S2K_HTTP_USER_AGENT})
         dl_kwargs = {"timeout": S2K_TIMEOUT_SEC, "context": _build_ssl_context(), "require_https": True}
         if is_allowed_update_host(dl_url, DEFAULT_ALLOWED_UPDATE_HOSTS):
             dl_kwargs["allowed_hosts"] = DEFAULT_ALLOWED_UPDATE_HOSTS
@@ -492,8 +495,7 @@ def write_s2k_sync_config(config_path, source_dir, target_dir="documents/books")
         f"target: {json.dumps(tgt, ensure_ascii=False)}",
         "",
     ]
-    with open(config_path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines))
+    atomic_write_text(config_path, "\n".join(lines))
     return config_path
 
 

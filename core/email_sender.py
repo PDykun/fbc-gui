@@ -222,9 +222,9 @@ def send_test_email(app_settings, app_name, app_version):
         )
 
     msg = EmailMessage()
-    msg["Subject"] = tr("settings.email_test_subject", app=app_name)
-    msg["From"] = email_from
-    msg["To"] = email_to
+    msg["Subject"] = _validate_email_header_value("Subject", tr("settings.email_test_subject", app=app_name))
+    msg["From"] = _validate_email_header_value("From", email_from)
+    msg["To"] = _validate_email_header_value("To", email_to)
     msg.set_content(
         tr(
             "settings.email_test_body",

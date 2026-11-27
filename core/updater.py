@@ -626,11 +626,17 @@ def _mount_and_open_macos_dmg(dmg_path):
     except Exception as e:
         logger.warning("Не удалось смонтировать DMG через hdiutil -plist: %s", e)
 
+    popen_kw = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "start_new_session": True,
+    }
     if mount_point:
-        subprocess.Popen(["open", mount_point])
+        subprocess.Popen(["open", mount_point], **popen_kw)
         return mount_point
 
-    subprocess.Popen(["open", dmg_path])
+    subprocess.Popen(["open", dmg_path], **popen_kw)
     return ""
 
 
@@ -679,7 +685,13 @@ def apply_downloaded_update(
             "mount_point": mount_point,
         }
 
-    subprocess.Popen(["xdg-open", os.path.dirname(os.path.abspath(file_path))])
+    subprocess.Popen(
+        ["xdg-open", os.path.dirname(os.path.abspath(file_path))],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
     return {"action": "folder_opened", "should_quit": False, "path": file_path}
 
 

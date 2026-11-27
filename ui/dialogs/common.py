@@ -331,6 +331,8 @@ def create_segmented_tabs(parent=None):
     """Создаёт QTabWidget с сегментированной капсулой вкладок."""
     tabs = QTabWidget(parent)
     tabs.setDocumentMode(False)
-    tabs.setTabBar(SegmentedTabBar(tabs))
+    bar = SegmentedTabBar(tabs)
+    tabs._segmented_tab_bar = bar
+    tabs.setTabBar(bar)
     return tabs
 

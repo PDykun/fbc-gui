@@ -304,6 +304,8 @@ class QtWebEnginePreviewWidget(QWidget):
         from PyQt6.QtWebEngineCore import QWebEngineSettings
 
         super().__init__(parent)
+        self._render_path = None
+        self._preview_temp_dir = None
         self._view = QWebEngineView(self)
         settings = self._view.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
@@ -314,9 +316,27 @@ class QtWebEnginePreviewWidget(QWidget):
         layout.setSpacing(0)
         layout.addWidget(self._view)
 
+    def _detach_native_view(self, *args):
+        self._render_path = None
+        _cleanup_preview_temp_dir(getattr(self, "_preview_temp_dir", None))
+        self._preview_temp_dir = None
+
+    def closeEvent(self, event):
+        self._detach_native_view()
+        super().closeEvent(event)
+
     def set_preview_html(self, html_text, base_dir=""):
-        base_url = QUrl.fromLocalFile(os.path.abspath(base_dir or os.getcwd()) + os.sep)
-        self._view.setHtml(html_text, base_url)
+        try:
+            if not self._preview_temp_dir or not os.path.isdir(self._preview_temp_dir):
+                self._preview_temp_dir = tempfile.mkdtemp(prefix="fbc_preview_")
+                _register_preview_temp_dir(self._preview_temp_dir)
+            render_path, _read_root = _stage_isolated_preview(self._preview_temp_dir, html_text, base_dir)
+            self._render_path = render_path
+            self._view.setUrl(QUrl.fromLocalFile(os.path.abspath(render_path)))
+            return
+        except Exception as e:
+            logger.warning("QtWebEngine isolated preview fallback: %s", e)
+        self._view.setHtml(html_text)
 
 
 def create_preview_widget(parent=None):

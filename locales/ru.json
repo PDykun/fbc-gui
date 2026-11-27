@@ -586,7 +586,7 @@
     "email_test_ok": "Тестовое письмо успешно отправлено на адрес:\n{email}",
     "email_test_err": "Не удалось отправить тестовое письмо:\n{e}",
     "email_keyring_warning": "⚠ Системное хранилище паролей недоступно — секреты (пароль SMTP, ключ Google Books, пароль OPDS) используются только в текущей сессии и не сохраняются на диск.",
-    "lookup_keyring_warning": "⚠ Системное хранилище паролей (keyring) недоступно — ключ Google Books и пароль OPDS сохраняются локально в settings.json.",
+    "lookup_keyring_warning": "⚠ Системное хранилище паролей недоступно — ключ Google Books и пароль OPDS используются только в текущей сессии и не сохраняются на диск.",
     "sec_device_sync": "ДОСТАВКА НА РИДЕР (USB / MTP / SYNC2KINDLE)",
     "lbl_sync_mode": "Режим подключения",
     "desc_sync_mode": "MTP для новых Kindle (Scribe, PW12, Colorsoft), USB для старых Kindle или прямое копирование в папку Kobo / PocketBook",
