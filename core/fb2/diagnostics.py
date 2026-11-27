@@ -21,6 +21,7 @@ from core.fb2.xml_io import (
     _local_tag,
     _parse_fb2_root,
     _qtag,
+    _read_zip_entry_limited,
     extract_cover_from_fb2,
     get_book_xml,
 )
@@ -549,7 +550,7 @@ def repair_book_in_source(data, max_image_bytes=OVERSIZED_IMAGE_BYTES):
                         if info.filename == target_entry:
                             zout.writestr(info, repaired_bytes, compress_type=zipfile.ZIP_DEFLATED)
                         else:
-                            zout.writestr(info, zin.read(info.filename))
+                            zout.writestr(info, _read_zip_entry_limited(zin, info.filename))
             with zipfile.ZipFile(tmp_zip, "r") as zchk:
                 bad_member = zchk.testzip()
                 if bad_member is not None:

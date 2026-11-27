@@ -239,16 +239,13 @@ class MetadataLookupDialog(QDialog):
         return btn_row
 
     def _stop_workers(self):
+        from core.workers import stop_qthread_safely
+
         for attr in ("_lookup_worker", "_cover_worker"):
             w = getattr(self, attr, None)
+            setattr(self, attr, None)
             if w is not None:
-                try:
-                    if w.isRunning():
-                        w.cancel()
-                        w.wait(2500)
-                except RuntimeError:
-                    pass
-                setattr(self, attr, None)
+                stop_qthread_safely(w, timeout_ms=2500, label=attr)
 
     def done(self, result):
         self._stop_workers()

@@ -389,6 +389,61 @@ class TestFbcManager(unittest.TestCase):
         self.assertTrue(res_off["unverified"])
         self.assertEqual(res_off["reason"], "github_unavailable")
 
+    def test_download_and_install_fbc_fails_closed_without_checksum_before_exec(self):
+        with tempfile.TemporaryDirectory() as td:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zf:
+                zf.writestr("fbc", b"#!/bin/sh\necho fake\n")
+            zip_bytes = zip_buf.getvalue()
+
+            release_payload = {
+                "tag_name": "v2.9.9",
+                "assets": [
+                    {
+                        "name": "fbc-darwin-arm64.zip",
+                        "size": len(zip_bytes),
+                        "browser_download_url": "https://example.invalid/fbc-darwin-arm64.zip",
+                    }
+                ],
+            }
+            with mock.patch.object(fbc_manager, "normalize_platform_arch", return_value=("darwin", "arm64")), \
+                 mock.patch.object(fbc_manager, "fetch_github_release", return_value=release_payload), \
+                 mock.patch.object(fbc_manager, "fetch_release_checksums", return_value={}), \
+                 mock.patch.object(fbc_manager.urllib.request, "urlopen", return_value=_FakeHttpResponse(zip_bytes)), \
+                 mock.patch.object(fbc_manager, "inspect_fbc_binary") as mock_inspect:
+                with self.assertRaises(RuntimeError) as ctx:
+                    fbc_manager.download_and_install_fbc(td, target_version="2.9.9")
+            self.assertIn("Missing SHA256/MD5 checksum", str(ctx.exception))
+            mock_inspect.assert_not_called()
+
+    def test_download_and_install_fbc_rejects_known_hash_mismatch_before_exec(self):
+        with tempfile.TemporaryDirectory() as td:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zf:
+                zf.writestr("fbc", b"tampered-binary-payload")
+            zip_bytes = zip_buf.getvalue()
+            zip_sha256 = hashlib.sha256(zip_bytes).hexdigest()
+
+            release_payload = {
+                "tag_name": "v2.1.1",
+                "assets": [
+                    {
+                        "name": "fbc-darwin-arm64.zip",
+                        "size": len(zip_bytes),
+                        "digest": f"sha256:{zip_sha256}",
+                        "browser_download_url": "https://example.invalid/fbc-darwin-arm64.zip",
+                    }
+                ],
+            }
+            with mock.patch.object(fbc_manager, "normalize_platform_arch", return_value=("darwin", "arm64")), \
+                 mock.patch.object(fbc_manager, "fetch_github_release", return_value=release_payload), \
+                 mock.patch.object(fbc_manager.urllib.request, "urlopen", return_value=_FakeHttpResponse(zip_bytes)), \
+                 mock.patch.object(fbc_manager, "inspect_fbc_binary") as mock_inspect:
+                with self.assertRaises(RuntimeError) as ctx:
+                    fbc_manager.download_and_install_fbc(td, target_version="2.1.1")
+            self.assertIn("mismatch", str(ctx.exception).lower())
+            mock_inspect.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

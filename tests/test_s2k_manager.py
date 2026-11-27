@@ -168,7 +168,7 @@ class TestS2kManager(unittest.TestCase):
             }).encode("utf-8")
             bad_checksums = ("0" * 64 + "  S2K-Darwin-Arm64.zip\n").encode("utf-8")
 
-            def _fake_urlopen(req, timeout=20, context=None, require_https=True):
+            def _fake_urlopen(req, timeout=20, context=None, require_https=True, allowed_hosts=None):
                 u = req.full_url if hasattr(req, "full_url") else str(req)
                 if "checksums.txt" in u:
                     return _DummyResp(bad_checksums)
@@ -227,7 +227,7 @@ class TestS2kManager(unittest.TestCase):
             }).encode("utf-8")
             checksums_raw = f"{sha}  s2k-darwin-arm64.zip\n".encode("utf-8")
 
-            def _fake_urlopen(req, timeout=20, context=None, require_https=True):
+            def _fake_urlopen(req, timeout=20, context=None, require_https=True, allowed_hosts=None):
                 u = req.full_url if hasattr(req, "full_url") else str(req)
                 if "checksums.txt" in u:
                     return _DummyResp(checksums_raw)
@@ -509,7 +509,7 @@ class TestS2kManager(unittest.TestCase):
                 ],
             }).encode("utf-8")
 
-            def _fake_urlopen(req, timeout=20, context=None, require_https=True):
+            def _fake_urlopen(req, timeout=20, context=None, require_https=True, allowed_hosts=None):
                 u = req.full_url if hasattr(req, "full_url") else str(req)
                 if "s2k-darwin-arm64.zip" in u:
                     return _DummyResp(zip_bytes)
@@ -551,6 +551,108 @@ class TestS2kManager(unittest.TestCase):
             self.assertTrue(by_kind["pocketbook"]["path"].endswith("books"))
             self.assertIn("kobo_cloud", by_kind)
             self.assertTrue(by_kind["kobo_cloud"]["path"].endswith("Rakuten Kobo"))
+
+    def test_download_and_install_s2k_fails_closed_without_checksum_before_exec(self):
+        import io
+        import json
+        import urllib.parse
+        import zipfile
+        from unittest.mock import patch
+        from core.s2k_manager import _s2k_exe_name, download_and_install_s2k
+
+        class _DummyResp:
+            def __init__(self, payload):
+                self._buf = io.BytesIO(payload)
+                self.headers = {}
+
+            def read(self, n=-1):
+                return self._buf.read(n)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        asset_url = urllib.parse.urlunsplit(("https", "downloads.example.org", "/s2k-darwin-arm64.zip", "", ""))
+        exe_name = _s2k_exe_name()
+        with tempfile.TemporaryDirectory() as td:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zf:
+                zf.writestr(exe_name, b"dummy")
+            zip_bytes = zip_buf.getvalue()
+            rel_json = json.dumps({
+                "tag_name": "v1.2.3",
+                "assets": [{"name": "s2k-darwin-arm64.zip", "browser_download_url": asset_url}],
+            }).encode("utf-8")
+
+            def _fake_urlopen(req, timeout=20, context=None, require_https=True, allowed_hosts=None):
+                u = req.full_url if hasattr(req, "full_url") else str(req)
+                return _DummyResp(zip_bytes if "s2k-darwin-arm64.zip" in u else rel_json)
+
+            with patch("core.s2k_manager.select_s2k_release_asset", return_value={
+                "name": "s2k-darwin-arm64.zip",
+                "browser_download_url": asset_url,
+            }), patch("core.s2k_manager.safe_urlopen", side_effect=_fake_urlopen), \
+                 patch("core.s2k_manager.probe_s2k_binary") as mock_probe:
+                with self.assertRaises(RuntimeError) as ctx:
+                    download_and_install_s2k(td)
+                self.assertIn("контрольной суммы", str(ctx.exception).lower())
+                mock_probe.assert_not_called()
+
+    def test_download_and_install_s2k_handles_windows_backslash_zip_entry(self):
+        import hashlib
+        import io
+        import json
+        import urllib.parse
+        import zipfile
+        from unittest.mock import patch
+        from core.s2k_manager import _s2k_exe_name, download_and_install_s2k
+
+        class _DummyResp:
+            def __init__(self, payload):
+                self._buf = io.BytesIO(payload)
+                self.headers = {}
+
+            def read(self, n=-1):
+                return self._buf.read(n)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        asset_url = urllib.parse.urlunsplit(("https", "downloads.example.org", "/s2k-win.zip", "", ""))
+        exe_name = _s2k_exe_name()
+        with tempfile.TemporaryDirectory() as td:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zf:
+                zf.writestr(f"nested\\dir\\{exe_name}", b"binary-content")
+            zip_bytes = zip_buf.getvalue()
+            sha = hashlib.sha256(zip_bytes).hexdigest()
+            rel_json = json.dumps({
+                "tag_name": "v1.2.3",
+                "assets": [{
+                    "name": "s2k-win.zip",
+                    "browser_download_url": asset_url,
+                    "digest": f"sha256:{sha}",
+                }],
+            }).encode("utf-8")
+
+            def _fake_urlopen(req, timeout=20, context=None, require_https=True, allowed_hosts=None):
+                u = req.full_url if hasattr(req, "full_url") else str(req)
+                return _DummyResp(zip_bytes if "s2k-win.zip" in u else rel_json)
+
+            with patch("core.s2k_manager.select_s2k_release_asset", return_value={
+                "name": "s2k-win.zip",
+                "browser_download_url": asset_url,
+                "digest": f"sha256:{sha}",
+            }), patch("core.s2k_manager.safe_urlopen", side_effect=_fake_urlopen), \
+                 patch("core.s2k_manager.probe_s2k_binary", return_value={"path": os.path.join(td, exe_name), "version": "1.2.3"}):
+                info = download_and_install_s2k(td)
+            self.assertEqual(info["version"], "1.2.3")
+            self.assertTrue(os.path.isfile(os.path.join(td, exe_name)))
 
 
 if __name__ == "__main__":

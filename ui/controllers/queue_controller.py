@@ -978,6 +978,7 @@ class QueueController:
             book_data=first_data,
             books_count=len(item_ids),
             initial_spec=initial_spec,
+            fonts_dir=self.fonts_dir,
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -988,7 +989,13 @@ class QueueController:
             self.save_app_settings()
 
         only_missing = dlg.get_apply_mode() == "missing_only"
-        apply_cover_studio_to_books(self, item_ids, spec, only_missing=only_missing)
+        apply_cover_studio_to_books(
+            self,
+            item_ids,
+            spec,
+            only_missing=only_missing,
+            fonts_dir=self.fonts_dir,
+        )
         self.on_table_selection_changed()
 
     def lookup_book_metadata_row(self, row, item_id):

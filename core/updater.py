@@ -37,6 +37,7 @@ DEFAULT_MANIFEST_URL = f"https://github.com/{DEFAULT_GITHUB_REPO}/releases/lates
 DEFAULT_RELEASES_URL = f"https://github.com/{DEFAULT_GITHUB_REPO}/releases/latest"
 DEFAULT_ALLOWED_UPDATE_HOSTS = (
     "github.com",
+    "api.github.com",
     "objects.githubusercontent.com",
     "release-assets.githubusercontent.com",
     "github-releases.githubusercontent.com",
@@ -383,6 +384,7 @@ def fetch_update_info(
     fallback_url=DEFAULT_RELEASES_URL,
     sys_platform=None,
     machine=None,
+    allowed_hosts=None,
 ):
     """Загружает version.json (через GitHub Releases latest/download) и проверяет наличие новой версии."""
     local_build_num = parse_build_number(local_build)
@@ -401,6 +403,9 @@ def fetch_update_info(
     try:
         if not is_safe_http_url(manifest_url, allow_relative=False, require_https=True):
             raise ValueError(f"Unsupported manifest URL scheme: {manifest_url}")
+        eff_hosts = allowed_hosts
+        if eff_hosts is None and is_allowed_update_host(manifest_url, DEFAULT_ALLOWED_UPDATE_HOSTS):
+            eff_hosts = DEFAULT_ALLOWED_UPDATE_HOSTS
         req = urllib.request.Request(
             manifest_url,
             headers={
@@ -410,7 +415,13 @@ def fetch_update_info(
             },
         )
         ctx = _build_ssl_context()
-        with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True) as resp:
+        with safe_urlopen(
+            req,
+            timeout=timeout,
+            context=ctx,
+            require_https=True,
+            allowed_hosts=eff_hosts,
+        ) as resp:
             raw_bytes = resp.read(MAX_MANIFEST_BYTES + 1)
         if len(raw_bytes) > MAX_MANIFEST_BYTES:
             raise ValueError("Update manifest exceeds size limit")

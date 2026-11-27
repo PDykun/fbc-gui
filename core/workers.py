@@ -37,6 +37,55 @@ from core.i18n import tr
 from core.logger import get_logger
 
 logger = get_logger("workers")
+_ORPHANED_THREADS = set()
+
+
+def stop_qthread_safely(worker, timeout_ms=2500, label=""):
+    """Корректно останавливает QThread и безопасно отсоединяет его при таймауте, предотвращая SIGABRT."""
+    if worker is None:
+        return True
+    try:
+        if hasattr(worker, "cancel"):
+            worker.cancel()
+        if hasattr(worker, "requestInterruption"):
+            worker.requestInterruption()
+        if not worker.isRunning():
+            return True
+        if worker.wait(int(timeout_ms)):
+            return True
+    except RuntimeError:
+        return True
+
+    logger.warning(
+        "Фоновый поток %s не завершился за %d мс; отсоединяем до естественного завершения",
+        label or type(worker).__name__,
+        int(timeout_ms),
+    )
+    try:
+        worker.disconnect()
+    except (TypeError, RuntimeError):
+        pass
+    try:
+        worker.setParent(None)
+    except RuntimeError:
+        return False
+
+    _ORPHANED_THREADS.add(worker)
+
+    def _cleanup_orphan(w=worker):
+        _ORPHANED_THREADS.discard(w)
+        try:
+            w.deleteLater()
+        except RuntimeError:
+            pass
+
+    try:
+        worker.finished.connect(_cleanup_orphan)
+        if not worker.isRunning():
+            _cleanup_orphan()
+    except RuntimeError:
+        _ORPHANED_THREADS.discard(worker)
+    return False
 
 
 class FileImportWorker(QThread):

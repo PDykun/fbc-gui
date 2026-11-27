@@ -362,6 +362,25 @@ class TestControllers(unittest.TestCase):
                 win.close()
                 app.processEvents()
 
+    def test_updates_controller_schedules_quit_application_on_should_quit(self):
+        from unittest.mock import patch
+
+        class _FakeUpdateHost(UpdatesController):
+            def __init__(self):
+                self._update_dl_dlg = None
+                self._update_dl_worker = None
+                self.quit_called = 0
+
+            def quit_application(self):
+                self.quit_called += 1
+
+        host = _FakeUpdateHost()
+        with patch("ui.controllers.updates_controller.show_themed_message"), \
+             patch("ui.controllers.updates_controller.QTimer.singleShot") as mock_single:
+            host._on_update_dl_finished({"ok": True, "should_quit": True, "cancelled": False})
+
+        mock_single.assert_called_once_with(150, host.quit_application)
+
 
 if __name__ == "__main__":
     unittest.main()

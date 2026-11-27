@@ -78,6 +78,19 @@ def merge_fb2_books_to_omnibus(
         if not xml_bytes:
             label = data.get("display_name") or os.path.basename(data.get("path") or f"book_{idx}")
             raise ValueError(f"Failed to read source FB2: {label}")
+        orig_meta = data.get("orig_meta")
+        meta = data.get("meta") or {}
+        if data.get("cover_modified") or (isinstance(orig_meta, dict) and meta != orig_meta):
+            from core.fb2.metadata import update_fb2_xml
+
+            xml_bytes = update_fb2_xml(
+                xml_bytes,
+                meta,
+                cover_bytes=data.get("cover_bytes"),
+                cover_mime=data.get("cover_mime", "image/jpeg"),
+                cover_modified=bool(data.get("cover_modified", False)),
+                orig_meta=orig_meta,
+            )
         root = _parse_fb2_root(xml_bytes)
         if root is None:
             label = data.get("display_name") or os.path.basename(data.get("path") or f"book_{idx}")

@@ -509,6 +509,54 @@ class TestWatchFolderAndTray(unittest.TestCase):
                 host.on_watch_table_context_menu(QPoint(5, 500))
             mock_exec.assert_not_called()
 
+    def test_watch_manager_in_flight_deduplicates_queued_and_running_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            watch_dir = os.path.join(tmp, "inbox")
+            os.makedirs(watch_dir)
+            book_fp = os.path.join(watch_dir, "novel.fb2")
+            with open(book_fp, "wb") as fh:
+                fh.write(b"<FictionBook/>")
+            st = os.stat(book_fp)
+
+            mgr = WatchFolderManager(
+                base_dir=tmp,
+                get_fbc_cmd=lambda: "",
+                get_app_settings=get_default_app_settings,
+                fbc_config_path=os.path.join(REPO_ROOT, "config.yaml"),
+                css_path=os.path.join(REPO_ROOT, "ebook_styles.css"),
+                fonts_dir=os.path.join(REPO_ROOT, "fonts"),
+                presets_dir=os.path.join(tmp, "presets"),
+            )
+            rule = {"id": "r_dedup", "enabled": True, "folder": watch_dir, "preset_name": PRESET_CURRENT_TOKEN}
+            mgr.set_rules([rule])
+            mgr._running = True
+            mgr._pending_files.clear()
+            mgr._in_flight_files.clear()
+
+            # 1. Имитируем стабильный файл и постановку в очередь (не запуская реальный воркер)
+            key = ("r_dedup", os.path.normcase(os.path.abspath(book_fp)))
+            mgr._pending_files[key] = {"path": book_fp, "size": st.st_size, "mtime": st.st_mtime, "stable": 0}
+            with patch.object(mgr, "_start_next_job"):
+                mgr._check_pending_stability()
+
+            self.assertIn(key, mgr._in_flight_files)
+            self.assertEqual(len(mgr._job_queue), 1)
+
+            # 2. Повторное сканирование того же файла пока задача в очереди/работе не должно добавлять его в pending
+            mgr._ingest_rule_candidates("r_dedup", watch_dir, [book_fp])
+            self.assertNotIn(key, mgr._pending_files)
+
+            # 3. Завершение задачи снимает ключ из _in_flight_files
+            mgr._on_job_finished({
+                "rule_id": "r_dedup",
+                "rule_name": "inbox",
+                "delivery_mode": "folder",
+                "cancelled": True,
+                "processed_sources": [{"path": book_fp, "size": st.st_size, "mtime": st.st_mtime, "ok": False}],
+            })
+            self.assertNotIn(key, mgr._in_flight_files)
+            mgr.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

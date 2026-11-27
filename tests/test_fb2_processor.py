@@ -1332,6 +1332,87 @@ class TestFb2Processor(unittest.TestCase):
         warns = quick_check_fb2(xxe_fb2, meta={"title": "T", "last": "A"}, cover_bytes=b"img")
         self.assertIn("broken_xml", warns)
 
+    def test_organizer_sanitizes_windows_reserved_names_and_caps_length(self):
+        from core.fb2.organizer import _sanitize_fs_component
+
+        for reserved in ("CON", "prn", "Aux", "NUL", "COM1", "lpt9"):
+            sanitized = _sanitize_fs_component(reserved)
+            self.assertNotEqual(sanitized.upper(), reserved.upper())
+            self.assertTrue(sanitized.endswith("_"))
+
+        long_name = "А" * 200
+        self.assertLessEqual(len(_sanitize_fs_component(long_name)), 100)
+
+    def test_omnibus_applies_unsaved_cover_and_meta_edits(self):
+        from core.fb2_processor import merge_fb2_books_to_omnibus
+
+        new_cov = b"\xff\xd8\xff\xe0UNSAVEDCOVER"
+        with tempfile.TemporaryDirectory() as td:
+            p1 = os.path.join(td, "b1.fb2")
+            p2 = os.path.join(td, "b2.fb2")
+            out_fb2 = os.path.join(td, "omnibus_unsaved.fb2")
+            with open(p1, "wb") as fh:
+                fh.write(VALID_FB2)
+            with open(p2, "wb") as fh:
+                fh.write(VALID_FB2)
+
+            orig1 = parse_metadata(VALID_FB2)
+            edited1 = {**orig1, "title": "Отредактированная книга 1"}
+            items = [
+                {
+                    "path": p1,
+                    "archive_entry": None,
+                    "display_name": "b1.fb2",
+                    "meta": edited1,
+                    "orig_meta": orig1,
+                    "cover_bytes": new_cov,
+                    "cover_mime": "image/jpeg",
+                    "cover_modified": True,
+                },
+                {
+                    "path": p2,
+                    "archive_entry": None,
+                    "display_name": "b2.fb2",
+                    "meta": dict(orig1),
+                    "orig_meta": dict(orig1),
+                    "cover_modified": False,
+                },
+            ]
+            merge_fb2_books_to_omnibus(items, out_fb2)
+            merged_bytes = load_book_xml(out_fb2)
+            cov, _ = extract_cover_from_fb2(merged_bytes)
+            self.assertEqual(cov, new_cov)
+            self.assertIn("Отредактированная книга 1".encode("utf-8"), merged_bytes)
+
+    def test_update_fb2_xml_preserves_body_title_markup_when_title_unchanged(self):
+        rich_title_fb2 = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">'
+            "<description><title-info>"
+            "<author><first-name>Лев</first-name><last-name>Толстой</last-name></author>"
+            "<book-title>Война и мир</book-title>"
+            "</title-info></description>"
+            "<body><title><p>Лев Толстой</p><p>Война и <emphasis>мир</emphasis></p></title>"
+            "<section><p>Текст.</p></section></body>"
+            "</FictionBook>"
+        ).encode("utf-8")
+        orig = parse_metadata(rich_title_fb2)
+        updated = update_fb2_xml(rich_title_fb2, {**orig, "series": "Новая серия"}, orig_meta=orig)
+        self.assertIn(b"<emphasis>", updated)
+
+    def test_logger_masks_home_directory_path(self):
+        import logging
+        from core.logger import _HomePathMaskFilter
+
+        home = os.path.expanduser("~")
+        if not home or home == "~":
+            self.skipTest("Home directory cannot be expanded")
+        flt = _HomePathMaskFilter()
+        rec = logging.LogRecord("test", logging.INFO, __file__, 1, "Opened %s", (os.path.join(home, "secret.fb2"),), None)
+        self.assertTrue(flt.filter(rec))
+        self.assertNotIn(home, rec.getMessage())
+        self.assertIn("~", rec.getMessage())
+
 
 if __name__ == "__main__":
     unittest.main()

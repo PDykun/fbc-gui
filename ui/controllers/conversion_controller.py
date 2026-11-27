@@ -289,21 +289,24 @@ class ConversionController:
             else:
                 progress_dlg.finish_and_close()
 
+        from core.workers import stop_qthread_safely
+
         convert_worker.finished_all.connect(_on_finished)
         convert_worker.start()
         skipped_count = 0
         try:
             progress_dlg.exec()
-            convert_worker.wait()
+            stop_qthread_safely(convert_worker, timeout_ms=3000, label="_convert_worker")
             skipped_count = int(getattr(convert_worker, "skipped_count", 0) or 0)
             if current_sync_worker[0] is not None:
-                current_sync_worker[0].wait()
+                stop_qthread_safely(current_sync_worker[0], timeout_ms=3000, label="_device_sync_worker")
         finally:
             self._convert_progress_dlg = None
             if getattr(self, "_convert_worker", None) is convert_worker:
                 self._convert_worker = None
             try:
-                convert_worker.deleteLater()
+                if not convert_worker.isRunning():
+                    convert_worker.deleteLater()
             except RuntimeError:
                 pass
             if current_sync_worker[0] is not None:
@@ -311,7 +314,8 @@ class ConversionController:
                 if getattr(self, "_device_sync_worker", None) is sw:
                     self._device_sync_worker = None
                 try:
-                    sw.deleteLater()
+                    if not sw.isRunning():
+                        sw.deleteLater()
                 except RuntimeError:
                     pass
 

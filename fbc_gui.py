@@ -344,6 +344,8 @@ class MainWindow(
                     pass
                 setattr(self, dlg_attr, None)
 
+        from core.workers import stop_qthread_safely
+
         active = self._get_active_workers()
         for _, worker in active:
             try:
@@ -354,15 +356,7 @@ class MainWindow(
                 pass
 
         for name, worker in active:
-            try:
-                if worker.isRunning() and not worker.wait(timeout_ms):
-                    logger.warning("Фоновый поток %s не завершился за %d мс при закрытии окна", name, timeout_ms)
-                    try:
-                        worker.disconnect()
-                    except (TypeError, RuntimeError):
-                        pass
-            except RuntimeError:
-                pass
+            stop_qthread_safely(worker, timeout_ms=timeout_ms, label=name)
 
     def closeEvent(self, event):
         if (

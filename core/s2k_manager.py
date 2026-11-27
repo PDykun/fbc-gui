@@ -19,7 +19,13 @@ from core.fbc_manager import (
     parse_checksums_text,
 )
 from core.logger import get_logger
-from core.updater import _build_ssl_context, is_safe_http_url, safe_urlopen
+from core.updater import (
+    DEFAULT_ALLOWED_UPDATE_HOSTS,
+    _build_ssl_context,
+    is_allowed_update_host,
+    is_safe_http_url,
+    safe_urlopen,
+)
 
 logger = get_logger("s2k_manager")
 
@@ -174,11 +180,17 @@ def select_s2k_release_asset(assets, platform_name=None, machine=None):
     return best_full or best_min
 
 
-def _fetch_json(url, timeout=S2K_TIMEOUT_SEC):
+def _fetch_json(url, timeout=S2K_TIMEOUT_SEC, allowed_hosts=None):
     if not is_safe_http_url(url, allow_relative=False, require_https=True):
         raise ValueError(f"Небезопасный URL: {url}")
     req = urllib.request.Request(url, headers={"User-Agent": "FBC-GUI"})
-    with safe_urlopen(req, timeout=timeout, context=_build_ssl_context(), require_https=True) as resp:
+    eff_hosts = allowed_hosts
+    if eff_hosts is None and is_allowed_update_host(url, DEFAULT_ALLOWED_UPDATE_HOSTS):
+        eff_hosts = DEFAULT_ALLOWED_UPDATE_HOSTS
+    open_kwargs = {"timeout": timeout, "context": _build_ssl_context(), "require_https": True}
+    if eff_hosts is not None:
+        open_kwargs["allowed_hosts"] = eff_hosts
+    with safe_urlopen(req, **open_kwargs) as resp:
         raw = resp.read(2 * 1024 * 1024)
     return json.loads(raw.decode("utf-8", errors="replace"))
 
@@ -195,7 +207,7 @@ def download_and_install_s2k(user_data_dir, cancel_event=None, progress_callback
         raise RuntimeError("Не найден подходящий дистрибутив sync2kindle (s2k) для вашей ОС и архитектуры.")
 
     dl_url = str(asset.get("browser_download_url") or "")
-    asset_name = os.path.basename(str(asset.get("name") or "s2k.zip"))
+    asset_name = os.path.basename(str(asset.get("name") or "s2k.zip").replace("\\", "/"))
     if not is_safe_http_url(dl_url, allow_relative=False, require_https=True):
         raise ValueError(f"Небезопасный URL загрузки: {dl_url}")
 
@@ -214,7 +226,10 @@ def download_and_install_s2k(user_data_dir, cancel_event=None, progress_callback
             if is_safe_http_url(c_url, allow_relative=False, require_https=True):
                 try:
                     req = urllib.request.Request(c_url, headers={"User-Agent": "FBC-GUI"})
-                    with safe_urlopen(req, timeout=S2K_TIMEOUT_SEC, context=_build_ssl_context(), require_https=True) as r:
+                    c_kwargs = {"timeout": S2K_TIMEOUT_SEC, "context": _build_ssl_context(), "require_https": True}
+                    if is_allowed_update_host(c_url, DEFAULT_ALLOWED_UPDATE_HOSTS):
+                        c_kwargs["allowed_hosts"] = DEFAULT_ALLOWED_UPDATE_HOSTS
+                    with safe_urlopen(req, **c_kwargs) as r:
                         for fn, algos in parse_checksums_text(r.read(512 * 1024).decode("utf-8", errors="replace")).items():
                             checksums.setdefault(fn, {}).update(algos)
                 except Exception as e:
@@ -226,7 +241,10 @@ def download_and_install_s2k(user_data_dir, cancel_event=None, progress_callback
     with tempfile.TemporaryDirectory(prefix="s2k_dl_") as td:
         archive_path = os.path.join(td, asset_name)
         req = urllib.request.Request(dl_url, headers={"User-Agent": "FBC-GUI"})
-        with safe_urlopen(req, timeout=S2K_TIMEOUT_SEC, context=_build_ssl_context(), require_https=True) as resp:
+        dl_kwargs = {"timeout": S2K_TIMEOUT_SEC, "context": _build_ssl_context(), "require_https": True}
+        if is_allowed_update_host(dl_url, DEFAULT_ALLOWED_UPDATE_HOSTS):
+            dl_kwargs["allowed_hosts"] = DEFAULT_ALLOWED_UPDATE_HOSTS
+        with safe_urlopen(req, **dl_kwargs) as resp:
             raw_len = resp.headers.get("Content-Length") if hasattr(resp, "headers") and resp.headers else None
             try:
                 total_bytes = int(raw_len) if raw_len else int(asset.get("size") or 0)
@@ -264,11 +282,11 @@ def download_and_install_s2k(user_data_dir, cancel_event=None, progress_callback
                 actual_hex = actual_hashes.get(algo, "")
                 if actual_hex and actual_hex.lower() != str(exp_hex).lower():
                     raise RuntimeError(f"Ошибка проверки контрольной суммы {asset_name} ({algo})")
-            hash_verified = True
-        else:
-            logger.warning(
-                "Релиз sync2kindle не содержит контрольной суммы для %s; целостность архива не подтверждена",
-                asset_name,
+                if actual_hex:
+                    hash_verified = True
+        if not hash_verified:
+            raise RuntimeError(
+                f"Ошибка проверки контрольной суммы {asset_name}: релиз sync2kindle не содержит SHA-256/MD5"
             )
 
         fd_tmp, extracted_tmp = tempfile.mkstemp(prefix=f".{exe_name}.", suffix=".tmp", dir=user_data_dir)
@@ -278,7 +296,9 @@ def download_and_install_s2k(user_data_dir, cancel_event=None, progress_callback
             if asset_name.lower().endswith(".zip"):
                 with zipfile.ZipFile(archive_path, "r") as z:
                     for member in z.namelist():
-                        if os.path.basename(member).lower() in (exe_name.lower(), "s2km", "s2km.exe"):
+                        if member.endswith("/"):
+                            continue
+                        if os.path.basename(member.replace("\\", "/")).lower() in (exe_name.lower(), "s2km", "s2km.exe"):
                             with z.open(member, "r") as src_m, open(extracted_tmp, "wb") as dst_m:
                                 _copy_stream_limited(src_m, dst_m, max_bytes=S2K_MAX_ARCHIVE_BYTES)
                             found_bin = True
@@ -286,7 +306,7 @@ def download_and_install_s2k(user_data_dir, cancel_event=None, progress_callback
             else:
                 with tarfile.open(archive_path, "r:*") as tf:
                     for member in tf.getmembers():
-                        if member.isfile() and os.path.basename(member.name).lower() in (exe_name.lower(), "s2km", "s2km.exe"):
+                        if member.isfile() and os.path.basename(member.name.replace("\\", "/")).lower() in (exe_name.lower(), "s2km", "s2km.exe"):
                             src_m = tf.extractfile(member)
                             if src_m is not None:
                                 with src_m, open(extracted_tmp, "wb") as dst_m:

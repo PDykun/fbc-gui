@@ -155,7 +155,19 @@ class SettingsController:
         load_settings_file(self.settings_path, self.app_settings)
 
     def save_app_settings(self):
+        from core.config import get_last_plaintext_secret_fields
+
         save_settings_file(self.settings_path, self.app_settings)
+        plaintext_fields = get_last_plaintext_secret_fields()
+        if (
+            plaintext_fields
+            and not getattr(self, "_warned_plaintext_secrets", False)
+            and not getattr(self, "_closing", False)
+            and hasattr(self, "isVisible")
+            and self.isVisible()
+        ):
+            self._warned_plaintext_secrets = True
+            show_themed_message(self, tr("common.warning"), tr("settings.email_keyring_warning"), "warning")
 
     def sync_settings_from_fbc_config(self):
         sync_fbc_config(self.fbc_config_path, self.app_settings)

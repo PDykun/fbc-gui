@@ -6,11 +6,20 @@ from core.fb2.common import _WHITESPACE_RE
 from core.fb2.templates import render_filename_from_tokens
 
 _INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+_WIN_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
 
 
-def _sanitize_fs_component(text, fallback="_"):
+def _sanitize_fs_component(text, fallback="_", max_len=100):
     cleaned = _INVALID_PATH_CHARS_RE.sub(" ", str(text or "")).strip(" .")
     cleaned = _WHITESPACE_RE.sub(" ", cleaned)
+    if max_len and len(cleaned) > max_len:
+        cleaned = cleaned[:max_len].rstrip(" .")
+    if cleaned.upper() in _WIN_RESERVED_NAMES:
+        cleaned = f"{cleaned}_"
     return cleaned or fallback
 
 

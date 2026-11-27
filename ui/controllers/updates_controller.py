@@ -287,9 +287,12 @@ class UpdatesController:
             return
 
         if result.get("should_quit"):
-            app_inst = QApplication.instance()
-            if app_inst is not None:
-                QTimer.singleShot(150, app_inst.quit)
+            if hasattr(self, "quit_application"):
+                QTimer.singleShot(150, self.quit_application)
+            else:
+                app_inst = QApplication.instance()
+                if app_inst is not None:
+                    QTimer.singleShot(150, app_inst.quit)
         elif result.get("action") == "dmg_mounted":
             name = os.path.basename(result.get("path", "")) or "FBC GUI.dmg"
             show_themed_message(

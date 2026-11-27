@@ -7,6 +7,34 @@ _LOG_FILE_PATH = ""
 _LOGGING_INITIALIZED = False
 
 
+class _HomePathMaskFilter(logging.Filter):
+    """Маскирует домашний каталог пользователя в сообщениях журнала для защиты приватности."""
+
+    def __init__(self):
+        super().__init__()
+        home = os.path.expanduser("~")
+        self._home_variants = tuple(
+            v for v in dict.fromkeys((home, home.replace("\\", "/"), home.replace("/", "\\")))
+            if v and len(v) > 3
+        )
+
+    def filter(self, record):
+        if not self._home_variants:
+            return True
+        try:
+            msg = record.getMessage()
+            masked = msg
+            for hv in self._home_variants:
+                if hv in masked:
+                    masked = masked.replace(hv, "~")
+            if masked != msg:
+                record.msg = masked
+                record.args = None
+        except Exception:
+            pass
+        return True
+
+
 def init_logging(base_dir, log_filename="fbc_gui.log", max_bytes=2 * 1024 * 1024, backup_count=3):
     """Настраивает централизованное логирование с ротацией файла."""
     global _LOG_FILE_PATH, _LOGGING_INITIALIZED
@@ -25,6 +53,8 @@ def init_logging(base_dir, log_filename="fbc_gui.log", max_bytes=2 * 1024 * 1024
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    home_filter = _HomePathMaskFilter()
+    root_logger.addFilter(home_filter)
 
     disable_file_log = os.environ.get("FBC_GUI_DISABLE_FILE_LOG", "").strip().lower() in ("1", "true", "yes")
     if not disable_file_log:

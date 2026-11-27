@@ -16,7 +16,14 @@ import zipfile
 
 from core.config import atomic_write_text
 from core.logger import get_logger
-from core.updater import _build_ssl_context, is_safe_http_url, parse_version_tuple, safe_urlopen
+from core.updater import (
+    DEFAULT_ALLOWED_UPDATE_HOSTS,
+    _build_ssl_context,
+    is_allowed_update_host,
+    is_safe_http_url,
+    parse_version_tuple,
+    safe_urlopen,
+)
 
 MAX_HTTP_META_BYTES = 2 * 1024 * 1024
 MAX_ARCHIVE_BIN_BYTES = 256 * 1024 * 1024
@@ -268,7 +275,7 @@ def inspect_fbc_binary(filepath, timeout=5):
         return result
 
 
-def _http_get_bytes(url, timeout=10, headers=None, max_bytes=MAX_HTTP_META_BYTES):
+def _http_get_bytes(url, timeout=10, headers=None, max_bytes=MAX_HTTP_META_BYTES, allowed_hosts=None):
     if not is_safe_http_url(url, allow_relative=False, require_https=True):
         raise ValueError(f"Unsupported URL scheme: {url}")
     req_headers = {
@@ -279,7 +286,10 @@ def _http_get_bytes(url, timeout=10, headers=None, max_bytes=MAX_HTTP_META_BYTES
         req_headers.update(headers)
     req = urllib.request.Request(url, headers=req_headers)
     ctx = _build_ssl_context()
-    with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True) as resp:
+    eff_hosts = allowed_hosts
+    if eff_hosts is None and is_allowed_update_host(url, DEFAULT_ALLOWED_UPDATE_HOSTS):
+        eff_hosts = DEFAULT_ALLOWED_UPDATE_HOSTS
+    with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True, allowed_hosts=eff_hosts) as resp:
         data = resp.read(max_bytes + 1)
     if len(data) > max_bytes:
         raise ValueError(f"Response from {url} exceeds size limit ({max_bytes} bytes)")
@@ -625,7 +635,8 @@ def download_and_install_fbc(
         ctx = _build_ssl_context()
 
         downloaded = 0
-        with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True) as resp, open(archive_path, "wb") as out_fh:
+        eff_hosts = DEFAULT_ALLOWED_UPDATE_HOSTS if is_allowed_update_host(dl_url, DEFAULT_ALLOWED_UPDATE_HOSTS) else None
+        with safe_urlopen(req, timeout=timeout, context=ctx, require_https=True, allowed_hosts=eff_hosts) as resp, open(archive_path, "wb") as out_fh:
             try:
                 total = max(0, int(resp.headers.get("Content-Length") or expected_size or 0))
             except (TypeError, ValueError):
@@ -648,19 +659,50 @@ def download_and_install_fbc(
         # Проверка контрольной суммы скачанного архива (GitHub API digest / checksums)
         archive_hashes = compute_file_hashes(archive_path)
         expected_archive = checksums.get(asset_name.lower()) or {}
-        if expected_archive.get("sha256") and expected_archive["sha256"] != archive_hashes["sha256"]:
-            raise RuntimeError(
-                f"SHA256 mismatch for {asset_name}: expected {expected_archive['sha256']}, got {archive_hashes['sha256']}"
-            )
-        if expected_archive.get("md5") and expected_archive["md5"] != archive_hashes["md5"]:
-            raise RuntimeError(
-                f"MD5 mismatch for {asset_name}: expected {expected_archive['md5']}, got {archive_hashes['md5']}"
-            )
+        archive_verified = False
+        if expected_archive.get("sha256"):
+            if expected_archive["sha256"] != archive_hashes["sha256"]:
+                raise RuntimeError(
+                    f"SHA256 mismatch for {asset_name}: expected {expected_archive['sha256']}, got {archive_hashes['sha256']}"
+                )
+            archive_verified = True
+        if expected_archive.get("md5"):
+            if expected_archive["md5"] != archive_hashes["md5"]:
+                raise RuntimeError(
+                    f"MD5 mismatch for {asset_name}: expected {expected_archive['md5']}, got {archive_hashes['md5']}"
+                )
+            archive_verified = True
 
         fd_tmp, extracted_tmp = tempfile.mkstemp(prefix=f".{bin_name}.", suffix=".tmp", dir=user_data_dir)
         os.close(fd_tmp)
         try:
             _extract_fbc_from_archive(archive_path, extracted_tmp, bin_name)
+
+            # Криптографическая проверка распакованного бинарника ДО его запуска (--version)
+            extracted_hashes = compute_file_hashes(extracted_tmp)
+            bin_verified = False
+            expected_bin = checksums.get(bin_name.lower()) or {}
+            if expected_bin.get("sha256"):
+                if expected_bin["sha256"] != extracted_hashes["sha256"]:
+                    raise RuntimeError("Downloaded fbc binary SHA256 mismatch")
+                bin_verified = True
+            if expected_bin.get("md5"):
+                if expected_bin["md5"] != extracted_hashes["md5"]:
+                    raise RuntimeError("Downloaded fbc binary MD5 mismatch")
+                bin_verified = True
+
+            rel_ver = str(release.get("tag_name") or target_version or "").strip().lstrip("vV")
+            known_pre = KNOWN_FBC_HASHES.get((rel_ver, f"{os_name}-{arch}"))
+            if known_pre:
+                if known_pre.get("md5") and known_pre["md5"] != extracted_hashes["md5"]:
+                    raise RuntimeError("Downloaded fbc binary MD5 mismatch")
+                if known_pre.get("sha256") and known_pre["sha256"] != extracted_hashes["sha256"]:
+                    raise RuntimeError("Downloaded fbc binary SHA256 mismatch")
+                bin_verified = True
+
+            if not (archive_verified or bin_verified):
+                raise RuntimeError(f"Missing SHA256/MD5 checksum for {asset_name}; refusing to execute unverified binary")
+
             if os.name != "nt":
                 os.chmod(extracted_tmp, 0o755)
 
@@ -670,7 +712,7 @@ def download_and_install_fbc(
                     f"Downloaded binary failed verification: {info.get('error') or info.get('version')}"
                 )
 
-            # Проверка бинарника против эталонных MD5/SHA256 (если заданы для этой версии и платформы)
+            # Повторная сверка по фактически возвращённой версии бинарника
             known = KNOWN_FBC_HASHES.get((info["version"], f"{os_name}-{arch}"))
             if known:
                 if known.get("md5") and known["md5"] != info["md5"]:

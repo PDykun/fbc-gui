@@ -26,6 +26,7 @@ from core.fb2.xml_io import (
     _local_tag,
     _parse_fb2_root,
     _qtag,
+    _read_zip_entry_limited,
     _sanitize_fb2_xml_text,
     get_book_xml,
 )
@@ -480,14 +481,17 @@ def update_fb2_xml(xml_bytes, meta, cover_bytes=None, cover_mime="image/jpeg", c
     _apply_publish_info_field(root, 'publisher', meta, current_meta)
     _apply_publish_info_field(root, 'isbn', meta, current_meta)
 
-    body = root.find(_qtag(root_ns, 'body'))
-    if body is not None:
-        body_title = body.find(_qtag(root_ns, 'title'))
-        if body_title is not None:
-            paras = body_title.findall(_qtag(root_ns, 'p'))
-            if len(paras) >= 1 and meta.get('title'):
-                paras[-1].clear()
-                paras[-1].text = meta['title']
+    new_title = meta.get('title') or ''
+    old_title = current_meta.get('title') or ''
+    if new_title and new_title != old_title:
+        body = root.find(_qtag(root_ns, 'body'))
+        if body is not None:
+            body_title = body.find(_qtag(root_ns, 'title'))
+            if body_title is not None:
+                paras = body_title.findall(_qtag(root_ns, 'p'))
+                if len(paras) >= 1:
+                    paras[-1].clear()
+                    paras[-1].text = new_title
 
     return ET.tostring(root, encoding='utf-8', xml_declaration=True)
 
@@ -539,7 +543,7 @@ def save_book_changes_to_source(data):
                         if info.filename == target_entry:
                             zout.writestr(info, new_xml_bytes, compress_type=zipfile.ZIP_DEFLATED)
                         else:
-                            zout.writestr(info, zin.read(info.filename))
+                            zout.writestr(info, _read_zip_entry_limited(zin, info.filename))
             with zipfile.ZipFile(tmp_zip, "r") as zchk:
                 bad_member = zchk.testzip()
                 if bad_member is not None:

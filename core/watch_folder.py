@@ -872,6 +872,7 @@ class WatchFolderManager(QObject):
         self._running = False
         self._rule_statuses = {}
         self._pending_files = {}  # (rule_id, norm_path) -> {"path": str, "size": int, "mtime": float, "stable": int}
+        self._in_flight_files = set()  # {(rule_id, norm_path)} файлов в очереди или обработке
         self._retry_backoff = {}  # (rule_id, norm_path) -> {"attempts": int, "next_retry_at": float}
         self._job_queue = deque()
         self._active_worker = None
@@ -937,6 +938,8 @@ class WatchFolderManager(QObject):
         self.status_changed.emit()
 
     def stop(self, timeout_ms=3000):
+        from core.workers import stop_qthread_safely
+
         self._running = False
         self._poll_timer.stop()
         self._stability_timer.stop()
@@ -945,23 +948,16 @@ class WatchFolderManager(QObject):
             self._fs_watcher.removePaths(dirs)
         self._job_queue.clear()
         self._pending_files.clear()
+        self._in_flight_files.clear()
         self._retry_backoff.clear()
-        if self._scan_worker is not None:
-            try:
-                self._scan_worker.requestInterruption()
-                if self._scan_worker.isRunning():
-                    self._scan_worker.wait(timeout_ms)
-            except RuntimeError:
-                pass
-            self._scan_worker = None
-        if self._active_worker is not None:
-            try:
-                self._active_worker.cancel()
-                if self._active_worker.isRunning():
-                    self._active_worker.wait(timeout_ms)
-            except RuntimeError:
-                pass
-            self._active_worker = None
+        scan_worker = self._scan_worker
+        self._scan_worker = None
+        if scan_worker is not None:
+            stop_qthread_safely(scan_worker, timeout_ms=timeout_ms, label="WatchScanWorker")
+        active_worker = self._active_worker
+        self._active_worker = None
+        if active_worker is not None:
+            stop_qthread_safely(active_worker, timeout_ms=timeout_ms, label="WatchJobWorker")
         self.status_changed.emit()
 
     def _rewatch_directories(self):
@@ -1131,6 +1127,8 @@ class WatchFolderManager(QObject):
             if self.state_store.is_processed(rid, fp, st.st_size, st.st_mtime):
                 continue
             key = (rid, os.path.normcase(os.path.abspath(fp)))
+            if key in self._in_flight_files:
+                continue
             backoff = self._retry_backoff.get(key)
             if backoff and time.monotonic() < backoff.get("next_retry_at", 0.0):
                 continue
@@ -1189,7 +1187,10 @@ class WatchFolderManager(QObject):
             for rid, paths in ready_by_rule.items():
                 rule = rules_by_id.get(rid)
                 if rule and paths:
-                    self._job_queue.append((copy.deepcopy(rule), sorted(paths)))
+                    sorted_paths = sorted(paths)
+                    for fp in sorted_paths:
+                        self._in_flight_files.add((rid, os.path.normcase(os.path.abspath(fp))))
+                    self._job_queue.append((copy.deepcopy(rule), sorted_paths))
             self._start_next_job()
 
     def _start_next_job(self):
@@ -1228,6 +1229,7 @@ class WatchFolderManager(QObject):
     def _on_job_finished(self, summary):
         worker = self._active_worker
         self._active_worker = None
+        worker_paths = list(getattr(worker, "filepaths", None) or []) if worker is not None else []
         if worker is not None:
             try:
                 worker.wait(500)
@@ -1236,6 +1238,11 @@ class WatchFolderManager(QObject):
                 pass
 
         rule_id = summary.get("rule_id", "")
+        for fp in worker_paths:
+            self._in_flight_files.discard((rule_id, os.path.normcase(os.path.abspath(fp))))
+        for rec in summary.get("processed_sources") or []:
+            if rec.get("path"):
+                self._in_flight_files.discard((rule_id, os.path.normcase(os.path.abspath(rec["path"]))))
         batch_state_entries = []
         now_mono = time.monotonic()
         now_ts = int(time.time())

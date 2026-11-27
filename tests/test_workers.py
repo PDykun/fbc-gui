@@ -270,6 +270,37 @@ class TestWorkers(unittest.TestCase):
         src_settings["filename_tokens"].append({"type": "title"})
         self.assertEqual(len(w.app_settings["filename_tokens"]), 1)
 
+    def test_stop_qthread_safely_detaches_stuck_thread_and_cleans_orphan(self):
+        import threading
+        from PyQt6.QtCore import QThread
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication([])
+        release_ev = threading.Event()
+        cancelled = []
+
+        class _StuckWorker(QThread):
+            def cancel(self):
+                cancelled.append(True)
+
+            def run(self):
+                release_ev.wait(timeout=3.0)
+
+        w = _StuckWorker()
+        w.start()
+        try:
+            stopped = workers.stop_qthread_safely(w, timeout_ms=40, label="test_stuck")
+            self.assertFalse(stopped)
+            self.assertEqual(cancelled, [True])
+            self.assertIn(w, workers._ORPHANED_THREADS)
+            self.assertIsNone(w.parent())
+        finally:
+            release_ev.set()
+            w.wait(2000)
+            app.processEvents()
+
+        self.assertNotIn(w, workers._ORPHANED_THREADS)
+
 
 if __name__ == "__main__":
     unittest.main()
