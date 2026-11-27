@@ -132,6 +132,7 @@ class TestControllers(unittest.TestCase):
 
         app = QApplication.instance() or QApplication([])
         with (
+            patch.object(fbc_gui.MainWindow, "load_app_settings", lambda self: None),
             patch.object(fbc_gui.MainWindow, "_ensure_fbc_on_startup", lambda self, *a, **kw: None),
             patch.object(fbc_gui.MainWindow, "_schedule_startup_update_check", lambda self, *a, **kw: None),
         ):

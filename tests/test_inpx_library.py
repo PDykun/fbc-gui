@@ -41,15 +41,13 @@ def _make_default_inp_row(
     deleted="0",
     ext="fb2",
     date="2020-01-01",
-    insno="",
-    folder="",
     lang="ru",
     librate="0",
     keywords="",
 ):
     return INP_SEP.join([
         author, genre, title, series, serno, file_stem, size, libid,
-        deleted, ext, date, insno, folder, lang, librate, keywords,
+        deleted, ext, date, lang, librate, keywords,
     ])
 
 
@@ -140,6 +138,7 @@ class TestInpxLibrary(unittest.TestCase):
                 _make_default_inp_row(
                     "Аакер,Дженнифер,:Смит,Энди,:", "comp_www:sci_business:", "Эффект стрекозы",
                     "Best Business Practices", "1", "10", size="2200000", deleted="0", lang="ru", librate="4",
+                    keywords="маркетинг, социальные сети, длинная строка ключевых слов",
                 ),
                 _make_default_inp_row(
                     "Стругацкий,Аркадий,:Стругацкий,Борис,:", "sf:", "Пикник на обочине",
@@ -286,6 +285,7 @@ class TestInpxLibrary(unittest.TestCase):
             self.assertEqual(items[0]["meta"]["last"], "Петров")
 
         with (
+            patch.object(fbc_gui.MainWindow, "load_app_settings", lambda self: None),
             patch.object(fbc_gui.MainWindow, "_ensure_fbc_on_startup", lambda self, *a, **kw: None),
             patch.object(fbc_gui.MainWindow, "_schedule_startup_update_check", lambda self, *a, **kw: None),
         ):

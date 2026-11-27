@@ -10,10 +10,12 @@ from core.logger import get_logger
 
 logger = get_logger("inpx_library")
 
-INPX_CACHE_SCHEMA_VERSION = "3"
+INPX_CACHE_SCHEMA_VERSION = "4"
 MAX_INPX_ENTRY_BYTES = 128 * 1024 * 1024  # 128 МБ лимит на один .inp-файл (защита от zip-bomb)
 MAX_INPX_SEARCH_LIMIT = 500
+MAX_INPX_LANGUAGES = 100
 
+# Каноническая схема MyHomeLib / Flibusta / Lib.rus.ec (14 колонок без structure.info)
 DEFAULT_INP_FIELDS = (
     "AUTHOR",
     "GENRE",
@@ -26,14 +28,13 @@ DEFAULT_INP_FIELDS = (
     "DEL",
     "EXT",
     "DATE",
-    "INSNO",
-    "FOLDER",
     "LANG",
     "LIBRATE",
     "KEYWORDS",
 )
 
 _FTS_TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
+_LANG_CODE_RE = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{2,4})?$")
 
 
 def _split_inpx_authors(raw_author):
@@ -587,7 +588,8 @@ class InpxLibraryIndex:
                             serno_num = _parse_serno_int(serno)
                             genres_list = _split_inpx_genres(_get_col(parts, idx_genre))
                             genres_str = ", ".join(genres_list)
-                            lang = _get_col(parts, idx_lang).strip().lower()
+                            raw_lang = _get_col(parts, idx_lang).strip().lower()
+                            lang = raw_lang if _LANG_CODE_RE.match(raw_lang) else ""
                             size_b = _parse_size_int(_get_col(parts, idx_size))
                             librate = _parse_int_clamped(_get_col(parts, idx_librate), min_val=0, max_val=5)
                             folder = _get_col(parts, idx_folder).strip()
@@ -725,14 +727,16 @@ class InpxLibraryIndex:
                     pass
             raise
 
-    def list_languages(self, hide_deleted=True):
+    def list_languages(self, hide_deleted=True, limit=MAX_INPX_LANGUAGES):
         """Возвращает список языков, присутствующих в библиотеке, по убыванию числа книг (мгновенно из lang_summary)."""
         if not os.path.isfile(self.db_path):
             return []
         cnt_col = "count_active" if hide_deleted else "count_all"
+        lim = max(1, min(MAX_INPX_LANGUAGES, int(limit or MAX_INPX_LANGUAGES)))
         with self._connect(readonly=True) as conn:
             rows = conn.execute(
-                f"SELECT lang FROM lang_summary WHERE {cnt_col} > 0 ORDER BY {cnt_col} DESC, lang"
+                f"SELECT lang FROM lang_summary WHERE {cnt_col} > 0 ORDER BY {cnt_col} DESC, lang LIMIT ?",
+                (lim,),
             ).fetchall()
             return [r["lang"] for r in rows]
 

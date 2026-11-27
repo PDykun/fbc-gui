@@ -139,7 +139,7 @@ class LibraryController:
             return
         cur_data = self.lib_lang_combo.currentData() or "all"
         hide_del = self.chk_lib_hide_deleted.isChecked() if hasattr(self, "chk_lib_hide_deleted") else True
-        langs = self._get_library_index().list_languages(hide_deleted=hide_del)
+        langs = [c for c in self._get_library_index().list_languages(hide_deleted=hide_del)[:100] if c and len(c) <= 12]
         self.lib_lang_combo.blockSignals(True)
         try:
             self.lib_lang_combo.clear()
