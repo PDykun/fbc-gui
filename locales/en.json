@@ -341,7 +341,21 @@
       "1px purple solid": "1px purple solid (Purple)",
       "1px #2196F3 solid": "1px #2196F3 solid (Blue)",
       "none": "none (No border)"
-    }
+    },
+    "palette_title_bw": "B&W E Ink Palette (16 Gray Levels)",
+    "palette_title_kaleido3": "Color E Ink Palette (Kaleido 3 — 4096 Colors)",
+    "palette_title_gallery3": "Color E Ink Palette (Gallery 3)",
+    "palette_desc_bw": "Only the 16 gray levels supported by E Ink Carta displays are shown.",
+    "palette_desc_color_eink": "Colors are mapped to the e-reader display gamut. Preview shows how text looks on E Ink paper.",
+    "palette_lbl_shade": "Shade:",
+    "palette_lbl_hex": "Color code:",
+    "palette_preview_sample": "Sample Book Heading • AaBb 123",
+    "palette_contrast_ok": "Contrast on E Ink paper: good ({ratio}:1)",
+    "palette_contrast_low": "Low contrast on E Ink paper ({ratio}:1) — text may be hard to read",
+    "btn_custom_color": "Custom Color...",
+    "tooltip_palette_bw": "Pick a shade from the 16-level B&W e-reader palette",
+    "tooltip_palette_color_eink": "Pick a color from the color E Ink reader palette",
+    "tooltip_palette_full": "Pick any color"
   },
   "preview": {
     "info_bar": "Live preview of all book style elements (author, title, headings, drop cap, poems, footnotes, SVG)",

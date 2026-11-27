@@ -21,6 +21,7 @@ from core.i18n import (
     LEGACY_NOTE_BG_MAP,
     LEGACY_NOTE_BORDER_MAP,
     LEGACY_STYLE_MAP,
+    get_note_bg_options,
     tr,
 )
 from core.logger import get_logger
@@ -343,6 +344,48 @@ class PreviewController:
             if key in st and st[key]:
                 picker.set(str(st[key]))
 
+    def _iter_style_color_pickers(self):
+        pickers = []
+        for attr in (
+            "h1_cl_cb", "auth_cl_cb", "drop_color_cb", "anno_color_cb",
+            "epi_color_cb", "poem_color_cb", "note_color_cb", "img_cap_cl_cb",
+        ):
+            w = getattr(self, attr, None)
+            if w is not None:
+                pickers.append(w)
+        for key in ("h2", "h3", "h4", "h5"):
+            hdr = getattr(self, "header_vars", {}).get(key)
+            if isinstance(hdr, dict) and hdr.get("color") is not None:
+                pickers.append(hdr["color"])
+        return pickers
+
+    def sync_style_color_palettes(self):
+        """Синхронизирует палитры всех селекторов цвета и фона сносок под выбранный экран ридера."""
+        from core.image_optimizer import get_display_color_palette
+
+        profile_id = self.app_settings.get("image_color_profile", "none")
+        grayscale = (self.app_settings.get("grayscale", "none") == "luma")
+        custom_prof = self.app_settings.get("image_color_profile_custom")
+        pal = get_display_color_palette(profile_id, grayscale=grayscale, custom_profile=custom_prof)
+
+        for picker in self._iter_style_color_pickers():
+            if hasattr(picker, "set_display_profile"):
+                picker.set_display_profile(profile_id, grayscale=grayscale, custom_profile=custom_prof)
+
+        note_bg_cb = getattr(self, "note_bg_cb", None)
+        if note_bg_cb is not None and hasattr(self, "_populate_data_combo"):
+            cur_bg = self._get_combo_data(note_bg_cb, "#e6e6fa")
+            opts = get_note_bg_options(monochrome=bool(pal.get("monochrome_note_bg")))
+            opt_vals = [v for _, v in opts]
+            if cur_bg and cur_bg not in opt_vals:
+                all_map = {v: lbl for lbl, v in get_note_bg_options(monochrome=False)}
+                opts = [(all_map.get(cur_bg, cur_bg), cur_bg)] + opts
+            note_bg_cb.blockSignals(True)
+            try:
+                self._populate_data_combo(note_bg_cb, opts, cur_bg)
+            finally:
+                note_bg_cb.blockSignals(False)
+
     def load_and_parse_css_to_gui(self):
         self._loading_css = True
         try:
@@ -353,6 +396,7 @@ class PreviewController:
                 self._apply_css_ui_state(parsed)
                 if hasattr(self, '_get_css_ui_state'):
                     self.app_settings["css_ui_state"] = self._get_css_ui_state()
+            self.sync_style_color_palettes()
             if hasattr(self, 'css_preview_text'):
                 self.css_preview_text.setPlainText(self.generate_css_content())
         except Exception as e:

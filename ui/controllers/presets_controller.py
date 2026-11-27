@@ -161,6 +161,8 @@ class PresetsController:
                 cb.blockSignals(False)
 
         self.load_and_parse_css_to_gui()
+        if hasattr(self, "sync_style_color_palettes"):
+            self.sync_style_color_palettes()
         self.save_visual_css(show_alert=False)
         if hasattr(self, "_refresh_halos"):
             self._refresh_halos()

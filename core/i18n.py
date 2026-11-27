@@ -139,8 +139,11 @@ def get_style_options():
     return [(tr(f"styles.font_style.{k}"), k) for k in ("italic", "normal")]
 
 
-def get_note_bg_options():
-    keys = ["#e6e6fa", "#f4f4f4", "#fff9c4", "#e8f5e9", "#e1f5fe", "#ffffff", "transparent"]
+def get_note_bg_options(monochrome=False):
+    if monochrome:
+        keys = ["#f4f4f4", "#ffffff", "transparent"]
+    else:
+        keys = ["#e6e6fa", "#f4f4f4", "#fff9c4", "#e8f5e9", "#e1f5fe", "#ffffff", "transparent"]
     return [(tr(f"styles.note_bg.{k}"), k) for k in keys]
 
 

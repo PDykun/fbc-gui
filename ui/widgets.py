@@ -21,11 +21,13 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLayout,
     QLineEdit,
     QPushButton,
+    QSlider,
     QStyle,
     QStyleOptionButton,
     QStyledItemDelegate,
@@ -373,12 +375,218 @@ class PillSelector(QWidget):
             self._apply_button_styles()
 
 
+def _relative_luminance(hex_color):
+    col = QColor(hex_color)
+    if not col.isValid():
+        return 0.0
+
+    def _lin(ch):
+        v = ch / 255.0
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * _lin(col.red()) + 0.7152 * _lin(col.green()) + 0.0722 * _lin(col.blue())
+
+
+def _contrast_ratio(fg_hex, bg_hex):
+    l1 = _relative_luminance(fg_hex)
+    l2 = _relative_luminance(bg_hex)
+    hi, lo = (l1, l2) if l1 >= l2 else (l2, l1)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+class ReaderPaletteDialog(QDialog):
+    """Тематизированный диалог выбора цвета, ограниченный палитрой выбранного экрана E Ink."""
+
+    def __init__(self, initial_hex, palette_spec, parent=None, *, grayscale=False, custom_profile=None):
+        super().__init__(parent)
+        from core.image_optimizer import quantize_hex_for_display_profile, simulate_hex_for_display_profile
+
+        self._quantize = lambda hx: quantize_hex_for_display_profile(
+            hx, palette_spec["profile_id"], grayscale=grayscale, custom_profile=custom_profile
+        )
+        self._simulate = lambda hx: simulate_hex_for_display_profile(
+            hx, palette_spec["profile_id"], grayscale=grayscale, custom_profile=custom_profile
+        )
+        self._palette = palette_spec
+        self._mode = palette_spec["mode"]
+        self._swatches = list(palette_spec["swatches"])
+        self._paper_bg = palette_spec.get("paper_bg", "#ECEAE2")
+        self._selected_hex = self._quantize(initial_hex)
+        self._swatch_buttons = {}
+        self._syncing = False
+
+        if self._mode == "grayscale":
+            title = tr("styles.palette_title_bw")
+            desc = tr("styles.palette_desc_bw")
+        elif palette_spec.get("profile_id") == "eink_gallery3":
+            title = tr("styles.palette_title_gallery3")
+            desc = tr("styles.palette_desc_color_eink")
+        else:
+            title = tr("styles.palette_title_kaleido3")
+            desc = tr("styles.palette_desc_color_eink")
+
+        self.setWindowTitle(title)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        if parent is not None and parent.styleSheet():
+            self.setStyleSheet(parent.styleSheet())
+        self.setMinimumWidth(420)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(12)
+
+        lbl_desc = QLabel(desc)
+        lbl_desc.setObjectName("RowDesc")
+        lbl_desc.setWordWrap(True)
+        root.addWidget(lbl_desc)
+
+        grid_wrap = QFrame()
+        grid_wrap.setObjectName("SectionCard")
+        grid = QGridLayout(grid_wrap)
+        grid.setContentsMargins(12, 12, 12, 12)
+        grid.setSpacing(8)
+        cols = 8
+        for idx, hex_val in enumerate(self._swatches):
+            btn = QPushButton()
+            btn.setFixedSize(38, 30)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(hex_val.upper())
+            btn.clicked.connect(lambda checked=False, hx=hex_val: self._select_hex(hx))
+            self._swatch_buttons[hex_val] = btn
+            grid.addWidget(btn, idx // cols, idx % cols)
+        root.addWidget(grid_wrap)
+
+        self._slider = None
+        if self._mode == "grayscale" and self._swatches:
+            slider_row = QHBoxLayout()
+            slider_row.setSpacing(10)
+            slider_row.addWidget(QLabel(tr("styles.palette_lbl_shade")))
+            self._slider = QSlider(Qt.Orientation.Horizontal)
+            self._slider.setRange(0, len(self._swatches) - 1)
+            self._slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+            self._slider.setTickInterval(1)
+            self._slider.valueChanged.connect(self._on_slider_changed)
+            slider_row.addWidget(self._slider, 1)
+            root.addLayout(slider_row)
+
+        hex_row = QHBoxLayout()
+        hex_row.setSpacing(8)
+        hex_row.addWidget(QLabel(tr("styles.palette_lbl_hex")))
+        self.hex_edit = QLineEdit(self._selected_hex)
+        self.hex_edit.setFixedWidth(100)
+        self.hex_edit.editingFinished.connect(self._on_hex_edited)
+        hex_row.addWidget(self.hex_edit)
+        hex_row.addStretch()
+
+        if palette_spec.get("allow_custom_dialog"):
+            btn_custom = QPushButton(tr("styles.btn_custom_color"))
+            btn_custom.setObjectName("SecondaryButton")
+            btn_custom.setProperty("variant", "secondary")
+            btn_custom.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_custom.clicked.connect(self._open_full_color_dialog)
+            hex_row.addWidget(btn_custom)
+        root.addLayout(hex_row)
+
+        self.preview_box = QLabel(tr("styles.palette_preview_sample"))
+        self.preview_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_box.setMinimumHeight(48)
+        root.addWidget(self.preview_box)
+
+        self.lbl_contrast = QLabel()
+        self.lbl_contrast.setObjectName("RowDesc")
+        self.lbl_contrast.setWordWrap(True)
+        root.addWidget(self.lbl_contrast)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_cancel = QPushButton(tr("common.cancel"))
+        btn_cancel.setObjectName("SecondaryButton")
+        btn_cancel.setProperty("variant", "secondary")
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel)
+
+        btn_ok = QPushButton(tr("common.ok"))
+        btn_ok.setObjectName("AccentButton")
+        btn_ok.setProperty("variant", "primary")
+        btn_ok.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_ok.clicked.connect(self.accept)
+        btn_row.addWidget(btn_ok)
+        root.addLayout(btn_row)
+
+        self._select_hex(self._selected_hex)
+
+    def selected_hex(self):
+        return self._selected_hex
+
+    def _on_slider_changed(self, idx):
+        if self._syncing:
+            return
+        if 0 <= idx < len(self._swatches):
+            self._select_hex(self._swatches[idx])
+
+    def _on_hex_edited(self):
+        if self._syncing:
+            return
+        raw = self.hex_edit.text().strip()
+        col = QColor(raw)
+        if col.isValid():
+            self._select_hex(self._quantize(col.name()))
+        else:
+            self.hex_edit.setText(self._selected_hex)
+
+    def _open_full_color_dialog(self):
+        dlg = QColorDialog(QColor(self._selected_hex), self)
+        dlg.setWindowTitle(tr("common.choose_color"))
+        dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        if self.styleSheet():
+            dlg.setStyleSheet(self.styleSheet())
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            col = dlg.currentColor()
+            if col.isValid():
+                self._select_hex(self._quantize(col.name()))
+
+    def _select_hex(self, hex_val):
+        self._syncing = True
+        try:
+            q_hex = self._quantize(hex_val)
+            self._selected_hex = q_hex
+            self.hex_edit.setText(q_hex)
+            if self._slider is not None and q_hex in self._swatches:
+                self._slider.setValue(self._swatches.index(q_hex))
+
+            for sw_hex, btn in self._swatch_buttons.items():
+                is_sel = (sw_hex == q_hex)
+                border = "3px solid #38BDF8" if is_sel else "1px solid #777777"
+                btn.setStyleSheet(
+                    f"background-color: {sw_hex}; border: {border}; border-radius: 6px; padding: 0px;"
+                )
+
+            sim_fg = self._simulate(q_hex)
+            self.preview_box.setStyleSheet(
+                f"background-color: {self._paper_bg}; color: {sim_fg}; "
+                f"border: 1px solid #B8B2A6; border-radius: 6px; padding: 8px 12px; "
+                f"font-size: 16px; font-weight: bold;"
+            )
+            ratio = _contrast_ratio(sim_fg, self._paper_bg)
+            if ratio < 3.0:
+                self.lbl_contrast.setText(tr("styles.palette_contrast_low", ratio=f"{ratio:.1f}"))
+            else:
+                self.lbl_contrast.setText(tr("styles.palette_contrast_ok", ratio=f"{ratio:.1f}"))
+        finally:
+            self._syncing = False
+
+
 class ColorPickerWidget(QWidget):
     def __init__(self, parent=None, values=None, default_color="black", width=105):
         super().__init__(parent)
         self._values = list(values or [])
         self._current_color = default_color
         self._callbacks = []
+        self._display_profile = "none"
+        self._grayscale = False
+        self._custom_profile = None
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -402,8 +610,41 @@ class ColorPickerWidget(QWidget):
         self.btn_palette.setFixedWidth(34)
         self.btn_palette.setStyleSheet("padding: 0px;")
         self.btn_palette.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_palette.setToolTip(tr("styles.tooltip_palette_full"))
         self.btn_palette.clicked.connect(self._choose_custom_color)
         layout.addWidget(self.btn_palette)
+
+    def set_display_profile(self, profile_id="none", grayscale=False, custom_profile=None):
+        """Обновляет доступную палитру и список быстрых цветов под экран выбранного ридера."""
+        from core.image_optimizer import get_display_color_palette
+
+        self._display_profile = str(profile_id or "none")
+        self._grayscale = bool(grayscale)
+        self._custom_profile = custom_profile
+        pal = get_display_color_palette(
+            self._display_profile, grayscale=self._grayscale, custom_profile=self._custom_profile
+        )
+        cur_text = self.get()
+        new_values = list(pal["quick_colors"])
+        if cur_text and cur_text not in new_values:
+            new_values.insert(0, cur_text)
+
+        self._values = new_values
+        self.combo.blockSignals(True)
+        try:
+            self.combo.clear()
+            self.combo.addItems(self._values)
+            if cur_text:
+                self.combo.setCurrentText(cur_text)
+        finally:
+            self.combo.blockSignals(False)
+
+        if pal["mode"] == "grayscale":
+            self.btn_palette.setToolTip(tr("styles.tooltip_palette_bw"))
+        elif pal["mode"] == "color_eink":
+            self.btn_palette.setToolTip(tr("styles.tooltip_palette_color_eink"))
+        else:
+            self.btn_palette.setToolTip(tr("styles.tooltip_palette_full"))
 
     def _resolve_hex(self, color_name):
         c = (color_name or "").strip().lower()
@@ -427,7 +668,29 @@ class ColorPickerWidget(QWidget):
             cb()
 
     def _choose_custom_color(self):
-        dlg = QColorDialog(QColor(self._resolve_hex(self._current_color)), self.window())
+        from core.image_optimizer import get_display_color_palette
+
+        pal = get_display_color_palette(
+            self._display_profile, grayscale=self._grayscale, custom_profile=self._custom_profile
+        )
+        cur_hex = self._resolve_hex(self._current_color)
+        if pal["mode"] in ("grayscale", "color_eink"):
+            dlg = ReaderPaletteDialog(
+                cur_hex,
+                pal,
+                self.window(),
+                grayscale=self._grayscale,
+                custom_profile=self._custom_profile,
+            )
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                hex_c = dlg.selected_hex()
+                if hex_c not in self._values:
+                    self._values.append(hex_c)
+                    self.combo.addItem(hex_c)
+                self.combo.setCurrentText(hex_c)
+            return
+
+        dlg = QColorDialog(QColor(cur_hex), self.window())
         dlg.setWindowTitle(tr("common.choose_color"))
         dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
         dlg.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)

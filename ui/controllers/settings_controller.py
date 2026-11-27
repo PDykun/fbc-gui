@@ -117,6 +117,8 @@ class SettingsController:
 
     def on_grayscale_changed(self, idx=None):
         self._set_setting("grayscale", self._get_combo_data(self.grayscale_cb, "none"), refresh_preview=True)
+        if hasattr(self, "sync_style_color_palettes"):
+            self.sync_style_color_palettes()
 
     def on_image_color_profile_changed(self, idx=None):
         self.app_settings.pop("image_color_profile_custom", None)
@@ -126,6 +128,8 @@ class SettingsController:
             update_fbc=False,
             refresh_preview=True,
         )
+        if hasattr(self, "sync_style_color_palettes"):
+            self.sync_style_color_palettes()
 
     def on_fit_to_screen_changed(self, idx=None):
         self._set_setting("fit_to_screen", self._get_combo_data(self.fit_to_screen_cb, "false"))
@@ -275,6 +279,8 @@ class SettingsController:
             self.update_header_status()
             self._refresh_all_target_filenames()
             self._refresh_filename_builder_preview()
+            if hasattr(self, "sync_style_color_palettes"):
+                self.sync_style_color_palettes()
             self.refresh_preview()
             logger.info("Применён профиль устройства: %s", key)
         finally:

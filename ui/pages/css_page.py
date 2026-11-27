@@ -520,3 +520,5 @@ def build_visual_css_page(win, parent):
 
     scroll.setWidget(scroll_content)
     layout.addWidget(scroll, 1)
+    if hasattr(win, "sync_style_color_palettes"):
+        win.sync_style_color_palettes()

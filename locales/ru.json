@@ -341,7 +341,21 @@
       "1px purple solid": "1px purple solid (Пурпурная)",
       "1px #2196F3 solid": "1px #2196F3 solid (Синяя)",
       "none": "none (Без рамки)"
-    }
+    },
+    "palette_title_bw": "Палитра Ч/Б E Ink (16 градаций серого)",
+    "palette_title_kaleido3": "Палитра цветного E Ink (Kaleido 3 — 4096 цветов)",
+    "palette_title_gallery3": "Палитра цветного E Ink (Gallery 3)",
+    "palette_desc_bw": "Доступны только 16 градаций серого, поддерживаемые экранами E Ink Carta.",
+    "palette_desc_color_eink": "Цвета привязаны к палитре экрана ридера. Превью показывает вид текста на бумаге E Ink.",
+    "palette_lbl_shade": "Оттенок:",
+    "palette_lbl_hex": "Код цвета:",
+    "palette_preview_sample": "Пример заголовка книги • AaBb 123",
+    "palette_contrast_ok": "Контраст на бумаге E Ink: хороший ({ratio}:1)",
+    "palette_contrast_low": "Низкий контраст на бумаге E Ink ({ratio}:1) — текст может быть плохо читаем",
+    "btn_custom_color": "Произвольный цвет...",
+    "tooltip_palette_bw": "Выбрать оттенок из 16 градаций серого Ч/Б ридера",
+    "tooltip_palette_color_eink": "Выбрать цвет из палитры цветного E Ink ридера",
+    "tooltip_palette_full": "Выбрать произвольный цвет"
   },
   "preview": {
     "info_bar": "Живое отображение всех элементов стиля книги (автор, название, заголовки, буквица, стихи, сноски, SVG)",

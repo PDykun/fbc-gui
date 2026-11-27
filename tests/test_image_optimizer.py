@@ -223,6 +223,92 @@ class TestImageOptimizer(unittest.TestCase):
             load_app_settings(sp, reloaded)
             self.assertEqual(reloaded["preview_simulate_eink"], "false")
 
+    def test_display_color_palette_and_quantization_across_profiles(self):
+        from core.image_optimizer import (
+            EINK_BW_16_LEVELS,
+            get_display_color_palette,
+            quantize_hex_for_display_profile,
+            simulate_hex_for_display_profile,
+        )
+
+        # 1. Ч/Б E Ink (eink_bw, eink_bw_16_dither, grayscale=True) -> ровно 16 градаций серого, без RGB-диалога
+        for prof_id, gray in (("eink_bw", False), ("eink_bw_16_dither", False), ("none", True)):
+            pal = get_display_color_palette(prof_id, grayscale=gray)
+            self.assertEqual(pal["mode"], "grayscale")
+            self.assertEqual(len(pal["swatches"]), 16)
+            self.assertEqual(tuple(pal["swatches"]), EINK_BW_16_LEVELS)
+            self.assertFalse(pal["allow_custom_dialog"])
+            self.assertTrue(pal["monochrome_note_bg"])
+            q = quantize_hex_for_display_profile("#ff0000", prof_id, grayscale=gray)
+            self.assertIn(q, EINK_BW_16_LEVELS)
+            sim = simulate_hex_for_display_profile("#000000", prof_id, grayscale=gray)
+            self.assertNotEqual(sim, "#000000")  # black_floor > 0
+
+        # 2. Kaleido 3 (4 бита на канал = 4096 цветов)
+        pal_k3 = get_display_color_palette("eink_kaleido3")
+        self.assertEqual(pal_k3["mode"], "color_eink")
+        self.assertTrue(pal_k3["allow_custom_dialog"])
+        self.assertFalse(pal_k3["monochrome_note_bg"])
+        self.assertEqual(pal_k3["color_bits"], 4)
+        for sw in pal_k3["swatches"]:
+            self.assertEqual(sw, quantize_hex_for_display_profile(sw, "eink_kaleido3"))
+        self.assertEqual(quantize_hex_for_display_profile("#12abef", "eink_kaleido3"), "#11aaee")
+
+        # 3. Gallery 3 (5 бит на канал) и Full (none)
+        pal_g3 = get_display_color_palette("eink_gallery3")
+        self.assertEqual(pal_g3["mode"], "color_eink")
+        self.assertEqual(pal_g3["color_bits"], 5)
+        self.assertGreater(len(pal_g3["swatches"]), len(pal_k3["swatches"]))
+
+        pal_full = get_display_color_palette("none", grayscale=False)
+        self.assertEqual(pal_full["mode"], "full")
+        self.assertEqual(pal_full["swatches"], [])
+        self.assertFalse(pal_full["monochrome_note_bg"])
+
+    def test_reader_palette_dialog_and_color_picker_sync_with_note_bg(self):
+        from PyQt6.QtWidgets import QApplication
+        from core.i18n import get_note_bg_options
+        from core.image_optimizer import EINK_BW_16_LEVELS, get_display_color_palette
+        from ui.widgets import ColorPickerWidget, ReaderPaletteDialog
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication([])
+
+        # 1. Диалог Ч/Б E Ink: 16 плиток, слайдер активен, произвольный цвет квантуется в серый
+        bw_pal = get_display_color_palette("eink_bw")
+        dlg_bw = ReaderPaletteDialog("#ff0000", bw_pal)
+        try:
+            self.assertEqual(len(dlg_bw._swatch_buttons), 16)
+            self.assertIsNotNone(dlg_bw._slider)
+            self.assertIn(dlg_bw.selected_hex(), EINK_BW_16_LEVELS)
+            dlg_bw._slider.setValue(0)
+            self.assertEqual(dlg_bw.selected_hex(), "#000000")
+        finally:
+            dlg_bw.close()
+
+        # 2. Диалог Kaleido 3: без слайдера серого, квантует в 4-битную сетку
+        k3_pal = get_display_color_palette("eink_kaleido3")
+        dlg_k3 = ReaderPaletteDialog("#12abef", k3_pal)
+        try:
+            self.assertIsNone(dlg_k3._slider)
+            self.assertEqual(dlg_k3.selected_hex(), "#11aaee")
+        finally:
+            dlg_k3.close()
+
+        # 3. ColorPickerWidget переключает список на Ч/Б, не затирая текущее значение
+        picker = ColorPickerWidget(values=["red", "blue", "black"], default_color="red")
+        picker.set_display_profile("eink_bw", grayscale=False)
+        self.assertEqual(picker.get(), "red")
+        items = [picker.combo.itemText(i) for i in range(picker.combo.count())]
+        self.assertIn("black", items)
+        self.assertIn("dimgray", items)
+        self.assertNotIn("blue", items)
+
+        # 4. get_note_bg_options(monochrome=True) возвращает только монохромные фоны сносок
+        mono_bg_vals = [v for _, v in get_note_bg_options(monochrome=True)]
+        self.assertEqual(mono_bg_vals, ["#f4f4f4", "#ffffff", "transparent"])
+        app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()

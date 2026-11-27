@@ -501,6 +501,164 @@ def get_eink_paper_preview_style(profile_id="none", *, simulate_eink=False, cust
     }
 
 
+EINK_BW_16_LEVELS = tuple(f"#{v:02x}{v:02x}{v:02x}" for v in range(0, 256, 17))
+EINK_BW_QUICK_COLORS = (
+    "black", "#222222", "#333333", "#444444", "dimgray", "#777777", "#888888", "#aaaaaa",
+)
+DEFAULT_COLOR_QUICK_COLORS = (
+    "red", "blue", "purple", "green", "magenta", "fuchsia", "black", "navy", "darkred", "dimgray",
+)
+_EINK_COLOR_RAW_SWATCHES = (
+    # Тёмные и насыщенные книжные оттенки (8 в ряду)
+    "#000000", "#222222", "#444444", "#666666", "#888888", "#aaaaaa", "#cccccc", "#ffffff",
+    "#660000", "#880000", "#aa2222", "#cc3322", "#883300", "#aa5500", "#bb7711", "#886622",
+    "#004400", "#116622", "#227733", "#338844", "#005555", "#117777", "#228888", "#447766",
+    "#002266", "#113388", "#2244aa", "#3366bb", "#221166", "#442288", "#662288", "#883399",
+    "#661144", "#881155", "#aa2266", "#bb4477", "#553322", "#774422", "#885533", "#665544",
+)
+_GALLERY3_EXTRA_SWATCHES = (
+    "#331111", "#992211", "#cc6622", "#336611", "#115566", "#223377", "#552266", "#773355",
+)
+_KALEIDO3_QUICK_COLORS = (
+    "black", "dimgray", "#880000", "#aa2222", "#113388", "#2244aa", "#116622", "#662288", "#774422", "#005555",
+)
+_GALLERY3_QUICK_COLORS = (
+    "black", "dimgray", "darkred", "#aa2222", "navy", "#2244aa", "#116622", "purple", "#774422", "#005555",
+)
+
+
+def _parse_hex_rgb(hex_color):
+    s = str(hex_color or "").strip().lstrip("#")
+    if len(s) == 3:
+        s = "".join(ch * 2 for ch in s)
+    if len(s) != 6:
+        return (0, 0, 0)
+    try:
+        return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+    except ValueError:
+        return (0, 0, 0)
+
+
+def quantize_hex_for_display_profile(hex_color, profile_id="none", *, grayscale=False, custom_profile=None):
+    """Квантует HEX-цвет к ближайшему цвету, поддерживаемому выбранным профилем экрана ридера."""
+    r, g, b = _parse_hex_rgb(hex_color)
+    eff_id = profile_id if (profile_id and profile_id != "none") else ("eink_bw" if grayscale else "none")
+    prof = resolve_image_display_profile(eff_id, custom_profile=custom_profile)
+    mode = "grayscale" if (grayscale or prof.get("mode") == "grayscale") else prof.get("mode", "original")
+    sim = prof.get("simulate") or {}
+
+    if mode == "grayscale":
+        levels = max(2, min(256, int(sim.get("grayscale_levels") or 16)))
+        luma = 0.299 * r + 0.587 * g + 0.114 * b
+        step_idx = int(round(luma * (levels - 1) / 255.0))
+        v = int(round(step_idx * 255.0 / (levels - 1)))
+        return f"#{v:02x}{v:02x}{v:02x}"
+
+    if mode == "color":
+        bits = sim.get("color_bits_per_channel")
+        if bits:
+            levels = (1 << max(1, min(8, int(bits)))) - 1
+            qr = int(round(round(r * levels / 255.0) * 255.0 / levels))
+            qg = int(round(round(g * levels / 255.0) * 255.0 / levels))
+            qb = int(round(round(b * levels / 255.0) * 255.0 / levels))
+            return f"#{qr:02x}{qg:02x}{qb:02x}"
+
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def simulate_hex_for_display_profile(hex_color, profile_id="none", *, grayscale=False, custom_profile=None):
+    """Имитирует физический вид HEX-цвета на экране выбранного ридера (насыщенность + диапазон E Ink)."""
+    q_hex = quantize_hex_for_display_profile(
+        hex_color, profile_id, grayscale=grayscale, custom_profile=custom_profile
+    )
+    r, g, b = _parse_hex_rgb(q_hex)
+    eff_id = profile_id if (profile_id and profile_id != "none") else ("eink_bw" if grayscale else "none")
+    prof = resolve_image_display_profile(eff_id, custom_profile=custom_profile)
+    sim = prof.get("simulate")
+    if not sim:
+        return q_hex
+
+    sat_scale = float(sim.get("saturation_scale", 1.0))
+    if grayscale or prof.get("mode") == "grayscale":
+        sat_scale = 0.0
+    luma = 0.299 * r + 0.587 * g + 0.114 * b
+    r = luma + (r - luma) * sat_scale
+    g = luma + (g - luma) * sat_scale
+    b = luma + (b - luma) * sat_scale
+
+    lo = max(0, min(200, int(sim.get("black_floor", 30))))
+    hi = max(lo + 10, min(255, int(sim.get("white_ceiling", 234))))
+    span = hi - lo
+    sr = int(round(lo + (max(0.0, min(255.0, r)) / 255.0) * span))
+    sg = int(round(lo + (max(0.0, min(255.0, g)) / 255.0) * span))
+    sb = int(round(lo + (max(0.0, min(255.0, b)) / 255.0) * span))
+    return f"#{sr:02x}{sg:02x}{sb:02x}"
+
+
+def get_display_color_palette(profile_id="none", *, grayscale=False, custom_profile=None):
+    """Возвращает адаптивную палитру цветов и метаданные диалога выбора цвета для текущего экрана ридера."""
+    pid = str(profile_id or "none").strip()
+    eff_id = pid if (pid and pid != "none") else ("eink_bw" if grayscale else "none")
+    prof = resolve_image_display_profile(eff_id, custom_profile=custom_profile)
+    mode = "grayscale" if (grayscale or prof.get("mode") == "grayscale") else prof.get("mode", "original")
+    sim = prof.get("simulate") or {}
+
+    if mode == "grayscale":
+        levels = max(2, min(256, int(sim.get("grayscale_levels") or 16)))
+        swatches = tuple(
+            "#" + f"{int(round(i * 255.0 / (levels - 1))):02x}" * 3
+            for i in range(levels)
+        )
+        return {
+            "mode": "grayscale",
+            "profile_id": eff_id,
+            "quick_colors": list(EINK_BW_QUICK_COLORS),
+            "swatches": list(swatches),
+            "paper_bg": sim.get("paper_bg", "#ECEAE2"),
+            "paper_text": sim.get("paper_text", "#242422"),
+            "allow_custom_dialog": False,
+            "monochrome_note_bg": True,
+            "gray_levels": levels,
+            "color_bits": None,
+        }
+
+    if mode == "color":
+        raw_list = _EINK_COLOR_RAW_SWATCHES + (_GALLERY3_EXTRA_SWATCHES if eff_id == "eink_gallery3" else ())
+        swatches = []
+        seen = set()
+        for raw_hex in raw_list:
+            q_hex = quantize_hex_for_display_profile(raw_hex, eff_id, custom_profile=custom_profile)
+            if q_hex not in seen:
+                seen.add(q_hex)
+                swatches.append(q_hex)
+        quick = list(_GALLERY3_QUICK_COLORS if eff_id == "eink_gallery3" else _KALEIDO3_QUICK_COLORS)
+        return {
+            "mode": "color_eink",
+            "profile_id": eff_id,
+            "quick_colors": quick,
+            "swatches": swatches,
+            "paper_bg": sim.get("paper_bg", "#D8D7D2"),
+            "paper_text": sim.get("paper_text", "#2A2A28"),
+            "allow_custom_dialog": True,
+            "monochrome_note_bg": False,
+            "gray_levels": None,
+            "color_bits": sim.get("color_bits_per_channel"),
+        }
+
+    return {
+        "mode": "full",
+        "profile_id": "none",
+        "quick_colors": list(DEFAULT_COLOR_QUICK_COLORS),
+        "swatches": [],
+        "paper_bg": "#FDFBF7",
+        "paper_text": "#1E1E1E",
+        "allow_custom_dialog": True,
+        "monochrome_note_bg": False,
+        "gray_levels": None,
+        "color_bits": None,
+    }
+
+
 def optimize_fb2_binaries_for_profile(
     xml_bytes,
     profile_id="none",
