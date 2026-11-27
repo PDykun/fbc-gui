@@ -92,7 +92,8 @@ class LocaleManager:
         if isinstance(val, str) and kwargs:
             try:
                 return val.format(**kwargs)
-            except Exception:
+            except Exception as e:
+                get_logger("i18n").debug("Ошибка форматирования строки локализации '%s': %s", key_path, e)
                 return val
         return val
 

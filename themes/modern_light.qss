@@ -722,6 +722,9 @@ QTabBar {
     background: transparent;
     border: none;
     qproperty-drawBase: 0;
+}
+
+QTabBar#SegmentedTabBar {
     qproperty-trackColor: #E6EBF2;
     qproperty-trackBorderColor: #CBD5E1;
 }

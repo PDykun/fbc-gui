@@ -4,6 +4,7 @@ import os
 import re
 
 from core.config import atomic_write_text
+from core.fb2.organizer import _WIN_RESERVED_NAMES
 
 PRESET_SCHEMA_VERSION = 1
 PRESET_FILE_EXT = ".fbcpreset.json"
@@ -82,19 +83,12 @@ PRESET_SETTING_KEYS = (
 )
 
 
-_WIN_RESERVED_PRESET_NAMES = frozenset(
-    {"CON", "PRN", "AUX", "NUL"}
-    | {f"COM{i}" for i in range(1, 10)}
-    | {f"LPT{i}" for i in range(1, 10)}
-)
-
-
 def slugify_preset_name(name):
     """Преобразует название пресета в безопасное имя файла для Windows и macOS."""
     raw = str(name or "").strip()
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", raw)
     cleaned = re.sub(r"\s+", "_", cleaned).strip("._ ")[:80]
-    if cleaned.upper() in _WIN_RESERVED_PRESET_NAMES:
+    if cleaned.upper() in _WIN_RESERVED_NAMES:
         cleaned = f"{cleaned}_"
     return cleaned or "preset"
 

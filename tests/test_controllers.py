@@ -381,6 +381,28 @@ class TestControllers(unittest.TestCase):
 
         mock_single.assert_called_once_with(150, host.quit_application)
 
+    def test_segmented_tab_bar_qss_scoping_avoids_bare_qtabbar_properties(self):
+        import os
+        import re
+        from PyQt6.QtWidgets import QApplication
+        from ui.dialogs.common import SegmentedTabBar
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        _app = QApplication.instance() or QApplication([])
+        bar = SegmentedTabBar()
+        self.assertEqual(bar.objectName(), "SegmentedTabBar")
+
+        themes_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "themes")
+        for fname in sorted(os.listdir(themes_dir)):
+            if not fname.endswith(".qss"):
+                continue
+            qss = open(os.path.join(themes_dir, fname), encoding="utf-8").read()
+            bare_blocks = re.findall(r"(?m)^QTabBar\s*\{([^}]*)\}", qss)
+            for blk in bare_blocks:
+                self.assertNotIn("qproperty-trackColor", blk, f"{fname} leaks trackColor onto bare QTabBar")
+                self.assertNotIn("qproperty-trackBorderColor", blk, f"{fname} leaks trackBorderColor onto bare QTabBar")
+            self.assertIn("QTabBar#SegmentedTabBar", qss, f"{fname} missing QTabBar#SegmentedTabBar block")
+
 
 if __name__ == "__main__":
     unittest.main()

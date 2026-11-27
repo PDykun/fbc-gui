@@ -285,6 +285,7 @@ class SegmentedTabBar(QTabBar):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("SegmentedTabBar")
         self._track_color = QColor("#E6EBF2")
         self._track_border_color = QColor("#CBD5E1")
         self.setDrawBase(False)
