@@ -75,13 +75,15 @@ class FbcSetupDialog(QDialog):
         self.cancel_requested.emit()
 
     def set_status_text(self, text, indeterminate=False):
+        if self._allow_close:
+            return
         if not self._cancelling and text:
             self.lbl_status.setText(text)
         if indeterminate and self.pb_download.maximum() != 0:
             self.pb_download.setRange(0, 0)
 
     def update_download_progress(self, downloaded, total, asset_name):
-        if self._cancelling:
+        if self._allow_close or self._cancelling:
             return
         if total and total > 0:
             pct = int(min(100, max(0, (downloaded * 100) // total)))
@@ -100,6 +102,8 @@ class FbcSetupDialog(QDialog):
                 self.lbl_status.setText(tr("fbc_setup.downloading_generic", name=asset_name))
 
     def finish_and_close(self):
+        if self._allow_close:
+            return
         self._allow_close = True
         self.accept()
 
@@ -188,13 +192,15 @@ class UpdateDownloadDialog(QDialog):
         self.cancel_requested.emit()
 
     def set_status_text(self, text, indeterminate=False):
+        if self._allow_close:
+            return
         if not self._cancelling and text:
             self.lbl_status.setText(text)
         if indeterminate:
             self.pb_download.setRange(0, 0)
 
     def update_download_progress(self, downloaded, total, asset_name):
-        if self._cancelling:
+        if self._allow_close or self._cancelling:
             return
         if total and total > 0:
             pct = int(min(100, max(0, (downloaded * 100) // total)))
@@ -213,6 +219,8 @@ class UpdateDownloadDialog(QDialog):
                 self.lbl_status.setText(tr("about.update_dl_downloading", name=asset_name))
 
     def finish_and_close(self):
+        if self._allow_close:
+            return
         self._allow_close = True
         self.accept()
 

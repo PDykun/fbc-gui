@@ -128,6 +128,8 @@ class ConversionProgressDialog(QDialog):
         self.cancel_requested.emit()
 
     def update_conversion(self, value, status_text):
+        if self._allow_close:
+            return
         if self.pb_convert is not None:
             self.pb_convert.setValue(value)
         if self.lbl_convert is not None and not self._cancelling:
@@ -135,6 +137,8 @@ class ConversionProgressDialog(QDialog):
             _grow_dialog_to_fit(self)
 
     def update_email(self, value, status_text):
+        if self._allow_close:
+            return
         if self.pb_email is not None and self.lbl_email is not None:
             if value < 0:
                 self.pb_email.setRange(0, 0)
@@ -150,6 +154,8 @@ class ConversionProgressDialog(QDialog):
         self.update_email(value, status_text)
 
     def finish_and_close(self):
+        if self._allow_close:
+            return
         self._allow_close = True
         self.accept()
 
@@ -235,6 +241,8 @@ class ImportProgressDialog(QDialog):
         self.cancel_requested.emit()
 
     def update_progress(self, current, total, filename):
+        if self._allow_close:
+            return
         if total > 0:
             if self.pb_import.maximum() != total:
                 self.pb_import.setRange(0, total)
@@ -246,6 +254,8 @@ class ImportProgressDialog(QDialog):
             _grow_dialog_to_fit(self)
 
     def finish_and_close(self):
+        if self._allow_close:
+            return
         self._allow_close = True
         self.accept()
 

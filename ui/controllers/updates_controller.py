@@ -54,19 +54,29 @@ class UpdatesController:
         worker.finished_check.connect(self._on_fbc_check_finished)
         worker.finished.connect(worker.deleteLater)
         if self._fbc_setup_dlg is not None:
-            self._fbc_setup_dlg.cancel_requested.connect(worker.cancel)
+            self._fbc_setup_dlg.cancel_requested.connect(self._cancel_fbc_worker)
         worker.start()
+
+    def _cancel_fbc_worker(self):
+        worker = getattr(self, "_fbc_worker", None)
+        if worker is not None:
+            try:
+                worker.cancel()
+            except RuntimeError:
+                pass
 
     def _open_fbc_setup_dialog(self, status_text):
         if self._fbc_setup_dlg is None:
             self._fbc_setup_dlg = FbcSetupDialog(self, initial_status=status_text)
             if self._fbc_worker is not None:
-                self._fbc_setup_dlg.cancel_requested.connect(self._fbc_worker.cancel)
+                self._fbc_setup_dlg.cancel_requested.connect(self._cancel_fbc_worker)
             self._fbc_setup_dlg.open()
         else:
             self._fbc_setup_dlg.set_status_text(status_text)
 
     def _on_fbc_status_changed(self, status_code):
+        if getattr(self, "_closing", False) or self._fbc_worker is None:
+            return
         if status_code == "searching":
             if self._fbc_setup_dlg is not None:
                 self._fbc_setup_dlg.set_status_text(tr("fbc_setup.searching"))
@@ -83,6 +93,8 @@ class UpdatesController:
             self._open_fbc_setup_dialog(tr(reason_key, ver=FBC_TARGET_VERSION))
 
     def _on_fbc_progress_changed(self, downloaded, total, asset_name):
+        if getattr(self, "_closing", False) or self._fbc_worker is None:
+            return
         if self._fbc_setup_dlg is None:
             self._open_fbc_setup_dialog(tr("fbc_setup.downloading_generic", name=asset_name))
         self._fbc_setup_dlg.update_download_progress(downloaded, total, asset_name)
@@ -96,6 +108,7 @@ class UpdatesController:
         if dlg is not None:
             try:
                 dlg.finish_and_close()
+                dlg.deleteLater()
             except RuntimeError:
                 pass
 
@@ -257,7 +270,7 @@ class UpdatesController:
             parent=self,
         )
         self._update_dl_worker = worker
-        self._update_dl_dlg.cancel_requested.connect(worker.cancel)
+        self._update_dl_dlg.cancel_requested.connect(self._cancel_update_dl_worker)
         worker.status_changed.connect(self._on_update_dl_status)
         worker.progress_changed.connect(self._on_update_dl_progress)
         worker.finished_download.connect(self._on_update_dl_finished)
@@ -265,7 +278,17 @@ class UpdatesController:
         self._update_dl_dlg.open()
         worker.start()
 
+    def _cancel_update_dl_worker(self):
+        worker = getattr(self, "_update_dl_worker", None)
+        if worker is not None:
+            try:
+                worker.cancel()
+            except RuntimeError:
+                pass
+
     def _on_update_dl_status(self, status_code):
+        if getattr(self, "_closing", False) or self._update_dl_worker is None:
+            return
         dlg = getattr(self, "_update_dl_dlg", None)
         if dlg is None:
             return
@@ -275,6 +298,8 @@ class UpdatesController:
             dlg.set_status_text(tr("about.update_dl_installing"), indeterminate=True)
 
     def _on_update_dl_progress(self, downloaded, total, asset_name):
+        if getattr(self, "_closing", False) or self._update_dl_worker is None:
+            return
         dlg = getattr(self, "_update_dl_dlg", None)
         if dlg is not None:
             dlg.update_download_progress(downloaded, total, asset_name)
@@ -288,6 +313,7 @@ class UpdatesController:
         if dlg is not None:
             try:
                 dlg.finish_and_close()
+                dlg.deleteLater()
             except RuntimeError:
                 pass
 

@@ -1296,7 +1296,7 @@ class QueueController:
         worker = FileImportWorker(list(filepaths), existing_keys, parent=self)
         self._import_worker = worker
         worker.progress.connect(self._import_progress_dlg.update_progress)
-        self._import_progress_dlg.cancel_requested.connect(worker.requestInterruption)
+        self._import_progress_dlg.cancel_requested.connect(self._cancel_import_worker)
         worker.finished_import.connect(self._on_import_finished)
         worker.finished.connect(worker.deleteLater)
 
@@ -1306,6 +1306,14 @@ class QueueController:
         self._import_dlg_timer.start(180)
 
         worker.start()
+
+    def _cancel_import_worker(self):
+        worker = getattr(self, "_import_worker", None)
+        if worker is not None:
+            try:
+                worker.requestInterruption()
+            except RuntimeError:
+                pass
 
     def _show_import_progress_dialog(self):
         worker = getattr(self, "_import_worker", None)
@@ -1323,8 +1331,12 @@ class QueueController:
 
         dlg = getattr(self, "_import_progress_dlg", None)
         if dlg is not None:
-            dlg.finish_and_close()
             self._import_progress_dlg = None
+            try:
+                dlg.finish_and_close()
+                dlg.deleteLater()
+            except RuntimeError:
+                pass
 
         first_new_row = None
         if imported_items:

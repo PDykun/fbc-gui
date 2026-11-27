@@ -129,6 +129,7 @@ class CoverStudioDialog(QDialog):
             if parent.styleSheet():
                 self.setStyleSheet(parent.styleSheet())
 
+        self._closing = False
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.setInterval(120)
@@ -526,7 +527,22 @@ class CoverStudioDialog(QDialog):
         self._schedule_preview()
 
     def _schedule_preview(self, *_args) -> None:
+        if self._closing:
+            return
         self._debounce_timer.start()
+
+    def _stop_preview_timer(self) -> None:
+        self._closing = True
+        if self._debounce_timer.isActive():
+            self._debounce_timer.stop()
+
+    def done(self, result: int) -> None:
+        self._stop_preview_timer()
+        super().done(result)
+
+    def closeEvent(self, event) -> None:
+        self._stop_preview_timer()
+        super().closeEvent(event)
 
     def get_spec(self) -> CoverSpec:
         """Возвращает текущую конфигурацию CoverSpec из виджетов диалога."""
@@ -566,6 +582,8 @@ class CoverStudioDialog(QDialog):
         return self._rendered_bytes, mime
 
     def _update_preview_now(self) -> None:
+        if self._closing:
+            return
         spec = self.get_spec()
         self._rendered_bytes = render_cover_bytes(
             self._meta, spec, fonts_dir=self._fonts_dir, simulate_eink_preview=False

@@ -641,6 +641,94 @@ class TestControllers(unittest.TestCase):
                     dlg.close()
                     app.processEvents()
 
+    def test_modal_dialogs_cancel_and_late_signals_are_crash_safe(self):
+        import os
+        from PyQt6.QtWidgets import QApplication
+        from ui.dialogs import (
+            ConversionProgressDialog,
+            CoverStudioDialog,
+            FbcSetupDialog,
+            ImportProgressDialog,
+            UpdateDownloadDialog,
+        )
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication([])
+
+        # 1. CoverStudioDialog: отмена останавливает отложенный таймер перерисовки
+        cs_dlg = CoverStudioDialog(None, book_data={"meta": {"title": "Дюна", "last": "Герберт"}})
+        cs_dlg._schedule_preview()
+        self.assertTrue(cs_dlg._debounce_timer.isActive())
+        cs_dlg.reject()
+        self.assertTrue(cs_dlg._closing)
+        self.assertFalse(cs_dlg._debounce_timer.isActive())
+        cs_dlg.deleteLater()
+        app.processEvents()
+
+        # 2. Progress/Setup/Update диалоги: повторная отмена и запоздалые update_* после finish_and_close безопасны
+        for dlg in (
+            ConversionProgressDialog(None, 3, show_email=True),
+            ImportProgressDialog(None),
+            FbcSetupDialog(None),
+            UpdateDownloadDialog(None, version_str="2.12"),
+        ):
+            hits = []
+            dlg.cancel_requested.connect(lambda h=hits: h.append(1))
+            dlg.reject()
+            dlg.reject()  # повторный клик/Esc не должен дублировать сигнал
+            self.assertEqual(len(hits), 1)
+            self.assertFalse(dlg.btn_cancel.isEnabled())
+            dlg.finish_and_close()
+            dlg.finish_and_close()  # идемпотентность
+            if hasattr(dlg, "update_conversion"):
+                dlg.update_conversion(1, "late")
+                dlg.update_email(50, "late")
+            if hasattr(dlg, "update_progress"):
+                dlg.update_progress(1, 2, "late.fb2")
+            if hasattr(dlg, "update_download_progress"):
+                dlg.update_download_progress(10, 100, "asset")
+                dlg.set_status_text("late")
+            dlg.deleteLater()
+            app.processEvents()
+
+        # 3. UpdatesController: запоздалые сигналы FbcEnsureWorker после завершения не переоткрывают зомби-диалог
+        class _FakeUpdateHost(UpdatesController):
+            def __init__(self):
+                self._closing = False
+                self._fbc_worker = None
+                self._fbc_setup_dlg = None
+                self._update_dl_worker = None
+                self._update_dl_dlg = None
+
+        u_host = _FakeUpdateHost()
+        u_host._on_fbc_status_changed("downloading:not_found")
+        u_host._on_fbc_progress_changed(10, 100, "fbc.zip")
+        self.assertIsNone(u_host._fbc_setup_dlg)
+        u_host._cancel_fbc_worker()
+        u_host._cancel_update_dl_worker()
+
+        # 4. QueueController / SettingsController: безопасная отмена при удалённом C++ воркере
+        class _DeletedWorker:
+            def requestInterruption(self):
+                raise RuntimeError("wrapped C/C++ object deleted")
+
+            def cancel(self):
+                raise RuntimeError("wrapped C/C++ object deleted")
+
+        class _FakeQueueHost(QueueController):
+            def __init__(self):
+                self._import_worker = _DeletedWorker()
+
+        class _FakeSyncHost(SettingsController):
+            def __init__(self):
+                self._device_sync_worker = _DeletedWorker()
+                self._device_sync_cancelled = False
+
+        _FakeQueueHost()._cancel_import_worker()
+        sync_host = _FakeSyncHost()
+        sync_host._on_device_sync_cancel_requested()
+        self.assertTrue(sync_host._device_sync_cancelled)
+
 
 if __name__ == "__main__":
     unittest.main()

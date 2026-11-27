@@ -267,19 +267,20 @@ class ConversionController:
             progress_dlg.finish_and_close()
 
         def _on_finished(success_count, converted_files, convert_errors, email_error, cancelled, failed_items):
+            effective_cancelled = bool(cancelled or progress_dlg._cancelling)
             result_box.update({
                 "success_count": success_count,
                 "converted_files": converted_files,
                 "convert_errors": convert_errors,
                 "email_error": email_error,
-                "cancelled": cancelled,
+                "cancelled": effective_cancelled,
                 "failed_items": failed_items,
             })
             if getattr(self, "_closing", False):
                 progress_dlg.finish_and_close()
                 return
             skipped_cnt = int(getattr(convert_worker, "skipped_count", 0) or 0)
-            if params["sync_enabled"] and not cancelled and (
+            if params["sync_enabled"] and not effective_cancelled and (
                 converted_files or skipped_cnt > 0 or device_sync_params.get("existing_files")
             ):
                 current_sync_worker[0] = self._start_device_sync_after_conversion(
@@ -304,6 +305,11 @@ class ConversionController:
             self._convert_progress_dlg = None
             if getattr(self, "_convert_worker", None) is convert_worker:
                 self._convert_worker = None
+            for sig in (convert_worker.convert_progress, convert_worker.email_progress, convert_worker.finished_all):
+                try:
+                    sig.disconnect()
+                except (TypeError, RuntimeError):
+                    pass
             try:
                 if not convert_worker.isRunning():
                     convert_worker.deleteLater()
@@ -313,11 +319,20 @@ class ConversionController:
                 sw = current_sync_worker[0]
                 if getattr(self, "_device_sync_worker", None) is sw:
                     self._device_sync_worker = None
+                for sig in (sw.sync_progress, sw.finished_sync):
+                    try:
+                        sig.disconnect()
+                    except (TypeError, RuntimeError):
+                        pass
                 try:
                     if not sw.isRunning():
                         sw.deleteLater()
                 except RuntimeError:
                     pass
+            try:
+                progress_dlg.deleteLater()
+            except RuntimeError:
+                pass
 
         if getattr(self, "_closing", False):
             return None

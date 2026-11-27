@@ -509,7 +509,10 @@ class SettingsController:
         self._device_sync_cancelled = True
         worker = getattr(self, "_device_sync_worker", None)
         if worker is not None:
-            worker.cancel()
+            try:
+                worker.cancel()
+            except RuntimeError:
+                pass
 
     def _sync_mode_display_name(self, mode):
         m = str(mode or "mtp").strip().lower()
@@ -724,6 +727,7 @@ class SettingsController:
         if dlg is not None:
             try:
                 dlg.finish_and_close()
+                dlg.deleteLater()
             except RuntimeError:
                 pass
         self._set_sync_buttons_enabled(True)
