@@ -349,7 +349,7 @@
     "palette_desc_color_eink": "Colors are mapped to the e-reader display gamut. Preview shows how text looks on E Ink paper.",
     "palette_lbl_shade": "Shade:",
     "palette_lbl_hex": "Color code:",
-    "palette_preview_sample": "Sample Book Heading • AaBb 123",
+    "palette_preview_sample": "Sample text AaBbCc АаБбВв 123",
     "palette_contrast_ok": "Contrast on E Ink paper: good ({ratio}:1)",
     "palette_contrast_low": "Low contrast on E Ink paper ({ratio}:1) — text may be hard to read",
     "btn_custom_color": "Custom Color...",

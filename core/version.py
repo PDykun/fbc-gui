@@ -2,7 +2,7 @@
 
 __app_name__ = "FBC GUI"
 __version__ = "2.12.1"
-__build__ = 141
+__build__ = 142
 __author__ = "Paul Dykoun"
 __email__ = "me@pashka.eu"
 __url__ = "www.pashka.eu/fbc_gui"

@@ -1,4 +1,4 @@
-# FBC GUI v2.12.1 (build 141)
+# FBC GUI v2.12.1 (build 142)
 
 ## Русская версия
 
@@ -15,6 +15,7 @@
 - **Обновлённый предпросмотр книги и образца стилей**: базовый размер шрифта применяется в встроенном превью и при открытии в браузере; в режиме реальной книги пересчитывается объём текста на страницах разворота при увеличении или уменьшении кегля, а в сводной таблице образца отображается текущий базовый размер.
 
 *_Исправления ошибок и техническое обслуживание_*
+- *Уточнён универсальный текст примера в диалоге палитры ридера (`Пример текста АаБбВв AaBbCc 123` / `Sample text AaBbCc АаБбВв 123`) для корректного соответствия всем цветовым настройкам стилей.*
 - *Добавлена санитизация и обратный парсинг `body { font-size }` (включая сохранение пользовательских значений из вручную отредактированного CSS), обновлены локализации RU/EN и встроенные пресеты устройств (`presets_defaults/*.fbcpreset.json`).*
 - *При переключении профиля ридера уже заданные пользователем цвета не затираются — обновляется только доступная палитра для нового выбора.*
 - *Расширено покрытие юнит-тестами (`tests/test_css_preview.py`, `tests/test_image_optimizer.py`) до 257 тестов.*
@@ -36,6 +37,7 @@
 - **Synchronized Book & Style Sample Preview**: applies the selected base font size to both rich WebView/browser and fallback previews, dynamically reflows page 2 / spread 3–4 text volume in Book mode when changing font size, and displays the active base size in the Style Sample summary table.
 
 *_Bug Fixes & Maintenance_*
+- *Updated the e-reader palette dialog preview text to a neutral sample (`Sample text AaBbCc АаБбВв 123` / `Пример текста АаБбВв AaBbCc 123`) applicable to all style color settings.*
 - *Added CSS sanitization and round-trip parsing for `body { font-size }` (preserving custom values from hand-edited stylesheets), updated RU/EN localizations, and synced built-in device presets (`presets_defaults/*.fbcpreset.json`).*
 - *Switching reader display profiles preserves existing user-chosen colors while updating the available palette for new selections.*
 - *Expanded the unit test suite (`tests/test_css_preview.py`, `tests/test_image_optimizer.py`) to 257 tests.*

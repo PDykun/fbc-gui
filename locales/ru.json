@@ -349,7 +349,7 @@
     "palette_desc_color_eink": "Цвета привязаны к палитре экрана ридера. Превью показывает вид текста на бумаге E Ink.",
     "palette_lbl_shade": "Оттенок:",
     "palette_lbl_hex": "Код цвета:",
-    "palette_preview_sample": "Пример заголовка книги • AaBb 123",
+    "palette_preview_sample": "Пример текста АаБбВв AaBbCc 123",
     "palette_contrast_ok": "Контраст на бумаге E Ink: хороший ({ratio}:1)",
     "palette_contrast_low": "Низкий контраст на бумаге E Ink ({ratio}:1) — текст может быть плохо читаем",
     "btn_custom_color": "Произвольный цвет...",
