@@ -8,6 +8,8 @@ from PyQt6.QtWidgets import QFileDialog, QInputDialog
 from core.config import (
     DEFAULT_OUTPUT_FORMAT,
     DEVICE_PROFILES,
+    get_default_library_output_dir,
+    is_library_book_item,
     load_app_settings as load_settings_file,
     save_app_settings as save_settings_file,
     sync_settings_from_fbc_config as sync_fbc_config,
@@ -341,6 +343,20 @@ class SettingsController:
             self.lbl_custom_dir.setText(folder)
             self.save_app_settings()
 
+    def choose_library_output_dir(self):
+        cur = str(self.app_settings.get("library_output_dir") or "").strip()
+        start_dir = cur if (cur and os.path.isdir(cur)) else get_default_library_output_dir()
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            tr("library.dlg_choose_output_dir"),
+            start_dir,
+        )
+        if folder:
+            self.app_settings["library_output_dir"] = folder
+            if hasattr(self, "lbl_library_output_dir"):
+                self.lbl_library_output_dir.setText(folder)
+            self.save_app_settings()
+
     def is_email_auto_send_ready(self):
         return check_email_auto_ready(self.app_settings)
 
@@ -418,6 +434,10 @@ class SettingsController:
 
     def on_device_sync_ignore_removals_changed(self, val):
         self.app_settings["device_sync_ignore_removals"] = "true" if str(val).lower() == "true" else "false"
+        self.save_app_settings()
+
+    def on_device_sync_delete_after_changed(self, val):
+        self.app_settings["device_sync_delete_after_send"] = "true" if str(val).lower() == "true" else "false"
         self.save_app_settings()
 
     def on_metadata_provider_toggled(self, provider_id, checked):
@@ -528,15 +548,23 @@ class SettingsController:
             return tr("settings.opt_sync_folder")
         return tr("settings.opt_sync_mtp")
 
+    def _is_delete_after_send_enabled(self):
+        return str(self.app_settings.get("device_sync_delete_after_send", "false")).lower() == "true"
+
     def _collect_unconverted_queue_items(self, target_format):
         """Возвращает книги из очереди, для которых ещё нет актуального сконвертированного файла."""
         pending = []
+        delete_after = self._is_delete_after_send_enabled()
         save_mode = self.app_settings.get("save_mode", "source")
         custom_dir = (self.app_settings.get("custom_output_dir") or "").strip()
         fn_mode = self.app_settings.get("filename_mode", "default")
         fn_tokens = self.app_settings.get("filename_tokens")
         for item_id, data in self.files_data.items():
             if not isinstance(data, dict) or not data.get("path"):
+                continue
+            if delete_after or is_library_book_item(data, self.app_settings):
+                data["item_id"] = item_id
+                pending.append(data)
                 continue
             target_name = simulate_fbc_target(data.get("meta") or {}, target_format, fn_mode, fn_tokens)
             if save_mode == "custom" and custom_dir and os.path.isdir(custom_dir):
@@ -549,7 +577,9 @@ class SettingsController:
         return pending
 
     def _collect_existing_queue_output_files(self, target_format):
-        """Возвращает пути уже существующих сконвертированных файлов для книг из очереди."""
+        """Возвращает пути уже существующих сконвертированных файлов для книг с диска из очереди."""
+        if self._is_delete_after_send_enabled():
+            return []
         found = []
         seen = set()
         save_mode = self.app_settings.get("save_mode", "source")
@@ -558,6 +588,8 @@ class SettingsController:
         fn_tokens = self.app_settings.get("filename_tokens")
         for data in self.files_data.values():
             if not isinstance(data, dict) or not data.get("path"):
+                continue
+            if is_library_book_item(data, self.app_settings):
                 continue
             target_name = simulate_fbc_target(data.get("meta") or {}, target_format, fn_mode, fn_tokens)
             if save_mode == "custom" and custom_dir and os.path.isdir(custom_dir):
@@ -571,7 +603,7 @@ class SettingsController:
                 found.append(cand)
         return found
 
-    def send_to_reader_clicked(self, target_items=None):
+    def send_to_reader_clicked(self, checked=False, *, target_items=None):
         """Умная отправка на ридер: проверка формата под устройство → конвертация при необходимости → отправка."""
         if getattr(self, "_device_sync_worker", None) is not None and self._device_sync_worker.isRunning():
             return
@@ -618,6 +650,7 @@ class SettingsController:
                 return
 
         ignore_del = str(self.app_settings.get("device_sync_ignore_removals", "true")).lower() == "true"
+        delete_after = self._is_delete_after_send_enabled()
 
         if target_items is not None:
             items = [d for d in target_items if isinstance(d, dict) and d.get("path")]
@@ -631,6 +664,9 @@ class SettingsController:
             existing_files = []
             seen = set()
             for data in items:
+                if delete_after or is_library_book_item(data, self.app_settings):
+                    pending_items.append(data)
+                    continue
                 target_name = simulate_fbc_target(data.get("meta") or {}, cur_fmt, fn_mode, fn_tokens)
                 if save_mode == "custom" and custom_dir and os.path.isdir(custom_dir):
                     dest_dir = custom_dir
@@ -658,6 +694,7 @@ class SettingsController:
                         "mode": mode,
                         "target_dir": target_dir,
                         "ignore_device_removals": ignore_del,
+                        "delete_after_send": delete_after,
                         "dry_run": False,
                         "existing_files": existing_files,
                         "source_dir": src_dir,
@@ -682,6 +719,7 @@ class SettingsController:
                         "mode": mode,
                         "target_dir": target_dir,
                         "ignore_device_removals": ignore_del,
+                        "delete_after_send": delete_after,
                         "dry_run": False,
                         "existing_files": existing_files,
                         "source_dir": self._resolve_device_sync_source_dir(),

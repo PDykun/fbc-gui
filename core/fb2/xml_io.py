@@ -298,21 +298,37 @@ class _DisallowedXmlDeclarationError(ValueError):
     pass
 
 
+class _XmlPrologEnded(Exception):
+    pass
+
+
 def _has_disallowed_xml_declarations(raw_bytes):
-    """Проверяет наличие запрещённых DOCTYPE/ENTITY (включая UTF-16/UTF-32 и смещения >64 КБ)."""
+    """Проверяет наличие запрещённых DOCTYPE/ENTITY в прологе (включая UTF-16/UTF-32 и смещения >64 КБ)."""
     if not raw_bytes:
         return False
     raw = raw_bytes if isinstance(raw_bytes, (bytes, bytearray)) else str(raw_bytes).encode('utf-8', errors='ignore')
     head = raw[:65536].lower()
     if b'<!doctype' in head or b'<!entity' in head:
         return True
+
     def _reject(*_args):
         raise _DisallowedXmlDeclarationError("DOCTYPE/ENTITY")
+
+    def _stop_after_prolog(*_args):
+        raise _XmlPrologEnded()
+
     parser = _xml_expat.ParserCreate()
     parser.StartDoctypeDeclHandler = _reject
     parser.EntityDeclHandler = _reject
+    parser.StartElementHandler = _stop_after_prolog
+    chunk_size = 65536
+    total_len = len(raw)
     try:
-        parser.Parse(raw, True)
+        for offset in range(0, total_len, chunk_size):
+            end = offset + chunk_size
+            parser.Parse(raw[offset:end], end >= total_len)
+    except _XmlPrologEnded:
+        return False
     except _DisallowedXmlDeclarationError:
         return True
     except _xml_expat.ExpatError:
@@ -325,13 +341,13 @@ def _has_disallowed_xml_declarations(raw_bytes):
     return False
 
 
-def _parse_fb2_root(xml_bytes):
-    """Пытается распарсить FB2: сначала напрямую, затем после санитизации и через lxml (если доступен)."""
+def _parse_fb2_root_with_validity(xml_bytes):
+    """Парсит FB2 и возвращает (root, strict_valid) за один проход (избегая двойного разбора)."""
     if _has_disallowed_xml_declarations(xml_bytes):
         logger.warning("Отклонён FB2 с объявлением DOCTYPE/ENTITY")
-        return None
+        return None, False
     try:
-        return ET.fromstring(xml_bytes)
+        return ET.fromstring(xml_bytes), True
     except Exception as e:
         logger.debug("Прямой XML-парсинг FB2 не удался, пробуем санитизацию: %s", e)
 
@@ -339,7 +355,7 @@ def _parse_fb2_root(xml_bytes):
     try:
         clean_text = _sanitize_fb2_xml_text(_decode_fb2_text(xml_bytes))
         clean_bytes = clean_text.encode('utf-8')
-        return ET.fromstring(clean_bytes)
+        return ET.fromstring(clean_bytes), False
     except Exception as e:
         logger.debug("XML-парсинг FB2 после санитизации не удался: %s", e)
 
@@ -355,11 +371,17 @@ def _parse_fb2_root(xml_bytes):
             )
             l_root = lxml_et.fromstring(clean_bytes or xml_bytes, parser=parser)
             if l_root is not None:
-                return ET.fromstring(lxml_et.tostring(l_root, encoding='utf-8'))
+                return ET.fromstring(lxml_et.tostring(l_root, encoding='utf-8')), False
         except Exception as e:
             logger.debug("Восстанавливающий парсинг FB2 через lxml не удался: %s", e)
 
-    return None
+    return None, False
+
+
+def _parse_fb2_root(xml_bytes):
+    """Пытается распарсить FB2: сначала напрямую, затем после санитизации и через lxml (если доступен)."""
+    root, _ = _parse_fb2_root_with_validity(xml_bytes)
+    return root
 
 
 def _get_root_ns_uri(root):
@@ -423,9 +445,10 @@ def _extract_cover_fallback(xml_bytes):
     return first_img if first_img else (None, None)
 
 
-def extract_cover_from_fb2(xml_bytes):
+def extract_cover_from_fb2(xml_bytes, root=None):
     try:
-        root = _parse_fb2_root(xml_bytes)
+        if root is None:
+            root = _parse_fb2_root(xml_bytes)
         if root is None:
             return _extract_cover_fallback(xml_bytes)
         ti, ns_uri = _find_title_info(root)

@@ -1,8 +1,10 @@
 import os
+import shutil
+import tempfile
 
 from PyQt6.QtCore import Qt, QTimer
 
-from core.config import DEFAULT_OUTPUT_FORMAT
+from core.config import DEFAULT_OUTPUT_FORMAT, is_library_book_item
 from core.fb2_processor import copy_meta_dict
 from core.i18n import tr
 from core.logger import get_logger
@@ -98,11 +100,24 @@ class ConversionController:
         sync_worker.start()
         return sync_worker
 
-    def _resolve_conversion_output_dir(self, save_mode, custom_dir, converted_files, items, debug):
-        if converted_files:
+    def _resolve_conversion_output_dir(self, save_mode, custom_dir, converted_files, items, debug, exclude_dir=""):
+        excl_real = os.path.realpath(exclude_dir) if exclude_dir else ""
+        visible_files = []
+        for fp in (converted_files or []):
+            if excl_real:
+                try:
+                    if os.path.commonpath([excl_real, os.path.realpath(fp)]) == excl_real:
+                        continue
+                except (ValueError, OSError):
+                    pass
+            visible_files.append(fp)
+        if visible_files:
+            first_dir = os.path.dirname(visible_files[0])
+            if first_dir and os.path.isdir(first_dir):
+                return first_dir
             if save_mode == "custom" and custom_dir and os.path.isdir(custom_dir):
                 return custom_dir
-            return os.path.dirname(converted_files[0])
+            return first_dir
         if debug and items:
             if save_mode == "custom" and custom_dir and os.path.isdir(custom_dir):
                 return custom_dir
@@ -110,7 +125,7 @@ class ConversionController:
         return None
 
     def _show_conversion_outcome(
-        self, params, items, debug, show_summary_on_success, result_box, sync_box, skipped_count
+        self, params, items, debug, show_summary_on_success, result_box, sync_box, skipped_count, exclude_dir=""
     ):
         success_count = result_box.get("success_count", 0)
         converted_files = result_box.get("converted_files", [])
@@ -119,7 +134,7 @@ class ConversionController:
         cancelled = result_box.get("cancelled", False)
         failed_items = result_box.get("failed_items", [])
         output_dir = self._resolve_conversion_output_dir(
-            params["save_mode"], params["custom_dir"], converted_files, items, debug
+            params["save_mode"], params["custom_dir"], converted_files, items, debug, exclude_dir=exclude_dir
         )
         err_count = len(convert_errors)
         fmt_upper = params["selected_format"].upper()
@@ -226,6 +241,13 @@ class ConversionController:
             if it.get("item_id"):
                 self._set_item_status(it["item_id"], "", "")
 
+        delete_after_send = bool((device_sync_params or {}).get("delete_after_send", False))
+        lib_temp_dir = ""
+        if params["sync_enabled"] and (
+            delete_after_send or any(is_library_book_item(it, self.app_settings) for it in items)
+        ):
+            lib_temp_dir = tempfile.mkdtemp(prefix="fbc_lib_sync_")
+
         worker_items = [{**it, "meta": copy_meta_dict(it.get("meta") or {})} for it in items]
         convert_worker = ConversionWorker(
             items=worker_items,
@@ -244,6 +266,8 @@ class ConversionController:
             base_dir=self.base_dir,
             app_name=self.app_name,
             app_version=self.app_version,
+            library_temp_dir=lib_temp_dir,
+            temp_for_all=delete_after_send,
             parent=self,
         )
         self._convert_worker = convert_worker
@@ -333,12 +357,14 @@ class ConversionController:
                 progress_dlg.deleteLater()
             except RuntimeError:
                 pass
+            if lib_temp_dir and os.path.isdir(lib_temp_dir):
+                shutil.rmtree(lib_temp_dir, ignore_errors=True)
 
         if getattr(self, "_closing", False):
             return None
 
         want_retry, output_dir = self._show_conversion_outcome(
-            params, items, debug, show_summary_on_success, result_box, sync_box, skipped_count
+            params, items, debug, show_summary_on_success, result_box, sync_box, skipped_count, exclude_dir=lib_temp_dir
         )
         failed_items = result_box.get("failed_items", [])
         if want_retry and failed_items:

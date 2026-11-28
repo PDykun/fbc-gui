@@ -101,15 +101,24 @@ class FileImportWorker(QThread):
         self.explicit_entries = list(explicit_entries or [])
         self.existing_keys = set(existing_keys or ())
 
-    def _build_book_entry(self, path, archive_entry, source_key, display_name, xml_bytes):
-        meta = parse_metadata(xml_bytes)
-        cover_bytes, cover_mime = extract_cover_from_fb2(xml_bytes)
-        warnings = quick_check_fb2(xml_bytes, meta=meta, cover_bytes=cover_bytes)
+    def _build_book_entry(self, path, archive_entry, source_key, display_name, xml_bytes, from_library=False):
+        from core.fb2.xml_io import _parse_fb2_root_with_validity
+
+        root, xml_valid_strict = _parse_fb2_root_with_validity(xml_bytes)
+        meta = parse_metadata(xml_bytes, root=root)
+        cover_bytes, cover_mime = extract_cover_from_fb2(xml_bytes, root=root)
+        warnings = quick_check_fb2(
+            xml_bytes,
+            meta=meta,
+            cover_bytes=cover_bytes,
+            xml_valid_strict=xml_valid_strict,
+        )
         return {
             'path': path,
             'archive_entry': archive_entry,
             'source_key': source_key,
             'display_name': display_name,
+            'from_library': bool(from_library),
             'meta': meta,
             'orig_meta': copy_meta_dict(meta),
             'orig_cover_bytes': cover_bytes,
@@ -126,23 +135,55 @@ class FileImportWorker(QThread):
         seen_keys = set(self.existing_keys)
 
         if self.explicit_entries:
+            import zipfile
+            from core.fb2.xml_io import _read_zip_entry_limited
+
             total = len(self.explicit_entries)
-            for idx, item in enumerate(self.explicit_entries, start=1):
-                if self.isInterruptionRequested():
-                    cancelled = True
-                    break
-                path = item.get('path') or ''
-                archive_entry = item.get('archive_entry')
-                display_name = item.get('display_name') or os.path.basename(path)
-                source_key = f"{path}::{archive_entry}" if archive_entry else os.path.abspath(path)
-                self.progress.emit(idx, total, display_name)
-                if source_key in seen_keys:
-                    continue
-                xml_bytes = load_book_xml(path, archive_entry)
-                if not xml_bytes:
-                    continue
-                seen_keys.add(source_key)
-                imported.append(self._build_book_entry(path, archive_entry, source_key, display_name, xml_bytes))
+            open_zips = {}
+            try:
+                for idx, item in enumerate(self.explicit_entries, start=1):
+                    if self.isInterruptionRequested():
+                        cancelled = True
+                        break
+                    path = item.get('path') or ''
+                    archive_entry = item.get('archive_entry')
+                    display_name = item.get('display_name') or os.path.basename(path)
+                    source_key = f"{path}::{archive_entry}" if archive_entry else os.path.abspath(path)
+                    self.progress.emit(idx, total, display_name)
+                    if source_key in seen_keys:
+                        continue
+                    xml_bytes = None
+                    if archive_entry is not None and path and os.path.isfile(path):
+                        try:
+                            zf = open_zips.get(path)
+                            if zf is None:
+                                zf = zipfile.ZipFile(path, 'r')
+                                open_zips[path] = zf
+                            xml_bytes = _read_zip_entry_limited(zf, archive_entry)
+                        except Exception as e:
+                            logger.warning("Не удалось прочитать исходный FB2 %s (%s): %s", path, archive_entry, e)
+                            xml_bytes = None
+                    else:
+                        xml_bytes = load_book_xml(path, archive_entry)
+                    if not xml_bytes:
+                        continue
+                    seen_keys.add(source_key)
+                    imported.append(
+                        self._build_book_entry(
+                            path,
+                            archive_entry,
+                            source_key,
+                            display_name,
+                            xml_bytes,
+                            from_library=bool(item.get('from_library', False)),
+                        )
+                    )
+            finally:
+                for zf in open_zips.values():
+                    try:
+                        zf.close()
+                    except Exception:
+                        pass
             self.finished_import.emit(imported, cancelled)
             return
 
@@ -227,6 +268,8 @@ class ConversionWorker(QThread):
         base_dir="",
         app_name="FBC GUI",
         app_version="",
+        library_temp_dir="",
+        temp_for_all=False,
         parent=None,
     ):
         super().__init__(parent)
@@ -247,6 +290,8 @@ class ConversionWorker(QThread):
         self.base_dir = base_dir
         self.app_name = app_name
         self.app_version = app_version
+        self.library_temp_dir = str(library_temp_dir or "")
+        self.temp_for_all = bool(temp_for_all)
         self._cancel_event = threading.Event()
 
     def cancel(self):
@@ -272,12 +317,25 @@ class ConversionWorker(QThread):
             self.app_settings.get("filename_mode", "default"),
             self.app_settings.get("filename_tokens"),
         )
-        if self.save_mode == "custom" and self.custom_dir and os.path.isdir(self.custom_dir):
-            dest_dir = self.custom_dir
-        else:
-            dest_dir = os.path.dirname(original_path)
+        from core.config import is_library_book_item, resolve_book_output_dir
 
-        if self.skip_existing and not self.debug and should_skip_existing_conversion(data, dest_dir, display_name):
+        is_lib_book = is_library_book_item(data, self.app_settings)
+        dest_dir = resolve_book_output_dir(
+            data,
+            self.save_mode,
+            self.custom_dir,
+            self.app_settings,
+            library_temp_dir=self.library_temp_dir,
+            temp_for_all=self.temp_for_all,
+        )
+        use_temp_dir = bool(self.library_temp_dir and (self.temp_for_all or is_lib_book))
+
+        if (
+            self.skip_existing
+            and not self.debug
+            and not use_temp_dir
+            and should_skip_existing_conversion(data, dest_dir, display_name)
+        ):
             logger.info("Конвертация ПРОПУЩЕНА (актуальный файл уже существует): %s", source_label)
             if item_id:
                 self.item_status.emit(item_id, "skipped", "")
@@ -794,6 +852,7 @@ class DeviceSyncWorker(QThread):
     ):
         tmp_cfg_path = None
         staging_dir = None
+        history_dir = None
         try:
             if self.mode == "folder":
                 self._run_folder_sync(sync_folder_to_mounted_device)
@@ -822,9 +881,10 @@ class DeviceSyncWorker(QThread):
             logger.info("Подготовлено книг для sync2kindle: %d (из %s)", total_staged, self.source_dir)
             self.sync_progress.emit(10, tr("converter.progress_sync_prep", total=total_staged))
 
+            history_dir = tempfile.mkdtemp(prefix="s2k_hist_", dir=work_dir)
             fd, tmp_cfg_path = tempfile.mkstemp(prefix="s2k_sync_", suffix=".yaml", dir=work_dir)
             os.close(fd)
-            write_s2k_sync_config(tmp_cfg_path, staging_dir, self.target_dir)
+            write_s2k_sync_config(tmp_cfg_path, staging_dir, self.target_dir, history_dir=history_dir)
 
             cmd = build_s2k_sync_command(
                 info["path"],
@@ -937,6 +997,8 @@ class DeviceSyncWorker(QThread):
                     pass
             if staging_dir and os.path.isdir(staging_dir):
                 shutil.rmtree(staging_dir, ignore_errors=True)
+            if history_dir and os.path.isdir(history_dir):
+                shutil.rmtree(history_dir, ignore_errors=True)
 
 
 class MetadataLookupWorker(QThread):

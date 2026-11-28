@@ -83,7 +83,7 @@ def _build_converter_banner(win):
     win.btn_sync_device = QPushButton(tr("converter.btn_sync_device"))
     win.btn_sync_device.setToolTip(tr("converter.btn_sync_device_tip"))
     win.btn_sync_device.setCursor(Qt.CursorShape.PointingHandCursor)
-    win.btn_sync_device.clicked.connect(win.send_to_reader_clicked)
+    win.btn_sync_device.clicked.connect(lambda: win.send_to_reader_clicked())
     b_layout.addWidget(win.btn_sync_device)
     return banner
 

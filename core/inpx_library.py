@@ -219,6 +219,7 @@ def resolve_book_source(inpx_path, book_row):
                         "path": cand,
                         "archive_entry": entry,
                         "display_name": f"{os.path.basename(cand)} / {os.path.basename(entry.replace('\\', '/'))}",
+                        "from_library": True,
                     }
 
     # 2. Распакованные файлы на диске
@@ -238,6 +239,7 @@ def resolve_book_source(inpx_path, book_row):
                 "path": cand,
                 "archive_entry": None,
                 "display_name": os.path.basename(cand),
+                "from_library": True,
             }
 
     return None

@@ -655,5 +655,22 @@ class TestS2kManager(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(td, exe_name)))
 
 
+    def test_write_s2k_sync_config_writes_isolated_history_dir(self):
+        import tempfile
+        from core.s2k_manager import write_s2k_sync_config
+
+        with tempfile.TemporaryDirectory() as td:
+            cfg = os.path.join(td, "sync.yaml")
+            src = os.path.join(td, "stage")
+            hist = os.path.join(td, "hist")
+            write_s2k_sync_config(cfg, src, "documents/books", history_dir=hist)
+            with open(cfg, "r", encoding="utf-8") as fh:
+                content = fh.read()
+            self.assertIn("source:", content)
+            self.assertIn("target:", content)
+            self.assertIn("history:", content)
+            self.assertIn(os.path.basename(hist), content)
+
+
 if __name__ == "__main__":
     unittest.main()

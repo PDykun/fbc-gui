@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 from core.autostart import is_autostart_supported
 
 from core.i18n import LOCALE, tr, get_theme_choices
-from core.config import DEFAULT_OUTPUT_FORMAT, is_secure_password_storage_available
+from core.config import DEFAULT_OUTPUT_FORMAT, get_default_library_output_dir, is_secure_password_storage_available
 from core.fb2_processor import FORMAT_EXT_MAP
 from core.metadata_lookup import DEFAULT_ENABLED_PROVIDERS, DEFAULT_PROVIDER_ORDER, PROVIDER_LABELS
 from ui.theme import PillSelector, FormatComboBox, FilenameTemplateBuilder, RoundedRowDelegate, create_section_card, add_setting_row
@@ -873,16 +873,16 @@ def _build_device_sync_section(win, s_layout):
         sync_tgt_widget,
     )
 
-    win.device_sync_ignore_del_selector = PillSelector(
-        [(tr("settings.opt_on"), "true"), (tr("settings.opt_off"), "false")],
-        default=str(win.app_settings.get("device_sync_ignore_removals", "true")),
-        callback=win.on_device_sync_ignore_removals_changed,
+    win.device_sync_delete_after_selector = PillSelector(
+        [(tr("settings.opt_off"), "false"), (tr("settings.opt_on"), "true")],
+        default=str(win.app_settings.get("device_sync_delete_after_send", "false")),
+        callback=win.on_device_sync_delete_after_changed,
     )
     add_setting_row(
         l_sync,
-        tr("settings.lbl_sync_ignore_del"),
-        tr("settings.desc_sync_ignore_del"),
-        win.device_sync_ignore_del_selector,
+        tr("settings.lbl_sync_delete_after"),
+        tr("settings.desc_sync_delete_after"),
+        win.device_sync_delete_after_selector,
     )
 
     sync_act_widget = QWidget()
@@ -1132,6 +1132,28 @@ def _build_library_toggle_section(win, s_layout):
         tr("library.lbl_enable"),
         tr("library.desc_enable"),
         win.library_enabled_selector,
+    )
+
+    lib_out_widget = QWidget()
+    lib_out_layout = QHBoxLayout(lib_out_widget)
+    lib_out_layout.setContentsMargins(0, 0, 0, 0)
+    lib_out_layout.setSpacing(8)
+
+    lib_out_path = str(win.app_settings.get("library_output_dir") or "").strip() or get_default_library_output_dir()
+    win.lbl_library_output_dir = QLabel(lib_out_path)
+    win.lbl_library_output_dir.setObjectName("RowDesc")
+    lib_out_layout.addWidget(win.lbl_library_output_dir)
+
+    win.btn_choose_library_output_dir = QPushButton(tr("settings.btn_choose_dir"))
+    win.btn_choose_library_output_dir.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.btn_choose_library_output_dir.clicked.connect(win.choose_library_output_dir)
+    lib_out_layout.addWidget(win.btn_choose_library_output_dir)
+
+    add_setting_row(
+        l_lib,
+        tr("library.lbl_output_dir"),
+        tr("library.desc_output_dir"),
+        lib_out_widget,
     )
     s_layout.addWidget(card_lib)
 

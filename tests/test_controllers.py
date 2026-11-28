@@ -732,6 +732,165 @@ class TestControllers(unittest.TestCase):
         sync_host._on_device_sync_cancel_requested()
         self.assertTrue(sync_host._device_sync_cancelled)
 
+    def test_send_to_reader_clicked_accepts_qt_bool_signal_and_target_items(self):
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            lib_zip = os.path.join(td, "fb2-0001-0002.zip")
+            folder_fb2 = os.path.join(td, "folder_book.fb2")
+            with open(lib_zip, "wb") as fh:
+                fh.write(b"PK")
+            with open(folder_fb2, "wb") as fh:
+                fh.write(b"<FictionBook/>")
+
+            class _FakeSendHost(SettingsController):
+                def __init__(self):
+                    self.app_settings = {
+                        "device_sync_mode": "mtp",
+                        "output_format": "kfx",
+                        "device_profile": "kindle",
+                        "save_mode": "source",
+                    }
+                    self.files_data = {
+                        "id_lib": {
+                            "path": lib_zip,
+                            "archive_entry": "12345.fb2",
+                            "meta": {"title": "Из библиотеки", "last": "Автор"},
+                        },
+                        "id_folder": {
+                            "path": folder_fb2,
+                            "archive_entry": None,
+                            "meta": {"title": "Из папки", "last": "Другой"},
+                        },
+                    }
+                    self.converted_calls = []
+                    self.sync_calls = []
+
+                def _run_conversion(self, items, debug=False, show_summary_on_success=True, device_sync_params=None):
+                    self.converted_calls.append((list(items), device_sync_params))
+
+                def run_device_sync(self, dry_run=False, source_dir_override="", explicit_files=None):
+                    self.sync_calls.append((dry_run, source_dir_override, explicit_files))
+
+            host = _FakeSendHost()
+            # 1. Имитация клика QPushButton.clicked(bool=False) на панели конвертера
+            host.send_to_reader_clicked(False)
+            self.assertEqual(len(host.converted_calls), 1)
+            self.assertEqual(len(host.converted_calls[0][0]), 2)
+
+            # 2. Явная передача target_items (отправка из Библиотеки)
+            host.converted_calls.clear()
+            host.send_to_reader_clicked(target_items=[host.files_data["id_lib"]])
+            self.assertEqual(len(host.converted_calls), 1)
+            self.assertEqual(len(host.converted_calls[0][0]), 1)
+            self.assertEqual(host.converted_calls[0][0][0]["archive_entry"], "12345.fb2")
+
+    def test_xml_prolog_security_and_single_pass_conversion_optimization(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+        from core.fb2.xml_io import _has_disallowed_xml_declarations
+        from core.fb2.converter import convert_book_file
+
+        # 1. Защита от DOCTYPE при смещении >64 КБ и в UTF-16 сохранена
+        padded_doctype = (b"<!--" + b"a" * 70000 + b"-->\n<!DOCTYPE foo><FictionBook/>")
+        self.assertTrue(_has_disallowed_xml_declarations(padded_doctype))
+        utf16_doctype = '<?xml version="1.0" encoding="utf-16"?><!DOCTYPE foo><FictionBook/>'.encode("utf-16")
+        self.assertTrue(_has_disallowed_xml_declarations(utf16_doctype))
+        normal_fb2 = (
+            b'<?xml version="1.0" encoding="utf-8"?>'
+            b'<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">'
+            b'<description><title-info><book-title>T</book-title></title-info></description>'
+            b'<body><section><p>Hi</p></section></body></FictionBook>'
+        )
+        self.assertFalse(_has_disallowed_xml_declarations(normal_fb2))
+
+        # 2. При неизменённых метаданных из ZIP-архива update_fb2_xml не вызывается
+        with tempfile.TemporaryDirectory() as td:
+            meta = {"title": "T", "last": "A"}
+            data = {
+                "path": os.path.join(td, "archive.zip"),
+                "archive_entry": "book.fb2",
+                "display_name": "book.fb2",
+                "meta": dict(meta),
+                "orig_meta": dict(meta),
+                "cover_modified": False,
+                "xml": normal_fb2,
+            }
+
+            def _fake_fbc(cmd, cwd, cancel_event=None):
+                out_dir = cmd[-1]
+                with open(os.path.join(out_dir, "out.kfx"), "wb") as fh:
+                    fh.write(b"KFX")
+                return "", ""
+
+            with patch("core.fb2.converter.update_fb2_xml") as mock_upd, \
+                 patch("core.fb2_processor._run_cancellable_process", side_effect=_fake_fbc):
+                created = convert_book_file("fbc", "config.yaml", td, data, td, "kfx", {}, image_color_profile="none")
+                self.assertEqual(len(created), 1)
+                mock_upd.assert_not_called()
+
+    def test_library_books_never_output_into_library_folder(self):
+        import os
+        import tempfile
+        from core.config import is_library_book_item, resolve_book_output_dir
+
+        with tempfile.TemporaryDirectory() as td:
+            lib_dir = os.path.join(td, "inpx_lib")
+            out_dir = os.path.join(td, "lib_out")
+            disk_dir = os.path.join(td, "disk_books")
+            tmp_dir = os.path.join(td, "temp_sync")
+            for d in (lib_dir, out_dir, disk_dir, tmp_dir):
+                os.makedirs(d, exist_ok=True)
+            inpx_path = os.path.join(lib_dir, "flibusta.inpx")
+            lib_zip = os.path.join(lib_dir, "fb2-0001.zip")
+            disk_fb2 = os.path.join(disk_dir, "book.fb2")
+            for fp in (inpx_path, lib_zip, disk_fb2):
+                with open(fp, "wb") as fh:
+                    fh.write(b"x")
+
+            settings = {
+                "library_inpx_path": inpx_path,
+                "library_output_dir": out_dir,
+            }
+            lib_item_flag = {"path": lib_zip, "archive_entry": "1.fb2", "from_library": True}
+            lib_item_path = {"path": lib_zip, "archive_entry": "2.fb2"}
+            disk_item = {"path": disk_fb2, "archive_entry": None}
+
+            self.assertTrue(is_library_book_item(lib_item_flag, settings))
+            self.assertTrue(is_library_book_item(lib_item_path, settings))
+            self.assertFalse(is_library_book_item(disk_item, settings))
+
+            # Обычная конвертация: книги из Библиотеки -> library_output_dir, с диска -> исходная папка
+            self.assertEqual(
+                resolve_book_output_dir(lib_item_flag, "source", "", settings),
+                out_dir,
+            )
+            self.assertEqual(
+                resolve_book_output_dir(lib_item_path, "source", "", settings),
+                out_dir,
+            )
+            self.assertEqual(
+                resolve_book_output_dir(disk_item, "source", "", settings),
+                os.path.abspath(disk_dir),
+            )
+
+            # Отправка «На ридер»: книги из Библиотеки -> временная папка, с диска -> исходная папка
+            self.assertEqual(
+                resolve_book_output_dir(lib_item_flag, "source", "", settings, library_temp_dir=tmp_dir),
+                tmp_dir,
+            )
+            self.assertEqual(
+                resolve_book_output_dir(disk_item, "source", "", settings, library_temp_dir=tmp_dir),
+                os.path.abspath(disk_dir),
+            )
+            # При «Удалять сконвертированные файлы после отправки на ридер» (temp_for_all=True) -> все книги во временную папку
+            self.assertEqual(
+                resolve_book_output_dir(disk_item, "source", "", settings, library_temp_dir=tmp_dir, temp_for_all=True),
+                tmp_dir,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

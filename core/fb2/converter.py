@@ -15,8 +15,8 @@ from core.fb2.common import (
     logger,
 )
 from core.fb2.organizer import _sanitize_fs_component
-from core.fb2.xml_io import _read_zip_entry_limited, get_book_xml
-from core.fb2.metadata import update_fb2_xml
+from core.fb2.xml_io import _parse_fb2_root, _read_zip_entry_limited, get_book_xml
+from core.fb2.metadata import apply_updates_to_fb2_root, update_fb2_xml
 
 
 def patch_html_title_elements(html_text, author_css, title_css, meta=None):
@@ -350,13 +350,16 @@ def convert_book_file(
     has_img_opt = bool((image_color_profile and image_color_profile != "none") or image_color_profile_custom)
     src_path = data.get("path") or ""
     orig_meta = data.get("orig_meta")
+    meta_or_cover_changed = (
+        bool(data.get("cover_modified", False))
+        or not isinstance(orig_meta, dict)
+        or data.get("meta") != orig_meta
+    )
     can_use_source_directly = (
         not has_img_opt
+        and not meta_or_cover_changed
         and data.get("archive_entry") is None
         and not data.get("xml")
-        and not data.get("cover_modified", False)
-        and isinstance(orig_meta, dict)
-        and data.get("meta") == orig_meta
         and bool(src_path)
         and src_path.lower().endswith(".fb2")
         and os.path.isfile(src_path)
@@ -371,22 +374,57 @@ def convert_book_file(
             src_label = data.get("display_name") or src_path or "unknown"
             raise RuntimeError(f"Не удалось прочитать исходный файл FB2: {src_label}")
 
-        new_xml_bytes = update_fb2_xml(
-            xml_bytes, data['meta'],
-            cover_bytes=data.get('cover_bytes'),
-            cover_mime=data.get('cover_mime', 'image/jpeg'),
-            cover_modified=data.get('cover_modified', False),
-            orig_meta=orig_meta,
-        )
-        if has_img_opt:
+        if not meta_or_cover_changed and not has_img_opt:
+            new_xml_bytes = xml_bytes
+        elif not meta_or_cover_changed and has_img_opt:
             from core.image_optimizer import optimize_fb2_binaries_for_profile
 
             new_xml_bytes = optimize_fb2_binaries_for_profile(
-                new_xml_bytes,
+                xml_bytes,
                 profile_id=image_color_profile,
                 jpeg_quality=jpeg_quality,
                 custom_profile=image_color_profile_custom,
+                fast_encode=True,
             )
+        elif meta_or_cover_changed and not has_img_opt:
+            new_xml_bytes = update_fb2_xml(
+                xml_bytes, data['meta'],
+                cover_bytes=data.get('cover_bytes'),
+                cover_mime=data.get('cover_mime', 'image/jpeg'),
+                cover_modified=data.get('cover_modified', False),
+                orig_meta=orig_meta,
+            )
+        else:
+            import xml.etree.ElementTree as ET
+            from core.image_optimizer import optimize_fb2_root_binaries
+
+            root = _parse_fb2_root(xml_bytes)
+            if root is not None:
+                apply_updates_to_fb2_root(
+                    root,
+                    data['meta'],
+                    cover_bytes=data.get('cover_bytes'),
+                    cover_mime=data.get('cover_mime', 'image/jpeg'),
+                    cover_modified=data.get('cover_modified', False),
+                    orig_meta=orig_meta,
+                    xml_bytes=xml_bytes,
+                )
+                optimize_fb2_root_binaries(
+                    root,
+                    profile_id=image_color_profile,
+                    jpeg_quality=jpeg_quality,
+                    custom_profile=image_color_profile_custom,
+                    fast_encode=True,
+                )
+                new_xml_bytes = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+            else:
+                new_xml_bytes = update_fb2_xml(
+                    xml_bytes, data['meta'],
+                    cover_bytes=data.get('cover_bytes'),
+                    cover_mime=data.get('cover_mime', 'image/jpeg'),
+                    cover_modified=data.get('cover_modified', False),
+                    orig_meta=orig_meta,
+                )
         with tempfile.NamedTemporaryFile(delete=False, suffix=".fb2") as tmp:
             tmp.write(new_xml_bytes)
             tmp_path = tmp.name

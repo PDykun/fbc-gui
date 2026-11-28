@@ -486,15 +486,17 @@ def is_no_books_in_source_stderr(stderr_text):
     return "no books in the source path" in low
 
 
-def write_s2k_sync_config(config_path, source_dir, target_dir="documents/books"):
+def write_s2k_sync_config(config_path, source_dir, target_dir="documents/books", history_dir=None):
     """Записывает минимальный YAML-конфиг для sync2kindle (s2k -c <file> mtp|usb)."""
     src = os.path.abspath(str(source_dir or "."))
     tgt = str(target_dir or "").strip() or "documents/books"
     lines = [
         f"source: {json.dumps(src, ensure_ascii=False)}",
         f"target: {json.dumps(tgt, ensure_ascii=False)}",
-        "",
     ]
+    if history_dir:
+        lines.append(f"history: {json.dumps(os.path.abspath(str(history_dir)), ensure_ascii=False)}")
+    lines.append("")
     atomic_write_text(config_path, "\n".join(lines))
     return config_path
 

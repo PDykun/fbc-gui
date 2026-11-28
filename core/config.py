@@ -190,6 +190,55 @@ DEVICE_PROFILES = {
 }
 
 
+def get_default_library_output_dir():
+    """Возвращает папку вывода по умолчанию для книг из Библиотеки (Загрузки или домашняя папка)."""
+    downloads = os.path.join(os.path.expanduser("~"), "Downloads")
+    if os.path.isdir(downloads):
+        return downloads
+    return os.path.expanduser("~")
+
+
+def is_library_book_item(data, app_settings=None):
+    """Определяет, относится ли книга к локальной Библиотеке INPX (по флагу или расположению рядом с .inpx)."""
+    if not isinstance(data, dict):
+        return False
+    if data.get("from_library"):
+        return True
+    inpx_path = str((app_settings or {}).get("library_inpx_path", "")).strip()
+    book_path = str(data.get("path") or "").strip()
+    if not inpx_path or not book_path:
+        return False
+    lib_dir = os.path.dirname(os.path.abspath(inpx_path))
+    if not lib_dir:
+        return False
+    try:
+        lib_real = os.path.realpath(lib_dir)
+        book_real = os.path.realpath(book_path)
+        return os.path.commonpath([lib_real, book_real]) == lib_real
+    except (ValueError, OSError):
+        return False
+
+
+def resolve_book_output_dir(data, save_mode, custom_dir, app_settings=None, library_temp_dir="", temp_for_all=False):
+    """
+    Определяет папку сохранения готовой книги:
+    - при temp_for_all=True и заданном library_temp_dir — временный каталог для всех книг (удаляется после отправки);
+    - для книг из Библиотеки при отправке «На ридер» — временный каталог library_temp_dir (удаляется после отправки);
+    - для книг из Библиотеки при обычной конвертации — library_output_dir (по умолчанию Загрузки), никогда не папка библиотеки;
+    - для обычных книг с диска — custom_dir при save_mode=='custom' или папка исходного файла.
+    """
+    if temp_for_all and library_temp_dir:
+        return library_temp_dir
+    if is_library_book_item(data, app_settings):
+        if library_temp_dir:
+            return library_temp_dir
+        lib_out = str((app_settings or {}).get("library_output_dir", "")).strip()
+        return lib_out if lib_out else get_default_library_output_dir()
+    if save_mode == "custom" and custom_dir and os.path.isdir(custom_dir):
+        return custom_dir
+    return os.path.dirname(os.path.abspath(data["path"]))
+
+
 def get_default_app_settings():
     return {
         "theme": "Modern",
@@ -257,6 +306,7 @@ def get_default_app_settings():
         "device_sync_mode": "mtp",
         "device_sync_target": "documents/books",
         "device_sync_ignore_removals": "true",
+        "device_sync_delete_after_send": "false",
         "metadata_providers": list(DEFAULT_ENABLED_PROVIDERS),
         "google_books_api_key": "",
         "opds_url": "",
@@ -270,6 +320,7 @@ def get_default_app_settings():
         "watch_folders": [],
         "library_enabled": "false",
         "library_inpx_path": "",
+        "library_output_dir": get_default_library_output_dir(),
         "debug_logging": "false",
         "last_update_check": 0
     }

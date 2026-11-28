@@ -246,17 +246,20 @@ def _remap_dynamic_range(img, black_floor, white_ceiling):
     return img
 
 
-def _encode_pil_image(img, orig_mime, jpeg_quality=95, keep_alpha=False):
+def _encode_pil_image(img, orig_mime, jpeg_quality=95, keep_alpha=False, fast_encode=False):
     """Кодирует обработанное PIL-изображение в байты (JPEG или PNG) и возвращает (bytes, mime)."""
     out = io.BytesIO()
     low_mime = str(orig_mime or "").lower()
     use_png = keep_alpha or low_mime == "image/png"
     if use_png:
-        img.save(out, format="PNG", optimize=True)
+        if fast_encode:
+            img.save(out, format="PNG", compress_level=1)
+        else:
+            img.save(out, format="PNG", optimize=True)
         return out.getvalue(), "image/png"
     save_img = img if img.mode in ("L", "RGB") else img.convert("RGB")
     q = max(40, min(100, int(jpeg_quality or 95)))
-    save_img.save(out, format="JPEG", quality=q, optimize=True)
+    save_img.save(out, format="JPEG", quality=q, optimize=(not fast_encode))
     return out.getvalue(), "image/jpeg"
 
 
@@ -289,6 +292,7 @@ def optimize_image_bytes(
     *,
     jpeg_quality=95,
     custom_profile=None,
+    fast_encode=False,
 ):
     """
     Оптимизирует растровое изображение (обложку или иллюстрацию) под профиль экрана ридера.
@@ -342,8 +346,8 @@ def optimize_image_bytes(
                 work = _quantize_grayscale_levels(work, q_levels, dither=bool(opt.get("dither", True)))
             if alpha is not None and low_mime == "image/png":
                 out_img = Image.merge("LA", (work, alpha))
-                return _encode_pil_image(out_img, "image/png", jpeg_quality=jpeg_quality, keep_alpha=True)
-            return _encode_pil_image(work, mime, jpeg_quality=jpeg_quality, keep_alpha=False)
+                return _encode_pil_image(out_img, "image/png", jpeg_quality=jpeg_quality, keep_alpha=True, fast_encode=fast_encode)
+            return _encode_pil_image(work, mime, jpeg_quality=jpeg_quality, keep_alpha=False, fast_encode=fast_encode)
 
         # Цветной профиль (Kaleido 3, Gallery 3 и любые будущие цветные E Ink)
         cutoff = float(opt.get("autocontrast_cutoff") or 0.0)
@@ -368,8 +372,8 @@ def optimize_image_bytes(
         if alpha is not None and low_mime == "image/png":
             out_img = work.convert("RGBA")
             out_img.putalpha(alpha)
-            return _encode_pil_image(out_img, "image/png", jpeg_quality=jpeg_quality, keep_alpha=True)
-        return _encode_pil_image(work, mime, jpeg_quality=jpeg_quality, keep_alpha=False)
+            return _encode_pil_image(out_img, "image/png", jpeg_quality=jpeg_quality, keep_alpha=True, fast_encode=fast_encode)
+        return _encode_pil_image(work, mime, jpeg_quality=jpeg_quality, keep_alpha=False, fast_encode=fast_encode)
     finally:
         img.close()
 
@@ -659,28 +663,22 @@ def get_display_color_palette(profile_id="none", *, grayscale=False, custom_prof
     }
 
 
-def optimize_fb2_binaries_for_profile(
-    xml_bytes,
+def optimize_fb2_root_binaries(
+    root,
     profile_id="none",
     *,
     jpeg_quality=95,
     custom_profile=None,
+    fast_encode=False,
 ):
-    """
-    Оптимизирует все растровые теги <binary> (обложку и иллюстрации) внутри временного FB2 XML
-    под выбранный профиль экрана ридера, не затрагивая исходный файл на диске.
-    """
-    if not xml_bytes or not HAS_PIL:
-        return xml_bytes
+    """Оптимизирует растровые <binary> напрямую в уже распарсенном XML-дереве; возвращает True при изменениях."""
+    if root is None or not HAS_PIL:
+        return False
     prof = resolve_image_display_profile(profile_id, custom_profile=custom_profile)
     if not prof.get("optimize") or prof.get("mode") == "original":
-        return xml_bytes
+        return False
 
-    from core.fb2.xml_io import _local_tag, _parse_fb2_root
-
-    root = _parse_fb2_root(xml_bytes)
-    if root is None:
-        return xml_bytes
+    from core.fb2.xml_io import _local_tag
 
     changed = False
     for child in root:
@@ -700,6 +698,7 @@ def optimize_fb2_binaries_for_profile(
                 profile_id=profile_id,
                 jpeg_quality=jpeg_quality,
                 custom_profile=custom_profile,
+                fast_encode=fast_encode,
             )
             if opt_bytes and (opt_bytes != raw_bytes or opt_mime != mime):
                 child.text = base64.b64encode(opt_bytes).decode("ascii")
@@ -707,7 +706,40 @@ def optimize_fb2_binaries_for_profile(
                 changed = True
         except Exception as e:
             logger.debug("Пропущена оптимизация <binary id=%s>: %s", child.attrib.get("id", ""), e)
+    return changed
 
+
+def optimize_fb2_binaries_for_profile(
+    xml_bytes,
+    profile_id="none",
+    *,
+    jpeg_quality=95,
+    custom_profile=None,
+    fast_encode=False,
+):
+    """
+    Оптимизирует все растровые теги <binary> (обложку и иллюстрации) внутри временного FB2 XML
+    под выбранный профиль экрана ридера, не затрагивая исходный файл на диске.
+    """
+    if not xml_bytes or not HAS_PIL:
+        return xml_bytes
+    prof = resolve_image_display_profile(profile_id, custom_profile=custom_profile)
+    if not prof.get("optimize") or prof.get("mode") == "original":
+        return xml_bytes
+
+    from core.fb2.xml_io import _parse_fb2_root
+
+    root = _parse_fb2_root(xml_bytes)
+    if root is None:
+        return xml_bytes
+
+    changed = optimize_fb2_root_binaries(
+        root,
+        profile_id=profile_id,
+        jpeg_quality=jpeg_quality,
+        custom_profile=custom_profile,
+        fast_encode=fast_encode,
+    )
     if not changed:
         return xml_bytes
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)

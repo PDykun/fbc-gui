@@ -205,10 +205,11 @@ def _parse_metadata_fallback(xml_bytes):
     return meta
 
 
-def parse_metadata(xml_bytes):
+def parse_metadata(xml_bytes, root=None):
     meta = _empty_meta()
     try:
-        root = _parse_fb2_root(xml_bytes)
+        if root is None:
+            root = _parse_fb2_root(xml_bytes)
         if root is None:
             return _parse_metadata_fallback(xml_bytes)
         title_info, ns_uri = _find_title_info(root)
@@ -452,17 +453,17 @@ def _apply_title_info_metadata(root, title_info, ns_uri, root_ns, meta, current_
             title_info.remove(extra_seq)
 
 
-def update_fb2_xml(xml_bytes, meta, cover_bytes=None, cover_mime="image/jpeg", cover_modified=False, orig_meta=None):
-    root = _parse_fb2_root(xml_bytes)
-    if root is None:
-        # Если тело FB2 сильно повреждено и XML не восстанавливается целиком,
-        # отдаём санитизированные байты движку fbc без падения на ParseError.
-        try:
-            return _sanitize_fb2_xml_text(_decode_fb2_text(xml_bytes)).encode('utf-8')
-        except Exception:
-            return xml_bytes
-
-    current_meta = orig_meta if isinstance(orig_meta, dict) else parse_metadata(xml_bytes)
+def apply_updates_to_fb2_root(
+    root,
+    meta,
+    cover_bytes=None,
+    cover_mime="image/jpeg",
+    cover_modified=False,
+    orig_meta=None,
+    xml_bytes=None,
+):
+    """Применяет изменения метаданных и обложки напрямую к уже распарсенному XML-дереву FB2."""
+    current_meta = orig_meta if isinstance(orig_meta, dict) else parse_metadata(xml_bytes, root=root)
     title_info, ns_uri = _find_title_info(root)
     root_ns = _get_root_ns_uri(root)
     if title_info is not None:
@@ -492,7 +493,28 @@ def update_fb2_xml(xml_bytes, meta, cover_bytes=None, cover_mime="image/jpeg", c
                 if len(paras) >= 1:
                     paras[-1].clear()
                     paras[-1].text = new_title
+    return root
 
+
+def update_fb2_xml(xml_bytes, meta, cover_bytes=None, cover_mime="image/jpeg", cover_modified=False, orig_meta=None):
+    root = _parse_fb2_root(xml_bytes)
+    if root is None:
+        # Если тело FB2 сильно повреждено и XML не восстанавливается целиком,
+        # отдаём санитизированные байты движку fbc без падения на ParseError.
+        try:
+            return _sanitize_fb2_xml_text(_decode_fb2_text(xml_bytes)).encode('utf-8')
+        except Exception:
+            return xml_bytes
+
+    apply_updates_to_fb2_root(
+        root,
+        meta,
+        cover_bytes=cover_bytes,
+        cover_mime=cover_mime,
+        cover_modified=cover_modified,
+        orig_meta=orig_meta,
+        xml_bytes=xml_bytes,
+    )
     return ET.tostring(root, encoding='utf-8', xml_declaration=True)
 
 

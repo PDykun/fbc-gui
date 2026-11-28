@@ -58,10 +58,13 @@ def _is_strict_xml_valid(xml_bytes):
         return False
 
 
-def quick_check_fb2(xml_bytes, meta=None, cover_bytes=None):
+def quick_check_fb2(xml_bytes, meta=None, cover_bytes=None, xml_valid_strict=None):
     """Быстрая предпроверка FB2 при импорте: возвращает список кодов предупреждений без тяжёлого разбора тела."""
     warnings = []
-    if xml_bytes is not None and not _is_strict_xml_valid(xml_bytes):
+    if xml_valid_strict is not None:
+        if not xml_valid_strict:
+            warnings.append("broken_xml")
+    elif xml_bytes is not None and not _is_strict_xml_valid(xml_bytes):
         warnings.append("broken_xml")
     m = meta if isinstance(meta, dict) else (parse_metadata(xml_bytes) if xml_bytes else {})
     if not (m.get("title") or "").strip():
