@@ -1,6 +1,6 @@
 import webbrowser
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox
 
 from core.i18n import tr
 from ui.theme import create_section_card, add_setting_row
@@ -41,10 +41,24 @@ def build_about_page(
     win.btn_check_updates.clicked.connect(lambda: win.check_for_updates(manual=True))
     add_setting_row(c_layout, tr("about.lbl_updates"), tr("about.desc_updates"), win.btn_check_updates)
 
+    log_widget = QWidget()
+    log_layout = QHBoxLayout(log_widget)
+    log_layout.setContentsMargins(0, 0, 0, 0)
+    log_layout.setSpacing(12)
+
+    win.chk_debug_log = QCheckBox(tr("about.chk_debug_log"))
+    win.chk_debug_log.setChecked(win.is_debug_logging_enabled())
+    win.chk_debug_log.setToolTip(tr("about.chk_debug_log_tip"))
+    win.chk_debug_log.setCursor(Qt.CursorShape.PointingHandCursor)
+    win.chk_debug_log.toggled.connect(win.on_debug_logging_toggled)
+    log_layout.addWidget(win.chk_debug_log)
+
     win.btn_open_log = QPushButton(tr("about.btn_open_log"))
     win.btn_open_log.setCursor(Qt.CursorShape.PointingHandCursor)
     win.btn_open_log.clicked.connect(win.open_log_file)
-    add_setting_row(c_layout, tr("about.lbl_log"), tr("about.desc_log"), win.btn_open_log)
+    log_layout.addWidget(win.btn_open_log)
+
+    add_setting_row(c_layout, tr("about.lbl_log"), tr("about.desc_log"), log_widget)
 
     add_setting_row(c_layout, tr("about.lbl_author"), tr("about.desc_author"), QLabel(f"<b>{app_author}</b>"))
 

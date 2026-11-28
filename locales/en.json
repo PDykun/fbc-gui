@@ -754,6 +754,8 @@
     "lbl_log": "Application log",
     "desc_log": "Diagnostic log file of application events and errors",
     "btn_open_log": "Open Log",
+    "chk_debug_log": "Debug",
+    "chk_debug_log_tip": "Verbose diagnostic log: DEBUG level, system summary, Qt messages, full all-thread stack dumps on unhandled exceptions and native crashes (faulthandler)",
     "err_no_log": "Log file has not been created yet:\n{path}"
   },
   "fbc_setup": {

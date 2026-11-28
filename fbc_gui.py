@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import shutil
@@ -43,7 +44,7 @@ from core.css_preview import VALID_FONT_EXTENSIONS
 from core.fb2_processor import collect_startup_paths
 from core.fbc_manager import resolve_local_fbc
 from core.i18n import LOCALE, get_theme_choices, init_locale, tr
-from core.logger import get_logger, init_logging
+from core.logger import get_logger, init_logging, set_debug_logging
 from core.notifier import set_windows_app_user_model_id
 from core.presets import sync_bundled_presets
 from core.updater import DEFAULT_RELEASES_URL, is_safe_http_url
@@ -151,6 +152,19 @@ def setup_app_environment():
     )
 
 
+def _read_startup_debug_flag(settings_path):
+    if not settings_path or not os.path.isfile(settings_path):
+        return False
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return str(data.get("debug_logging", "false")).strip().lower() == "true"
+    except Exception:
+        pass
+    return False
+
+
 def init_app_runtime():
     """Инициализирует рабочую среду, логирование, локали и темы один раз при запуске приложения."""
     global _RUNTIME_INITIALIZED, BASE_DIR, FBC_CMD, FBC_DETECTED_VERSION, FBC_CONFIG
@@ -163,7 +177,17 @@ def init_app_runtime():
         SETTINGS_PATH, LOCALES_DIR, BUNDLED_LOCALES_DIR,
         THEMES_DIR, BUNDLED_THEMES_DIR, PRESETS_DIR, BUNDLED_PRESETS_DIR,
     ) = setup_app_environment()
-    LOG_PATH = init_logging(BASE_DIR)
+    startup_debug = _read_startup_debug_flag(SETTINGS_PATH)
+    LOG_PATH = init_logging(BASE_DIR, debug=startup_debug)
+    if startup_debug:
+        set_debug_logging(
+            True,
+            app_info={
+                "App": f"{APP_NAME} v{APP_VERSION} (build {BUILD_NUMBER})",
+                "fb2cng": FBC_DETECTED_VERSION or THIRD_PARTY_VERSION,
+                "base_dir": BASE_DIR,
+            },
+        )
     logger.info("%s v%s (build %s) started; base_dir=%s", APP_NAME, APP_VERSION, BUILD_NUMBER, BASE_DIR)
     cleaned_tmp = cleanup_stale_temp_dirs()
     if cleaned_tmp:

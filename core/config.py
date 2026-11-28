@@ -270,6 +270,7 @@ def get_default_app_settings():
         "watch_folders": [],
         "library_enabled": "false",
         "library_inpx_path": "",
+        "debug_logging": "false",
         "last_update_check": 0
     }
 

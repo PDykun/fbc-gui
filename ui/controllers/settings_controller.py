@@ -19,7 +19,7 @@ from core.email_sender import (
 )
 from core.fb2_processor import should_skip_existing_conversion, simulate_fbc_target
 from core.i18n import tr
-from core.logger import get_log_file_path, get_logger
+from core.logger import get_log_file_path, get_logger, set_debug_logging
 from core.metadata_lookup import DEFAULT_ENABLED_PROVIDERS, DEFAULT_PROVIDER_ORDER
 from core.s2k_manager import check_directory_access, check_sync_format_compatibility, detect_mounted_readers
 from core.workers import DeviceSyncWorker, TestEmailWorker
@@ -806,6 +806,27 @@ class SettingsController:
                 )
             else:
                 show_themed_message(self, title, output, "error")
+
+    def is_debug_logging_enabled(self):
+        return str(self.app_settings.get("debug_logging", "false")).strip().lower() == "true"
+
+    def on_debug_logging_toggled(self, checked):
+        enabled = bool(checked)
+        self.app_settings["debug_logging"] = "true" if enabled else "false"
+        self.save_app_settings()
+        app_info = None
+        if enabled:
+            app_info = {
+                "App": f"{getattr(self, 'app_name', 'FBC GUI')} v{getattr(self, 'app_version', '')} (build {getattr(self, 'build_number', '')})",
+                "fb2cng": getattr(self, "fbc_version", ""),
+                "Format": self.app_settings.get("output_format", ""),
+                "Device profile": self.app_settings.get("device_profile", ""),
+                "Theme": f"{self.app_settings.get('theme', '')} ({self.app_settings.get('theme_mode', '')})",
+                "Language": self.app_settings.get("language", ""),
+                "Library enabled": self.app_settings.get("library_enabled", "false"),
+                "base_dir": getattr(self, "base_dir", ""),
+            }
+        set_debug_logging(enabled, app_info=app_info)
 
     def open_log_file(self):
         log_path = get_log_file_path() or self.log_path

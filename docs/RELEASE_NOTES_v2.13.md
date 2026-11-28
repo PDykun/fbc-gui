@@ -1,4 +1,4 @@
-# FBC GUI v2.13 (build 150)
+# FBC GUI v2.13 (build 151)
 
 ## Русская версия
 
@@ -21,7 +21,8 @@
 - *В таблице Конвертера столбцы **«Исходный файл»**, **«Серия»**, **«Название»** и **«Имя файла»** сделаны раздвижными, а при наведении на ячейку с обрезанным текстом отображается всплывающая подсказка с полным содержимым.*
 - *Реализована защита от zip-bomb при чтении `.inp`-файлов (лимит 128 МБ на запись), строгая проверка `os.path.realpath` против path traversal при поиске архивов и файлов книг рядом с `.inpx`, параметризованные SQL-запросы и атомарная подмена кэша.*
 - *Настройки локальной библиотеки (`library_enabled`, `library_inpx_path`) исключены из переносимых пользовательских пресетов.*
-- *Обновлены русская и английская локализации (`locales/ru.json`, `locales/en.json`), расширено покрытие юнит-тестами (`tests/test_inpx_library.py`, `tests/test_controllers.py`) до 262 тестов.*
+- *На странице **«О программе»** рядом с кнопкой **«Открыть лог»** добавлена галочка **Debug**: включает расширенный диагностический журнал `fbc_gui.log` (уровень `DEBUG` с миллисекундами, PID/TID и точкой вызова, системную сводку ОС/Python/Qt/SQLite, перехват сообщений Qt, полные стеки всех потоков при необработанных исключениях и нативных сбоях через `faulthandler`, сохраняется между запусками).*
+- *Обновлены русская и английская локализации (`locales/ru.json`, `locales/en.json`), расширено покрытие юнит-тестами (`tests/test_inpx_library.py`, `tests/test_controllers.py`, `tests/test_logger.py`) до 267 тестов.*
 
 ---
 
@@ -46,4 +47,5 @@
 - *Made **Source File**, **Series**, **Title**, and **File Name** columns user-resizable in the Converter table, with automatic hover tooltips displaying full text for truncated cells.*
 - *Enforced zip-bomb limits (128 MB per `.inp` entry), strict `os.path.realpath` path-traversal guards when resolving archives/files next to `.inpx`, parameterized SQL queries, and atomic SQLite cache replacement.*
 - *Excluded local library paths and toggle state from portable user presets.*
-- *Updated RU/EN localizations (`locales/ru.json`, `locales/en.json`) and expanded the unit test suite (`tests/test_inpx_library.py`, `tests/test_controllers.py`) to 262 tests.*
+- *Added a **Debug** checkbox next to **Open Log** on the **About** page: enables verbose diagnostic logging to `fbc_gui.log` (`DEBUG` level with millisecond timestamps, PID/TID and call-site info, OS/Python/Qt/SQLite environment summary, Qt message capture, full all-thread stack dumps on unhandled exceptions and native crashes via `faulthandler`, persisted across restarts).*
+- *Updated RU/EN localizations (`locales/ru.json`, `locales/en.json`) and expanded the unit test suite (`tests/test_inpx_library.py`, `tests/test_controllers.py`, `tests/test_logger.py`) to 267 tests.*
