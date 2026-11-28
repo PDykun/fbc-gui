@@ -97,19 +97,19 @@ class TestInpxLibrary(unittest.TestCase):
             )
             _build_inpx(inpx_path, {"fb2-001.inp": [row_ok, row_non_fb2, row_del]})
 
-            idx = InpxLibraryIndex(db_path)
-            info = idx.build_index(inpx_path)
-            self.assertEqual(info["collection_name"], "Flibusta Test")
-            self.assertEqual(info["version"], "20261127")
-            self.assertEqual(info["total_books"], 2)
+            with InpxLibraryIndex(db_path) as idx:
+                info = idx.build_index(inpx_path)
+                self.assertEqual(info["collection_name"], "Flibusta Test")
+                self.assertEqual(info["version"], "20261127")
+                self.assertEqual(info["total_books"], 2)
 
-            res = idx.search(query="", hide_deleted=False)
-            self.assertEqual(res["total"], 2)
-            titles = {b["title"]: b for b in res["items"]}
-            self.assertEqual(titles["Ночной дозор"]["author"], "Лукьяненко Сергей Васильевич")
-            self.assertEqual(titles["Ночной дозор"]["librate"], 5)
-            self.assertEqual(titles["Ночной дозор"]["inp_name"], "fb2-001")
-            self.assertEqual(titles["Удалённая книга"]["deleted"], 1)
+                res = idx.search(query="", hide_deleted=False)
+                self.assertEqual(res["total"], 2)
+                titles = {b["title"]: b for b in res["items"]}
+                self.assertEqual(titles["Ночной дозор"]["author"], "Лукьяненко Сергей Васильевич")
+                self.assertEqual(titles["Ночной дозор"]["librate"], 5)
+                self.assertEqual(titles["Ночной дозор"]["inp_name"], "fb2-001")
+                self.assertEqual(titles["Удалённая книга"]["deleted"], 1)
 
             # Custom structure.info with FOLDER field
             inpx_custom = os.path.join(td, "custom.inpx")
@@ -123,12 +123,12 @@ class TestInpxLibrary(unittest.TestCase):
                 {"pack.inp": [custom_row]},
                 structure_info="AUTHOR;TITLE;SERIES;SERNO;FILE;EXT;FOLDER;LANG;DEL\r\n",
             )
-            cidx = InpxLibraryIndex(db_custom)
-            cinfo = cidx.build_index(inpx_custom)
-            self.assertEqual(cinfo["total_books"], 1)
-            cres = cidx.search(query="Dune", hide_deleted=True)
-            self.assertEqual(cres["items"][0]["folder"], "sub/dune.zip")
-            self.assertEqual(cres["items"][0]["lang"], "en")
+            with InpxLibraryIndex(db_custom) as cidx:
+                cinfo = cidx.build_index(inpx_custom)
+                self.assertEqual(cinfo["total_books"], 1)
+                cres = cidx.search(query="Dune", hide_deleted=True)
+                self.assertEqual(cres["items"][0]["folder"], "sub/dune.zip")
+                self.assertEqual(cres["items"][0]["lang"], "en")
 
     def test_freelib_navigation_authors_series_genres_alpha_and_advanced_search(self):
         with tempfile.TemporaryDirectory() as td:
@@ -159,51 +159,51 @@ class TestInpxLibrary(unittest.TestCase):
             ]
             _build_inpx(inpx_path, {"fb2-01.inp": rows})
 
-            idx = InpxLibraryIndex(db_path)
-            self.assertTrue(idx.needs_reindex(inpx_path))
-            res_build = idx.build_index(inpx_path)
-            self.assertEqual(res_build["total_books"], 5)
-            self.assertFalse(idx.needs_reindex(inpx_path))
+            with InpxLibraryIndex(db_path) as idx:
+                self.assertTrue(idx.needs_reindex(inpx_path))
+                res_build = idx.build_index(inpx_path)
+                self.assertEqual(res_build["total_books"], 5)
+                self.assertFalse(idx.needs_reindex(inpx_path))
 
-            # Языки
-            self.assertEqual(idx.list_languages(hide_deleted=True), ["ru", "en"])
+                # Языки
+                self.assertEqual(idx.list_languages(hide_deleted=True), ["ru", "en"])
 
-            # Авторы с кириллическим алфавитным префиксом «А» и латинским «H»
-            authors_a = idx.list_authors(prefix="А", hide_deleted=True)
-            self.assertEqual([a["name"] for a in authors_a], ["Аакер Дженнифер"])
-            self.assertEqual(authors_a[0]["count"], 1)
+                # Авторы с кириллическим алфавитным префиксом «А» и латинским «H»
+                authors_a = idx.list_authors(prefix="А", hide_deleted=True)
+                self.assertEqual([a["name"] for a in authors_a], ["Аакер Дженнифер"])
+                self.assertEqual(authors_a[0]["count"], 1)
 
-            authors_h = idx.list_authors(prefix="H", hide_deleted=True)
-            self.assertEqual([a["name"] for a in authors_h], ["Herbert Frank"])
+                authors_h = idx.list_authors(prefix="H", hide_deleted=True)
+                self.assertEqual([a["name"] for a in authors_h], ["Herbert Frank"])
 
-            # Книги автора (включая соавтора)
-            aaker_books = idx.get_books_by_author(authors_a[0]["id"], hide_deleted=True)
-            self.assertEqual(len(aaker_books), 1)
-            self.assertEqual(aaker_books[0]["title"], "Эффект стрекозы")
+                # Книги автора (включая соавтора)
+                aaker_books = idx.get_books_by_author(authors_a[0]["id"], hide_deleted=True)
+                self.assertEqual(len(aaker_books), 1)
+                self.assertEqual(aaker_books[0]["title"], "Эффект стрекозы")
 
-            # Серии и книги серии
-            series_m = idx.list_series(prefix="М", hide_deleted=True)
-            self.assertEqual([s["name"] for s in series_m], ["Мир Полудня"])
-            self.assertEqual(series_m[0]["count"], 2)
-            ser_books = idx.get_books_by_series("Мир Полудня", hide_deleted=True)
-            self.assertEqual([b["serno"] for b in ser_books], ["1", "2"])
+                # Серии и книги серии
+                series_m = idx.list_series(prefix="М", hide_deleted=True)
+                self.assertEqual([s["name"] for s in series_m], ["Мир Полудня"])
+                self.assertEqual(series_m[0]["count"], 2)
+                ser_books = idx.get_books_by_series("Мир Полудня", hide_deleted=True)
+                self.assertEqual([b["serno"] for b in ser_books], ["1", "2"])
 
-            # Жанры и книги жанра
-            genres = {g["code"]: g["count"] for g in idx.list_genres(hide_deleted=True)}
-            self.assertEqual(genres.get("sf"), 3)
-            self.assertEqual(genres.get("comp_www"), 1)
-            g_books = idx.get_books_by_genre("comp_www", hide_deleted=True)
-            self.assertEqual(g_books["total"], 1)
+                # Жанры и книги жанра
+                genres = {g["code"]: g["count"] for g in idx.list_genres(hide_deleted=True)}
+                self.assertEqual(genres.get("sf"), 3)
+                self.assertEqual(genres.get("comp_www"), 1)
+                g_books = idx.get_books_by_genre("comp_www", hide_deleted=True)
+                self.assertEqual(g_books["total"], 1)
 
-            # Многополевой поиск: при пустых полях ничего не возвращает
-            self.assertEqual(idx.search_advanced()["total"], 0)
-            res_adv = idx.search_advanced(author="Стругацкий", title="Пикник", hide_deleted=True)
-            self.assertEqual(res_adv["total"], 1)
-            self.assertEqual(res_adv["items"][0]["file"], "11")
+                # Многополевой поиск: при пустых полях ничего не возвращает
+                self.assertEqual(idx.search_advanced()["total"], 0)
+                res_adv = idx.search_advanced(author="Стругацкий", title="Пикник", hide_deleted=True)
+                self.assertEqual(res_adv["total"], 1)
+                self.assertEqual(res_adv["items"][0]["file"], "11")
 
-            # Серийный хелпер get_series_books
-            series_ctx = idx.get_series_books("Мир Полудня", author_hint="Стругацкий Аркадий", hide_deleted=True)
-            self.assertEqual([b["serno"] for b in series_ctx], ["1", "2"])
+                # Серийный хелпер get_series_books
+                series_ctx = idx.get_series_books("Мир Полудня", author_hint="Стругацкий Аркадий", hide_deleted=True)
+                self.assertEqual([b["serno"] for b in series_ctx], ["1", "2"])
 
     def test_resolve_book_source_preview_details_and_traversal_guard(self):
         with tempfile.TemporaryDirectory() as td:

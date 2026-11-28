@@ -2,7 +2,7 @@
 
 # 📚 FBC GUI
 
-**Cross-platform desktop studio for converting, styling, and delivering FB2 e-books with [`fb2cng`](https://github.com/rupor-github/fb2cng)**
+**Cross-platform desktop FB2 library browser, converter, styling studio & e-reader delivery hub powered by [`fb2cng`](https://github.com/rupor-github/fb2cng)**
 
 <p>
   <a href="https://pashka.eu/fbc_gui/"><img src="https://img.shields.io/badge/Website-pashka.eu%2Ffbc__gui-0ea5e9?style=for-the-badge&logo=safari&logoColor=white" alt="Website"></a>
@@ -33,7 +33,7 @@
 
 ---
 
-**FBC GUI** is a fast, native desktop studio (**macOS Apple Silicon & Intel**, **Windows x64 & ARM64**) built around the next-generation [`fb2cng`](https://github.com/rupor-github/fb2cng) converter. Instead of juggling raw YAML configs, hand-edited CSS, command-line flags, or heavy library managers, FBC GUI gives you a **visual typography editor with two-page book-spread preview & E Ink display simulation**, **E Ink image optimization**, **multi-folder Watch Folder automation with System Tray / macOS Menu Bar**, **batch metadata, online lookup & FB2 Omnibus merging with full Undo/Redo**, **drag-and-drop filename & title template builders**, **8 one-click e-reader presets**, **direct USB/MTP (`sync2kindle`) & Send-to-Kindle / SMTP delivery**, and **SHA-256 verified in-app updates** — all in a single clean interface.
+**FBC GUI** is a fast, native desktop studio (**macOS Apple Silicon & Intel**, **Windows x64 & ARM64**) built around the next-generation [`fb2cng`](https://github.com/rupor-github/fb2cng) converter. Instead of juggling separate INPX catalogers, raw YAML configs, hand-edited CSS, command-line flags, or heavy library managers, FBC GUI brings together an **opt-in local INPX Library browser (freeLib-style, 700k+ books with instant SQLite FTS5 search & one-click Send to Reader)**, a **visual typography editor with base font size, display-aware E Ink color palettes & two-page book-spread preview**, **E Ink image optimization**, **Cover Studio**, **multi-folder Watch Folder automation with System Tray / macOS Menu Bar**, **batch metadata, online lookup & FB2 Omnibus merging with full Undo/Redo**, **drag-and-drop filename & title template builders**, **8 one-click e-reader presets**, **direct USB/MTP (`sync2kindle`) & Send-to-Kindle / SMTP delivery**, and **SHA-256 verified in-app updates** — all in a single clean interface.
 
 > [!TIP]
 > **Official project website, screenshots & full visual guide (EN / RU):** **[https://pashka.eu/fbc_gui/](https://pashka.eu/fbc_gui/)**
@@ -42,25 +42,34 @@
 
 ## Why FBC GUI?
 
-Most FB2 conversion workflows force a trade-off: **[Calibre](https://calibre-ebook.com/)** is a heavy library manager with a generic HTML pipeline (and requires the KFX Output plugin + Amazon Kindle Previewer 3 for KFX); **raw [`fb2cng`](https://github.com/rupor-github/fb2cng) CLI** produces great books but requires manual YAML/CSS/Go-template editing and a separate CLI for device sync; self-hosted wrappers like **[`fb2cng-web`](https://github.com/asm0dey/fb2cng-web)** simplify drag-and-drop conversion in Docker but lack metadata, CSS, E Ink preview, and USB/MTP workflows; **online converters & Amazon Send to Kindle** upload your books to third-party servers and offer little or no FB2 styling control.
+Most FB2 workflows force you to stitch together multiple tools: desktop INPX catalogers like **[freeLib](https://github.com/petrovvlad/freeLib)** and **[MyHomeLib](https://github.com/OleksiyPenkov/MyHomeLib)** (Windows-only) excel at browsing Flibusta/Lib.rus.ec dumps but lack native `fb2cng` KFX/KEPUB3 conversion, visual CSS/E Ink styling, live 2-page book previews, and modern USB/MTP sideloading; **[Calibre](https://calibre-ebook.com/)** is a heavy library manager that duplicates books into its own database with a generic HTML pipeline (and requires the KFX Output plugin + Amazon Kindle Previewer 3 for KFX); **raw [`fb2cng`](https://github.com/rupor-github/fb2cng) CLI** produces great books but demands manual YAML/CSS/Go-template editing and a separate CLI for device sync; and self-hosted Docker wrappers like **[`fb2cng-web`](https://github.com/asm0dey/fb2cng-web)** or **[`freeLib-Web`](https://github.com/Kwull/freeLib-Web)** target LAN web servers rather than a native desktop workflow with USB/MTP delivery and visual typography editing.
 
-| Capability | **FBC GUI** | Raw [`fb2cng`](https://github.com/rupor-github/fb2cng) CLI | [`fb2cng-web`](https://github.com/asm0dey/fb2cng-web) (Docker) | [Calibre](https://calibre-ebook.com/) | Online / Send to Kindle |
+| Capability | **FBC GUI** | [freeLib](https://github.com/petrovvlad/freeLib) | [MyHomeLib](https://github.com/OleksiyPenkov/MyHomeLib) | [Calibre](https://calibre-ebook.com/) | Raw [`fb2cng`](https://github.com/rupor-github/fb2cng) CLI |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Native `fb2cng` engine** (EPUB2/3, KEPUB, AZW3, KFX/AZW8, PDF, TXT, MD) | ✅ All 10 formats | ✅ CLI flags | ✅ Web drop | ⚠️ Generic pipeline; KFX needs plugin + Kindle Previewer 3 | ❌ Limited formats (no native KFX/KEPUB) |
-| **Zero-config engine setup** (auto-detect, checksum verify & GitHub download) | ✅ Automatic (`fbc` + `s2k`) | ❌ Manual | ⚠️ Docker setup | ⚠️ Built-in + plugins | ➖ Cloud |
-| **Visual CSS & typography studio + live 2-page FB2 book preview** | ✅ Live controls + WKWebView / WebView2 | ❌ Manual CSS | ❌ None | ⚠️ Raw CSS box; preview after convert | ❌ None |
-| **E Ink image optimization & display simulation** (Carta, 16-gray, Kaleido 3, Gallery 3) | ✅ Built-in + live E Ink toggle | ⚠️ Basic resize / grayscale | ❌ None | ❌ None | ❌ None |
-| **Visual drag-and-drop template builder** (`output_name` & `title_template`) | ✅ Pill timeline | ❌ Hand-written Go | ❌ None | ⚠️ Python templates | ❌ None |
-| **Batch metadata, online lookup** (`FantLab`, `LitRes`, `Open Library`, `Google Books`, `OPDS`) **& source save-back** | ✅ Inline + Undo/Redo + atomic save-back | ❌ External tools | ❌ None | ✅ Lookup (writes to own DB copy) | ❌ None |
-| **FB2 Structure Inspector, Auto-Repair & Omnibus Merger** | ✅ Inspector + Repair + Omnibus | ❌ None | ❌ None | ⚠️ Via plugins (e.g. EpubMerge) | ❌ None |
-| **Device profiles + shareable Settings+CSS presets** (`.fbcpreset.json`) | ✅ 8 built-in + custom | ❌ Manual YAML | ❌ Server config | ⚠️ Separate profiles | ❌ None |
-| **Multi-folder Watch Folder mode + System Tray / macOS Menu Bar** | ✅ Multi-folder, per-folder presets & delivery | ❌ External scripts | ❌ None | ⚠️ Single auto-add folder into DB | ❌ None |
-| **Direct USB/MTP delivery (`sync2kindle`), reader auto-detect & SMTP** | ✅ USB/MTP + auto-detect + 20 MB SMTP | ⚠️ Separate `s2k` CLI | ❌ Download only | ✅ USB/MTP + SMTP | ⚠️ Kindle cloud only |
-| **100% local & private** (no library DB lock-in, no cloud uploads) | ✅ Local files | ✅ Local files | ✅ Self-hosted LAN | ⚠️ Own DB copy | ❌ Cloud upload |
+| **Cross-platform native desktop** (macOS Silicon/Intel & Windows x64/ARM64) | ✅ macOS & Windows | ✅ Qt (Win/Mac/Linux) | ❌ Windows only | ✅ Win/Mac/Linux | ✅ CLI binary |
+| **Local INPX Library browser** (700k+ books, Authors/Series/Genres/Search, alphabet bar, annotation & cover, zero-unpack) | ✅ Opt-in SQLite FTS5 (< 1 ms) | ✅ Built-in (+ OPDS/Web) | ✅ Built-in (+ metabib) | ❌ No native INPX browser | ❌ None |
+| **Native `fb2cng` engine** (EPUB2/3, KEPUB, AZW3, KFX/AZW8, PDF, TXT, MD) | ✅ All 10 formats | ⚠️ EPUB, AZW3, MOBI (no KFX/KEPUB) | ⚠️ External converter scripts | ⚠️ Generic pipeline; KFX needs plugin + Kindle Previewer 3 | ✅ CLI flags |
+| **Zero-config engine setup** (auto-detect, checksum verify & GitHub download) | ✅ Automatic (`fbc` + `s2k`) | ⚠️ Bundled/legacy tools | ❌ Manual external tools | ⚠️ Built-in + plugins | ❌ Manual |
+| **Visual CSS studio, base font size, display-aware E Ink palettes & live 2-page FB2 preview** | ✅ Live controls + WKWebView / WebView2 | ❌ Manual CSS / no live preview | ❌ None | ⚠️ Raw CSS box; preview after convert | ❌ Manual CSS |
+| **E Ink image optimization & display simulation** (Carta, 16-gray, Kaleido 3, Gallery 3) | ✅ Built-in + live E Ink toggle | ❌ None | ❌ None | ❌ None | ⚠️ Basic resize / grayscale |
+| **Visual drag-and-drop template builder** (`output_name` & `title_template`) | ✅ Pill timeline | ⚠️ String templates | ⚠️ String templates | ⚠️ Python templates | ❌ Hand-written Go |
+| **Batch metadata, online lookup** (`FantLab`, `LitRes`, `Open Library`, `Google Books`, `OPDS`) **& source save-back** | ✅ Inline + Undo/Redo + atomic save-back | ❌ Read-only catalog | ⚠️ DB-only edits | ✅ Lookup (writes to own DB copy) | ❌ External tools |
+| **FB2 Structure Inspector, Auto-Repair, Cover Studio & Omnibus Merger** | ✅ All built-in | ❌ None | ❌ None | ⚠️ Via plugins (e.g. EpubMerge) | ❌ None |
+| **Device profiles + shareable Settings+CSS presets** (`.fbcpreset.json`) | ✅ 8 built-in + custom | ⚠️ Export profiles | ❌ None | ⚠️ Separate profiles | ❌ Manual YAML |
+| **Multi-folder Watch Folder mode + System Tray / macOS Menu Bar** | ✅ Multi-folder, per-folder presets & delivery | ❌ None | ❌ None | ⚠️ Single auto-add folder into DB | ❌ External scripts |
+| **Direct USB/MTP delivery (`sync2kindle`), reader auto-detect & SMTP** | ✅ USB/MTP + auto-detect + 20 MB SMTP | ⚠️ Folder export + email | ⚠️ Folder export | ✅ USB/MTP + SMTP | ⚠️ Separate `s2k` CLI |
+| **100% local & private** (no forced library copy, no cloud uploads) | ✅ Local files (optional cache) | ✅ Local files | ✅ Local files | ⚠️ Own DB copy | ✅ Local files |
 
 ---
 
 ## Key Features
+
+### 📖 Local INPX Library Browser (freeLib-Style)
+- **Opt-in Library tab:** enable **Library tab** at the top of Settings to add a dedicated **Library** view next to Converter, with an integrated `.inpx` connection bar (**Choose INPX...**, **Reindex**, and collection status).
+- **Instant performance on 700,000+ book catalogs:** indexes standard Flibusta / Lib.rus.ec and custom `structure.info` `.inpx` archives into a local SQLite cache (`library_cache.sqlite`, schema v4) with **FTS5 full-text search**, precomputed author/series/genre/language summaries, covering indexes, and a warm memory-mapped read-only connection (`< 1 ms` tab switching).
+- **Familiar two-pane navigation & alphabet bar:** browse by **Authors**, **Series**, **Genres** (with instant filtering and book counts), or **Search** (multi-field title/author/series/genre search), paired with a language filter, hide-deleted (`DEL=1`) toggle, and two-row `А–Я` / `* # A–Z` alphabet bar.
+- **Hierarchical book tree, annotation & cover preview:** `Author → Series → Books` tree with high-contrast vector cascading checkboxes, ratings, sizes, dates, and genres; bottom pane displays clickable author/series/genre links, on-demand FB2 annotation, archive metadata, and book cover.
+- **Zero-unpack transfer & one-click Send to Reader:** send checked/selected books or an **entire series** directly to the Converter queue without unpacking ZIP archives, or convert and deliver straight to your e-reader in one click via the **Send to Reader** toolbar button or right-click menu.
 
 ### ⚡ Next-Gen Conversion Engine & Formats
 - **10 output formats without Calibre or KindleGen:** `EPUB2`, `EPUB3`, `KEPUB`, `KEPUB3`, native `AZW3` (with optional `.apnx` page sidecars & HuffDic/Standard compression), `KFX` / `AZW8` (LZMA compression), `PDF`, `TXT`, and `Markdown`.
@@ -71,7 +80,7 @@ Most FB2 conversion workflows force a trade-off: **[Calibre](https://calibre-ebo
 
 ### 🗂️ Batch Queue & Metadata Studio
 - **Non-blocking background import:** drag-and-drop folders, `.fb2`, or multi-book `.zip` archives with lazy on-demand XML loading to keep RAM usage low on large libraries.
-- **Inline table editing & extended metadata studio:** edit Author (Last / First / Middle), Series, Series #, and Book Title directly in the table, or open the two-tab **Edit Book** / **Batch Edit** dialogs to manage **FB2 Genres** (searchable FictionBook 2.1 taxonomy + custom tags + Add/Replace/Remove batch modes), **Language**, **Translator** (preserving co-translators), **Publisher**, **ISBN** (with ISBN-10/13 validation), and **Annotation** (with rich-XML preservation when untouched).
+- **Inline table editing, resizable columns & extended metadata studio:** resize **Source File**, **Series**, **Title**, and **File Name** columns freely with automatic hover tooltips for truncated cells; edit Author (Last / First / Middle), Series, Series #, and Book Title directly in the table, or open the two-tab **Edit Book** / **Batch Edit** dialogs to manage **FB2 Genres** (searchable FictionBook 2.1 taxonomy + custom tags + Add/Replace/Remove batch modes), **Language**, **Translator** (preserving co-translators), **Publisher**, **ISBN** (with ISBN-10/13 validation), and **Annotation** (with rich-XML preservation when untouched).
 - **Online Cover & Metadata Lookup (`FantLab`, `LitRes`, `Open Library`, optional `Google Books` & custom `OPDS`):** fetch missing covers, series, genres, annotations, translators, publishers, and ISBNs directly from the cover panel (**Fetch Online**), context menu, or **Edit Book** dialog. Supports any standard **OPDS (Atom XML / OpenSearch)** catalog (Calibre-Web, Kavita, self-hosted archives, or public OPDS libraries) with optional Basic Auth, a **Current → Found** comparison table (**Empty Only / All Found / Cover Only**), a deduplicated cover gallery, and full Undo/Redo.
 - **Series auto-numbering & row ordering:** automatically number selected books (`1, 2, 3…`), sort by any column, or reorder rows via `Alt+↑` / `Alt+↓`.
 - **Full Undo / Redo (`QUndoStack`):** undo/redo every metadata edit, online lookup, batch update, cover replacement, row reorder, removal, or list clear (`Cmd/Ctrl+Z`, `Shift+Cmd+Z` / `Ctrl+Y`).
@@ -82,7 +91,8 @@ Most FB2 conversion workflows force a trade-off: **[Calibre](https://calibre-ebo
 - **Cover Studio & cover manager:** preview covers, replace with automatic `600×900 px` LANCZOS resizing, restore originals, or generate crisp offline typographic covers with **Cover Studio** (5 templates, 6 palettes + custom hex pickers, deterministic per-series colors, live E Ink simulation, batch apply for all or missing covers only, Undo/Redo, and `.fbcpreset.json` preset persistence), and atomically write edited metadata & covers back into the original `.fb2` or `.zip` file.
 
 ### 🎨 Visual CSS & Live Book Preview
-- **Complete visual stylesheet builder (`ebook_styles.css`):** configure body/title/author/drop-cap fonts (or `None` to use e-reader system fonts), heading hierarchy (`H1–H5`), paragraph alignment & indents, drop caps, annotations, epigraphs, poems, footnotes (background & border), illustration widths, and PDF page frames.
+- **Complete visual stylesheet builder (`ebook_styles.css`) & Base Font Size:** configure body/title/author/drop-cap fonts (or `None` to use e-reader system fonts), **Base font size** (`Default (reader)` or `8pt–24pt` with proportional heading/indent scaling and live page reflow), heading hierarchy (`H1–H5`), paragraph alignment & indents, drop caps, annotations, epigraphs, poems, footnotes (background & border), illustration widths, and PDF page frames.
+- **Display-aware E Ink color palettes:** color pickers and shade lists automatically adapt to the selected device / Reader Display profile and Grayscale mode (16-level B&W E Ink Carta, Kaleido 3, Gallery 3, plus monochrome footnote background filtering).
 - **Built-in User Font Manager:** install custom `.ttf`, `.otf`, `.woff`, and `.woff2` fonts via the **+ Add Font...** button or direct Drag & Drop with magic-byte validation and instant picker/preview refresh.
 - **Two-page book-spread live preview:** renders your currently selected FB2 book as a realistic spread — full-bleed cover with spine shadow on the left page and title, annotation, epigraph, and opening chapter on the right — or a comprehensive style sample inside a native web view (**WKWebView** on macOS, **Edge WebView2** on Windows) or your system browser.
 - **E Ink image optimization & display simulation:** optimize covers and illustrations for **Carta 1200/1300**, **16-level Dithered B&W**, **Kaleido 3 (4096 colors)**, or **Gallery 3 / Canvas Color** displays (synced with built-in device presets), and toggle **Simulate E Ink Display** in Preview to inspect physical e-ink rendering.
@@ -107,7 +117,7 @@ Most FB2 conversion workflows force a trade-off: **[Calibre](https://calibre-ebo
 - **2 theme families × 3 appearance modes & refined controls:** **Modern** and **Golden** external QSS themes with **Auto (system) / Light / Dark** smooth crossfade switching, high-contrast segmented-pill tabs in modal dialogs (**FB2 Inspector** and **Edit Book**), and smooth drag-and-drop template pills with a vertical insertion indicator.
 - **Bilingual UI:** instant switching between **English** and **Russian** via external `locales/*.json` files.
 - **Clean, verified `fb2cng` & `sync2kindle` auto-setup:** no third-party binaries are bundled in the repo or installers. On startup, FBC GUI scans your OS `PATH` and standard install paths, verifies binary identity (`--version`), version compatibility (`>= 2.1.1`), and MD5/SHA256 checksums against [rupor-github/fb2cng](https://github.com/rupor-github/fb2cng), and locates or downloads [`sync2kindle`](https://github.com/rupor-github/sync2kindle) (`s2k`) on demand with checksum verification when using USB/MTP sync.
-- **Security & reliability hardening:** atomic writes (`fsync` + `os.replace`) for configs, CSS, and presets (with automatic `.bak` recovery on corrupted settings), XXE-hardened `lxml` parsing, `http`/`https` URL validation, and `certifi`-backed TLS verification.
+- **Security, diagnostics & reliability hardening:** atomic writes (`fsync` + `os.replace`) for configs, CSS, and presets (with automatic `.bak` recovery on corrupted settings), zip-bomb & `realpath` path-traversal guards for INPX archives, XXE-hardened `lxml` parsing, `http`/`https` URL validation, `certifi`-backed TLS verification, and an opt-in **Debug** diagnostic logging checkbox on the **About** page (`DEBUG` level with PID/TID & call sites, OS/Python/Qt/SQLite summary, Qt message capture, all-thread stack dumps on unhandled exceptions, and `faulthandler` native crash traces).
 
 ---
 
@@ -115,7 +125,7 @@ Most FB2 conversion workflows force a trade-off: **[Calibre](https://calibre-ebo
 
 ```mermaid
 flowchart LR
-    A[FB2 / Multi-book ZIP / Folders / Watch Folders] --> B[Background Import & Resilient XML Parser]
+    A[Local INPX Library / FB2 / Multi-book ZIP / Folders / Watch Folders] --> B[Background Import & Resilient XML Parser]
     B --> C[Metadata, Online Lookup & Omnibus Studio<br/>Inline Edit • Inspector/Repair • Undo/Redo • Save-Back]
     C --> D[Visual CSS, E Ink Optimizer & Template Studio<br/>2-Page Live Preview • E Ink Simulation • 8 Device Presets]
     D --> E{fb2cng Auto-Manager<br/>PATH Search → MD5/SHA256 Verify<br/>→ GitHub Download if needed}
@@ -196,21 +206,22 @@ fbc-gui/
 │   ├── email_sender.py     # certifi-verified SMTP SSL/STARTTLS sender with 20 MB batching
 │   ├── undo_commands.py    # QUndoStack commands for metadata, covers, removals & reordering
 │   ├── updater.py          # GitHub Releases auto-updater, semver, host allowlist, SHA-256 verify & OS installers
+│   ├── inpx_library.py     # Local INPX catalog parser, SQLite FTS5 cache & zero-unpack archive resolver
 │   ├── i18n.py             # External JSON localization loader
-│   └── logger.py           # Application diagnostics logger
+│   └── logger.py           # Application logger & Debug crash/thread-dump diagnostics
 ├── ui/
-│   ├── controllers/        # MainWindow controllers (settings, presets, preview, queue, conversion, tray, updates)
+│   ├── controllers/        # MainWindow controllers (library, settings, presets, preview, queue, conversion, tray, updates)
 │   ├── dialogs/            # Modular themed dialogs (common, progress, book_edit, cover_studio, metadata_lookup, inspector, organizer, watch_folder, setup_update)
 │   ├── theme.py            # External QSS theme registry, PillSelector, ColorPicker, TemplateBuilder
 │   ├── native_webview.py   # Isolated WKWebView (macOS) / Edge WebView2 (Windows) / fallback renderer
-│   └── pages/              # Converter, Styles, Preview, Settings (sectioned), About views
+│   └── pages/              # Library, Converter, Styles, Preview, Settings (sectioned), About views
 ├── icons/                  # System Tray (Windows) & Menu Bar template icons (macOS)
 ├── themes/                 # modern_{dark,light}.qss & golden_{dark,light}.qss
 ├── locales/                # en.json & ru.json
 ├── presets_defaults/       # 8 built-in device presets
 ├── docs/                   # Bilingual User Guides (EN/RU) & Release Notes
 ├── fonts/                  # PT Astra Serif & Pomorsky Unicode + OFL-1.1.txt
-└── tests/                  # 215+ unit tests across core, controllers, UI, and worker modules
+└── tests/                  # 265+ unit tests across core, controllers, UI, and worker modules
 ```
 
 </details>

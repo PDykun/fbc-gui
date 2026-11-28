@@ -319,6 +319,16 @@ class InpxLibraryIndex:
         self._ro_conn = None
         self._ro_stat = None
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def __del__(self):
+        self.close()
+
     def close(self):
         """Закрывает кэшированное read-only соединение SQLite (необходимо перед заменой файла или выходом)."""
         conn = self._ro_conn

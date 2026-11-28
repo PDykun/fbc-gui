@@ -1,4 +1,4 @@
-# FBC GUI v2.13 (build 151)
+# FBC GUI v2.13 (build 152)
 
 ## Русская версия
 
@@ -22,7 +22,8 @@
 - *Реализована защита от zip-bomb при чтении `.inp`-файлов (лимит 128 МБ на запись), строгая проверка `os.path.realpath` против path traversal при поиске архивов и файлов книг рядом с `.inpx`, параметризованные SQL-запросы и атомарная подмена кэша.*
 - *Настройки локальной библиотеки (`library_enabled`, `library_inpx_path`) исключены из переносимых пользовательских пресетов.*
 - *На странице **«О программе»** рядом с кнопкой **«Открыть лог»** добавлена галочка **Debug**: включает расширенный диагностический журнал `fbc_gui.log` (уровень `DEBUG` с миллисекундами, PID/TID и точкой вызова, системную сводку ОС/Python/Qt/SQLite, перехват сообщений Qt, полные стеки всех потоков при необработанных исключениях и нативных сбоях через `faulthandler`, сохраняется между запусками).*
-- *Обновлены русская и английская локализации (`locales/ru.json`, `locales/en.json`), расширено покрытие юнит-тестами (`tests/test_inpx_library.py`, `tests/test_controllers.py`, `tests/test_logger.py`) до 267 тестов.*
+- *Добавлена поддержка контекстного менеджера (`with InpxLibraryIndex(...)`) и гарантированное закрытие read-only соединений SQLite в `tests/test_inpx_library.py` для устранения ошибки `WinError 32` при очистке временных каталогов на Windows CI.*
+- *Обновлён `README.md`: добавлена локальная библиотека INPX в заголовок и описание возможностей, обновлена таблица сравнения с аналогами (`freeLib`, `MyHomeLib`, `Calibre`, `fb2cng CLI`), а также отражены изменения v2.13.*
 
 ---
 
@@ -48,4 +49,5 @@
 - *Enforced zip-bomb limits (128 MB per `.inp` entry), strict `os.path.realpath` path-traversal guards when resolving archives/files next to `.inpx`, parameterized SQL queries, and atomic SQLite cache replacement.*
 - *Excluded local library paths and toggle state from portable user presets.*
 - *Added a **Debug** checkbox next to **Open Log** on the **About** page: enables verbose diagnostic logging to `fbc_gui.log` (`DEBUG` level with millisecond timestamps, PID/TID and call-site info, OS/Python/Qt/SQLite environment summary, Qt message capture, full all-thread stack dumps on unhandled exceptions and native crashes via `faulthandler`, persisted across restarts).*
-- *Updated RU/EN localizations (`locales/ru.json`, `locales/en.json`) and expanded the unit test suite (`tests/test_inpx_library.py`, `tests/test_controllers.py`, `tests/test_logger.py`) to 267 tests.*
+- *Added context-manager support (`with InpxLibraryIndex(...)`) and explicit SQLite connection cleanup in `tests/test_inpx_library.py` to fix `WinError 32` temp-directory cleanup errors on Windows CI.*
+- *Updated `README.md` with the Local INPX Library browser in the header and feature overview, refreshed the competitor comparison table (`freeLib`, `MyHomeLib`, `Calibre`, `fb2cng CLI`), and documented v2.13 additions.*
