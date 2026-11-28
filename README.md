@@ -23,11 +23,18 @@
 [User Guide (EN)](docs/USER_GUIDE_EN.md) •
 [Руководство (RU)](docs/USER_GUIDE_RU.md) •
 [Release Notes](docs/README.md) •
+[Screenshots](#screenshots) •
 [Why FBC GUI?](#why-fbc-gui) •
 [Key Features](#key-features) •
 [How It Works](#how-it-works) •
 [Running from Source](#running-from-source) •
 [License](#license--third-party-notices)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://pashka.eu/fbc_gui/assets/images/themes/modern-converter-dark-en.webp">
+  <source media="(prefers-color-scheme: light)" srcset="https://pashka.eu/fbc_gui/assets/images/themes/modern-converter-light-en.webp">
+  <img alt="FBC GUI — Converter & Metadata Studio" src="https://pashka.eu/fbc_gui/assets/images/themes/modern-converter-dark-en.webp" width="900">
+</picture>
 
 </div>
 
@@ -37,6 +44,50 @@
 
 > [!TIP]
 > **Official project website, screenshots & full visual guide (EN / RU):** **[https://pashka.eu/fbc_gui/](https://pashka.eu/fbc_gui/)**
+
+---
+
+## Screenshots
+
+*All screenshots automatically adapt to your GitHub theme (Modern Dark / Modern Light).*
+
+### Local INPX Library
+*freeLib-style browser (700k+ books, alphabet bar, annotation & cover)*
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://pashka.eu/fbc_gui/assets/images/themes/modern-library-dark-en.webp">
+  <source media="(prefers-color-scheme: light)" srcset="https://pashka.eu/fbc_gui/assets/images/themes/modern-library-light-en.webp">
+  <img alt="FBC GUI — Local INPX Library Browser" src="https://pashka.eu/fbc_gui/assets/images/themes/modern-library-dark-en.webp" width="850">
+</picture>
+
+### Styles Studio
+*Visual CSS editor, base font size & display-aware E Ink palettes*
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://pashka.eu/fbc_gui/assets/images/themes/modern-styles-dark-en.webp">
+  <source media="(prefers-color-scheme: light)" srcset="https://pashka.eu/fbc_gui/assets/images/themes/modern-styles-light-en.webp">
+  <img alt="FBC GUI — Visual CSS & E Ink Styles Studio" src="https://pashka.eu/fbc_gui/assets/images/themes/modern-styles-dark-en.webp" width="850">
+</picture>
+
+### Live Book Preview
+*Two-page spread with full-bleed cover & E Ink simulation*
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://pashka.eu/fbc_gui/assets/images/themes/modern-preview-dark-en.webp">
+  <source media="(prefers-color-scheme: light)" srcset="https://pashka.eu/fbc_gui/assets/images/themes/modern-preview-light-en.webp">
+  <img alt="FBC GUI — Live Two-Page Book Preview" src="https://pashka.eu/fbc_gui/assets/images/themes/modern-preview-dark-en.webp" width="850">
+</picture>
+
+### Settings & Delivery
+*10 formats, visual template builders, Watch Folders & USB/MTP sync*
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://pashka.eu/fbc_gui/assets/images/themes/modern-settings-dark-en.webp">
+  <source media="(prefers-color-scheme: light)" srcset="https://pashka.eu/fbc_gui/assets/images/themes/modern-settings-light-en.webp">
+  <img alt="FBC GUI — Settings, Presets & Device Delivery" src="https://pashka.eu/fbc_gui/assets/images/themes/modern-settings-dark-en.webp" width="850">
+</picture>
+
+*More interactive dark/light comparisons (including the **Golden** theme and feature dialogs) are available on [pashka.eu/fbc_gui](https://pashka.eu/fbc_gui/).*
 
 ---
 
